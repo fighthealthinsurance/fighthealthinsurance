@@ -47,7 +47,10 @@ rule fits:
 reaches. The act reaches group health plans, including employer plans and
 state and local government plans (non-federal governmental plans), individual
 coverage, and FEHB plans through 5 U.S.C. 8902(p). The Labor regulation and
-the tax code section are added for an employer, TPA or unknown plan. With known
+the tax code section are added for an employer, TPA or unknown plan. ERISA and
+the tax code leave out governmental plans and FEHB, so beside a government or
+FEHB source those sections are offered only "if your plan is a private
+employer plan", and a government or FEHB plan alone gets none. With known
 public coverage and no plan source the act reaches, only the program's own
 rule appears (a TPA flag beside Medicaid is not enough). When such a plan
 source sits beside a public program, a caveat says the act's rules apply only
@@ -62,19 +65,26 @@ simple on purpose:
 1. A billing code (CPT 99281-99285, HCPCS A0430, A0431, A0435, A0436), or the
    procedure field naming the care.
 2. Otherwise, the care named in the denial text within 12 words of a claim
-   word (denied, denial, claim, billed, charged). There is no sentence
-   splitting, so abbreviations like "Dr." do not break a mention apart. A
-   general line with no claim word nearby ("your plan waives prior
-   authorization for emergency services") is left out.
+   word (denied, denial, claim, billed, charged) in the same sentence. A
+   sentence ends at ".", "!" or "?" before a capital letter, except after
+   common abbreviations (Dr., U.S., St., Inc., e.g., i.e., No., Mr., Ms.,
+   Mrs.). A line with no claim word ("your plan covers air ambulance
+   services"), or a policy sentence after the claim sentence ("Your MRI claim
+   was denied. Emergency services do not require prior authorization."), is
+   left out.
 3. For the facility case, an out-of-network phrase and a participating
-   facility phrase within 8 words of each other.
+   facility phrase within 8 words of each other in one sentence, with a claim
+   word near them when they come from the denial text.
 
 A mention is skipped only when the care term itself is negated: "no",
-"not", "never" or "without" right in front of it ("no ER visit"), "non-" fixed
-to it ("non-emergency services"), or the care said not to have happened right
-after it ("an ER visit did not occur", "air ambulance was not used",
-"in-network hospital was not involved"). A negation on another word does not
-count, so "no prior authorization for emergency services" still triggers.
+"not", "never" or "without" right in front of it ("no ER visit"), "did not
+involve" or "did not receive" in front of it, "non-" fixed to it
+("non-emergency services"), or the care said not to have happened directly
+after it with no other words between ("an ER visit did not occur", "air
+ambulance was not used", "in-network hospital was not involved"). A negation
+on another phrase does not count, so "no prior authorization for emergency
+services", "emergency services: prior authorization was not provided" and
+"consent was not given" still leave the care named.
 Line breaks inside a term still match. The pre-2022 emergency rule (45 CFR
 147.138(b)) only governs plan years that began before January 1, 2022 and is
 not cited.

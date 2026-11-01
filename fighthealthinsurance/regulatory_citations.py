@@ -967,27 +967,32 @@ _IN_NETWORK_FACILITY_RE = re.compile(
 
 # The term itself negated, and only then. Before it: "no", "not", "never" or
 # "without" right in front, an article allowed ("no ER visit", "not an air
-# ambulance"), or "non-" fixed to it ("non-emergency services"). After it: the
-# care said not to have happened ("an ER visit did not occur", "air ambulance
-# was not used", "in-network hospital was not involved"). A negation that
-# belongs to another word does not count, so "no prior authorization for
-# emergency services" still names emergency services, and a non-emergency air
-# ambulance is still an air ambulance.
+# ambulance"); "did not involve" or "did not receive" in front ("the claim
+# did not involve an air ambulance"); or "non-" fixed to it ("non-emergency
+# services"). After it: the care said not to have happened, directly after the
+# term with no other words between ("an ER visit did not occur", "air
+# ambulance was not used", "in-network hospital was not involved"). A
+# negation that belongs to another phrase does not count, so "no prior
+# authorization for emergency services" and "emergency services: prior
+# authorization was not provided" still name emergency services, and a
+# non-emergency air ambulance is still an air ambulance.
 _NEGATED_BEFORE_RE = re.compile(
-    r"(?:\b(?:no|not|never|without)\s+(?:(?:an?|the|any)\s+)?|\bnon[- ]?)$", re.I
+    r"(?:\b(?:no|not|never|without)\s+(?:(?:an?|the|any)\s+)?|"
+    r"\b(?:did not|didn't|does not|doesn't|never) (?:involve|involved|receive|"
+    r"received)\s+(?:(?:an?|the|any)\s+)?|\bnon[- ]?)$",
+    re.I,
 )
 _NEGATED_AFTER_RE = re.compile(
-    r"^\W*(?:\w+\W+){0,2}?(?:was|were|is|are|did|does|has|had)\s+(?:not|never)\s+"
+    r"^\s+(?:was|were|is|are|did|does|has|had)\s+(?:not|never)\s+"
     r"(?:be(?:en)?\s+)?(?:occur|occurred|happen|happened|used|involved|provided|"
     r"furnished|performed|take place|taken place|given)\b|"
-    r"^\W*(?:\w+\W+){0,2}?(?:wasn't|weren't|didn't|never)\s+"
+    r"^\s+(?:wasn't|weren't|didn't|never)\s+"
     r"(?:occur|occurred|happen|happened|used|involved|provided|furnished|"
     r"performed|take place|given)\b",
     re.I,
 )
 # Words that tie a mention to this person's claim when they appear within
-# CLAIM_WINDOW_WORDS words of it. No sentence splitting, so abbreviations
-# such as "Dr." or "U.S." never cut a mention off from its claim.
+# CLAIM_WINDOW_WORDS words of it in the same sentence.
 _CLAIM_WORD_RE = re.compile(
     r"\b(?:denied|deny|denies|denial|claims?|billed|bill|bills|charged|charges?)\b",
     re.I,
@@ -996,12 +1001,37 @@ CLAIM_WINDOW_WORDS = 12
 # How close the out-of-network phrase and the participating facility phrase
 # must be, in words between them, for the facility case.
 FACILITY_PAIR_WINDOW_WORDS = 8
+# A sentence ends at ".", "!" or "?" followed by a space and a capital letter,
+# or at the end of the text, except after these abbreviations, so "Dr. Smith"
+# or "the U.S. Code" never ends one.
+_SENTENCE_END_RE = re.compile(r"[.!?](?=\s+[A-Z])")
+_ABBREVIATIONS = frozenset(
+    {"dr.", "u.s.", "st.", "inc.", "e.g.", "i.e.", "no.", "mr.", "ms.", "mrs."}
+)
 
 
 def _normalize(text: str) -> str:
     """Collapse runs of whitespace, newlines included, so a term broken
     across a line still matches."""
     return re.sub(r"\s+", " ", text).strip()
+
+
+def _sentence_spans(text: str) -> list[tuple[int, int]]:
+    """Start and end offsets of each sentence in ``text``."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for m in _SENTENCE_END_RE.finditer(text):
+        words = text[start : m.end()].split()
+        if words and words[-1].lower() in _ABBREVIATIONS:
+            continue
+        spans.append((start, m.end()))
+        start = m.end()
+    spans.append((start, len(text)))
+    return spans
+
+
+def _sentence_of(spans: list[tuple[int, int]], pos: int) -> tuple[int, int]:
+    return next(((a, b) for a, b in spans if a <= pos < b), (0, 0))
 
 
 def _negated(text: str, m: re.Match[str]) -> bool:
@@ -1020,18 +1050,46 @@ def _words_between(text: str, a: re.Match[str], b: re.Match[str]) -> int:
     return len(text[first.end() : second.start()].split())
 
 
+def _claim_word_near(
+    text: str, spans: list[tuple[int, int]], start: int, end: int
+) -> bool:
+    """Whether a claim word sits within CLAIM_WINDOW_WORDS words of the span
+    [start, end), without crossing the sentence it is in."""
+    s_start, s_end = _sentence_of(spans, start)
+    left = text[s_start:start].split()[-CLAIM_WINDOW_WORDS:]
+    right = text[end:s_end].split()[:CLAIM_WINDOW_WORDS]
+    return bool(_CLAIM_WORD_RE.search(" ".join(left + [text[start:end]] + right)))
+
+
 def _in_claim_context(pattern: re.Pattern[str], text: str) -> bool:
     """Whether the denial text mentions the care, not negated, within
     CLAIM_WINDOW_WORDS words of a claim word (denied, denial, claim, billed,
-    charged). A general line with no claim word nearby, such as "your plan
-    waives prior authorization for emergency services", does not count; the
-    model's "Cite only if" gate covers the cases this simple rule misjudges.
+    charged) in the same sentence. A line with no claim word, such as "your
+    plan covers air ambulance services", or a policy sentence after the
+    sentence that names the claim, does not count; the model's "Cite only
+    if" gate covers the cases this simple rule misjudges.
     """
-    for m in _mentions(pattern, text):
-        left = text[: m.start()].split()[-CLAIM_WINDOW_WORDS:]
-        right = text[m.end() :].split()[:CLAIM_WINDOW_WORDS]
-        if _CLAIM_WORD_RE.search(" ".join(left + right) + " " + m.group(0)):
-            return True
+    spans = _sentence_spans(text)
+    return any(
+        _claim_word_near(text, spans, m.start(), m.end())
+        for m in _mentions(pattern, text)
+    )
+
+
+def _facility_case(text: str, need_claim_word: bool) -> bool:
+    """An out-of-network phrase and a participating facility phrase within
+    FACILITY_PAIR_WINDOW_WORDS words of each other, both affirmed, and, in
+    the denial text, a claim word near them in the same sentence."""
+    spans = _sentence_spans(text)
+    for o in _mentions(_OUT_OF_NETWORK_RE, text):
+        for f in _mentions(_IN_NETWORK_FACILITY_RE, text):
+            if _words_between(text, o, f) > FACILITY_PAIR_WINDOW_WORDS:
+                continue
+            if _sentence_of(spans, o.start()) != _sentence_of(spans, f.start()):
+                continue
+            start, end = min(o.start(), f.start()), max(o.end(), f.end())
+            if not need_claim_word or _claim_word_near(text, spans, start, end):
+                return True
     return False
 
 
@@ -1045,10 +1103,11 @@ def surprise_billing_facts(
     about: EMERGENCY_CARE, AIR_AMBULANCE, OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY.
 
     In order: a billing code, or the procedure (the service denied) naming
-    the care; otherwise the denial text naming it near a claim word. The
-    facility case needs an out-of-network phrase and a participating
-    facility phrase within FACILITY_PAIR_WINDOW_WORDS words of each other,
-    in the procedure or the denial text. A mention whose term is negated
+    the care; otherwise the denial text naming it near a claim word in the
+    same sentence. The facility case needs an out-of-network phrase and a
+    participating facility phrase within FACILITY_PAIR_WINDOW_WORDS words of
+    each other, in the procedure, or in the denial text with a claim word
+    near them in the same sentence. A mention whose term is negated
     never counts. This only decides whether the block is offered: it says
     the rules MAY apply, and each rule's "Cite only if" line tells the model
     when not to cite it. The diagnosis is not read, since it does not say
@@ -1071,14 +1130,10 @@ def surprise_billing_facts(
         or _in_claim_context(_EMERGENCY_RE, letter)
     ):
         facts.add(EMERGENCY_CARE)
-    for text in (service, letter):
-        if any(
-            _words_between(text, o, f) <= FACILITY_PAIR_WINDOW_WORDS
-            for o in _mentions(_OUT_OF_NETWORK_RE, text)
-            for f in _mentions(_IN_NETWORK_FACILITY_RE, text)
-        ):
-            facts.add(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY)
-            break
+    if _facility_case(service, need_claim_word=False) or _facility_case(
+        letter, need_claim_word=True
+    ):
+        facts.add(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY)
     return frozenset(facts)
 
 
@@ -1323,11 +1378,11 @@ def applicable_surprise_billing_rules(
     return rules
 
 
-def _render_rule(rule: SurpriseBillingRule, employer_plan: bool) -> str:
+def _render_rule(rule: SurpriseBillingRule, employer_note: Optional[str]) -> str:
     line = f"- {rule.name} ({rule.effective}; reaches {rule.reaches}): {rule.summary}"
-    if employer_plan and rule.employer_plan_sections:
+    if employer_note and rule.employer_plan_sections:
         line += (
-            " For an employer plan, the same rule is also at "
+            f" {employer_note}, the same rule is also at "
             f"{rule.employer_plan_sections}."
         )
     return f"{line}\n  Cite only if {rule.cite_when}"
@@ -1357,8 +1412,19 @@ def get_surprise_billing_citation_context(
     public = keys & PUBLIC_PROGRAMS - {FEHB}
     nsa_sources = keys & (_NSA_PLAN_SOURCES | {FEHB})
     unknown = not keys & (_NSA_PLAN_SOURCES | _EMPLOYER_SIGNALS | PUBLIC_PROGRAMS)
-    employer_plan = unknown or bool(keys & _EMPLOYER_SIGNALS)
-    lines = "\n".join(_render_rule(r, employer_plan) for r in rules)
+    # The Labor regulation and the tax code section bind private employer
+    # plans only: ERISA and the tax code leave out governmental plans and
+    # FEHB. Beside a government or FEHB source the sections are offered only
+    # conditionally.
+    if unknown:
+        employer_note: Optional[str] = "For an employer plan"
+    elif keys & _EMPLOYER_SIGNALS and not keys & {GOVERNMENT, FEHB}:
+        employer_note = "For an employer plan"
+    elif keys & _EMPLOYER_SIGNALS:
+        employer_note = "If your plan is a private employer plan"
+    else:
+        employer_note = None
+    lines = "\n".join(_render_rule(r, employer_note) for r in rules)
     block = (
         f"{SURPRISE_BILLING_HEADER}: The denial appears to involve emergency "
         "care, an air ambulance, or an out-of-network clinician at a "

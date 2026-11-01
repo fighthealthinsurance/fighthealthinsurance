@@ -135,12 +135,76 @@ class TestSurpriseBillingFacts(unittest.TestCase):
     def test_abbreviation_does_not_cut_the_facility_case_off(self):
         facts = surprise_billing_facts(
             denial_text=(
-                "The claim for anesthesia by Dr. Smith was denied. Dr. Smith's "
-                "out-of-network anesthesia at an in-network hospital is not "
-                "covered."
+                "Your claim was denied for anesthesia by Dr. Smith, who was "
+                "out-of-network at an in-network hospital."
             )
         )
         self.assertIn(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY, facts)
+
+    def test_a_policy_sentence_after_the_claim_sentence_does_not_count(self):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "Your MRI claim was denied. Emergency services do not require "
+                "prior authorization."
+            )
+        )
+        self.assertNotIn(EMERGENCY_CARE, facts)
+
+    def test_plan_covers_air_ambulance_without_a_claim_word_does_not_count(self):
+        self.assertNotIn(
+            AIR_AMBULANCE,
+            surprise_billing_facts(denial_text="Your plan covers air ambulance services."),
+        )
+
+    def test_facility_phrases_without_a_claim_word_in_their_sentence_do_not_count(
+        self,
+    ):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "Your prescription was denied. Out-of-network benefits are "
+                "unavailable. Use an in-network hospital."
+            )
+        )
+        self.assertNotIn(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY, facts)
+
+    def test_abbreviations_do_not_end_a_sentence(self):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "Under the U.S. Code your claim for the air ambulance, e.g. the "
+                "St. Mary transport, was denied."
+            )
+        )
+        self.assertIn(AIR_AMBULANCE, facts)
+
+    def test_a_negation_on_another_phrase_after_the_term_does_not_count(self):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "The claim was denied for emergency services: prior "
+                "authorization was not provided."
+            )
+        )
+        self.assertIn(EMERGENCY_CARE, facts)
+
+    def test_consent_not_given_does_not_negate_the_facility(self):
+        facts = surprise_billing_facts(
+            denial_text=(
+                "Your claim from the out-of-network anesthesiologist at the "
+                "in-network hospital was denied. Consent was not given."
+            )
+        )
+        self.assertIn(OUT_OF_NETWORK_AT_IN_NETWORK_FACILITY, facts)
+
+    def test_did_not_involve_or_receive_the_care_does_not_count(self):
+        cases = (
+            ("The claim was denied; it did not involve an air ambulance.", AIR_AMBULANCE),
+            (
+                "The claim was denied because you did not receive emergency care.",
+                EMERGENCY_CARE,
+            ),
+        )
+        for text, fact in cases:
+            with self.subTest(text=text):
+                self.assertNotIn(fact, surprise_billing_facts(denial_text=text))
 
     def test_er_claim_denied_for_authorization_through_our_website_counts(self):
         facts = surprise_billing_facts(
@@ -423,6 +487,32 @@ class TestEmployerPlanSections(unittest.TestCase):
             with self.subTest(rule=rule.name):
                 self.assertNotIn("54.981", rule.employer_plan_sections)
                 self.assertNotIn("26 C.F.R.", rule.employer_plan_sections)
+
+    def test_tpa_beside_a_government_or_fehb_source_makes_the_sections_conditional(
+        self,
+    ):
+        for programs in (("government", "tpa"), ("fehb", "erisa_letter")):
+            with self.subTest(programs=programs):
+                block = get_surprise_billing_citation_context(
+                    codes=["99285"], programs=programs
+                )
+                assert block is not None
+                self.assertIn(
+                    "If your plan is a private employer plan, the same rule is "
+                    "also at 29 C.F.R. § 2590.716-4",
+                    block,
+                )
+                self.assertNotIn("For an employer plan", block)
+
+    def test_government_or_fehb_plan_alone_gets_no_labor_section(self):
+        for programs in (("government",), ("fehb",)):
+            with self.subTest(programs=programs):
+                block = get_surprise_billing_citation_context(
+                    codes=["99285"], programs=programs
+                )
+                assert block is not None
+                self.assertNotIn("2590.716-4", block)
+                self.assertNotIn("9816", block)
 
     def test_marketplace_plan_gets_only_the_hhs_section(self):
         block = get_surprise_billing_citation_context(
