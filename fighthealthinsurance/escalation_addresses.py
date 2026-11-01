@@ -397,18 +397,24 @@ def _internal_appeals_done(denial_text: str) -> bool:
     return _final_word_stated(denial_text) or _later_level_decided(denial_text)
 
 
+_REASON_WORD_RE = re.compile(r"\b(?:because|since|given that)\b", re.IGNORECASE)
+
+
 def _final_word_stated(denial_text: str) -> bool:
     """Whether the letter says, as so, that this is the final word or the
     appeals are exhausted. A rights notice names a final determination
     without being one ("you have the right to an external review of the
     final adverse benefit determination"), and a first-level denial must
     carry that notice, so a match in a clause stating a right or a request
-    does not count."""
+    does not count. A reason clause is its own statement ("you can seek
+    review because this is our final determination"), so a right named before
+    the "because" doesn't govern the determination."""
     for match in _own_voice_matches(_INTERNAL_APPEALS_DONE_RE, denial_text):
         before = denial_text[
             max(0, match.start() - _CLAUSE_LOOKBACK_CHARS) : match.start()
         ]
-        if not _PENDING_OR_RIGHTS_RE.search(_CLAUSE_BREAK_RE.split(before)[-1]):
+        clause = _CLAUSE_BREAK_RE.split(before)[-1]
+        if not _PENDING_OR_RIGHTS_RE.search(_REASON_WORD_RE.split(clause)[-1]):
             return True
     return False
 

@@ -400,6 +400,18 @@ class RegulatorEscalationReasonsTest(TestCase):
                 denial = _FakeDenial(state="", denial_text=notice)
                 self.assertEqual(regulator_escalation_reasons(denial), [])
 
+    def test_a_final_determination_given_as_the_reason_for_a_right_is_a_reason(
+        self,
+    ):
+        denial = _FakeDenial(
+            state="",
+            denial_text=(
+                "You can seek external review because this is our final "
+                "adverse determination."
+            ),
+        )
+        self.assertTrue(regulator_escalation_reasons(denial))
+
     def test_a_final_determination_followed_by_a_rights_notice_is_a_reason(
         self,
     ):
