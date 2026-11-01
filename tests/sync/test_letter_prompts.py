@@ -452,11 +452,19 @@ class DashboardPromptSwitchTest(TestCase):
         self.assertContains(response, "v2 and v3")
         self.assertContains(response, "v3 picked ÷ chance")
 
-    def test_v4_or_v5_shows_only_the_v4_v5_pair(self):
+    def test_v2_v4_v5_thirds_shows_exactly_those_three_pairs(self):
         self._staff()
-        LetterPromptMode.objects.create(mode=apv.MODE_SPLIT_V4_V5)
+        LetterPromptMode.objects.create(mode=apv.MODE_THIRDS_V2_V4_V5)
         response = self.client.get(self.url)
-        self.assertEqual(self._shown_pairs(response), [(apv.PROMPT_V4, apv.PROMPT_V5)])
+        self.assertEqual(
+            self._shown_pairs(response),
+            [
+                (apv.PROMPT_V2, apv.PROMPT_V4),
+                (apv.PROMPT_V2, apv.PROMPT_V5),
+                (apv.PROMPT_V4, apv.PROMPT_V5),
+            ],
+        )
+        self.assertContains(response, "v2 and v4")
         self.assertContains(response, "v4 and v5")
         self.assertContains(response, "v5 picked ÷ chance")
 

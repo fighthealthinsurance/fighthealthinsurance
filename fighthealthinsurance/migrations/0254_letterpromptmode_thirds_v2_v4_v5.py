@@ -27,8 +27,8 @@ class Migration(migrations.Migration):
                         "Thirds: each draft is written with v1, v2 or v3 at random",
                     ),
                     (
-                        "split_v4_v5",
-                        "v4 or v5: each draft is written with v4 or v5 at random",
+                        "thirds_v2_v4_v5",
+                        "v2, v4 or v5: each draft is written with v2, v4 or v5 at random",
                     ),
                 ],
                 max_length=16,

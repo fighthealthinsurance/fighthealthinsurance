@@ -126,18 +126,34 @@ def test_both_tight_voices_name_the_recipient():
     assert TIGHT_PROFESSIONAL_LETTER_PROMPT.endswith(APPEAL_SALUTATION_INSTRUCTION)
 
 
-def test_the_v4_or_v5_mode_draws_only_v4_and_v5():
-    draws = itertools.cycle([i / 200 for i in range(200)])
+def test_the_v2_v4_v5_thirds_draw_only_those_three_evenly():
+    draws = itertools.cycle([i / 300 for i in range(300)])
     with patch.object(apv, "_split_draw", lambda: next(draws)):
-        drawn = [apv.choose_prompt_version(apv.MODE_SPLIT_V4_V5) for _ in range(400)]
-    assert set(drawn) == {apv.PROMPT_V4, apv.PROMPT_V5}
-    assert drawn.count(apv.PROMPT_V4) == drawn.count(apv.PROMPT_V5)
+        drawn = [
+            apv.choose_prompt_version(apv.MODE_THIRDS_V2_V4_V5) for _ in range(900)
+        ]
+    assert set(drawn) == {apv.PROMPT_V2, apv.PROMPT_V4, apv.PROMPT_V5}
+    for version in (apv.PROMPT_V2, apv.PROMPT_V4, apv.PROMPT_V5):
+        assert drawn.count(version) == 300
 
 
-def test_the_v4_or_v5_mode_is_a_random_draw_of_those_two():
-    assert apv.MODE_VERSIONS[apv.MODE_SPLIT_V4_V5] == (apv.PROMPT_V4, apv.PROMPT_V5)
-    assert apv.MODE_SPLIT_V4_V5 in apv.RANDOM_MODES
-    assert apv.MODE_SPLIT_V4_V5 in {m for m, _label in apv.MODE_CHOICES}
+def test_the_v2_v4_v5_thirds_with_the_real_draw_land_near_a_third_each():
+    drawn = [apv.choose_prompt_version(apv.MODE_THIRDS_V2_V4_V5) for _ in range(3000)]
+    assert set(drawn) == {apv.PROMPT_V2, apv.PROMPT_V4, apv.PROMPT_V5}
+    for version in (apv.PROMPT_V2, apv.PROMPT_V4, apv.PROMPT_V5):
+        # A third is 1000; this band is many standard deviations wide.
+        assert 800 < drawn.count(version) < 1200
+
+
+def test_the_v2_v4_v5_thirds_is_a_random_draw_of_those_three():
+    assert apv.MODE_VERSIONS[apv.MODE_THIRDS_V2_V4_V5] == (
+        apv.PROMPT_V2,
+        apv.PROMPT_V4,
+        apv.PROMPT_V5,
+    )
+    assert apv.MODE_THIRDS_V2_V4_V5 in apv.RANDOM_MODES
+    assert apv.MODE_THIRDS_V2_V4_V5 in {m for m, _label in apv.MODE_CHOICES}
+    assert len(apv.MODE_THIRDS_V2_V4_V5) <= 16
 
 
 def test_letters_still_default_to_original():
@@ -145,6 +161,11 @@ def test_letters_still_default_to_original():
     assert apv.choose_prompt_version("not-a-mode") == apv.PROMPT_V1
 
 
-def test_the_head_to_head_includes_the_v4_v5_pair():
-    assert (apv.PROMPT_V4, apv.PROMPT_V5) in appeal_prompt_stats.PAIRS
+def test_the_head_to_head_includes_the_v2_v4_v5_pairs():
+    for pair in (
+        (apv.PROMPT_V2, apv.PROMPT_V4),
+        (apv.PROMPT_V2, apv.PROMPT_V5),
+        (apv.PROMPT_V4, apv.PROMPT_V5),
+    ):
+        assert pair in appeal_prompt_stats.PAIRS
     assert set(appeal_prompt_stats.VERSIONS) >= set(TIGHT_VERSIONS)

@@ -28,9 +28,10 @@ Which version a letter gets is a staff setting (LetterPromptMode rows,
 changed on the Model Usage dashboard): original (v1 for every letter), new
 (v2 for every letter), split (each full-letter call draws v1 or v2 at
 random, half and half), sectioned (v3 for every letter), thirds (each
-full-letter call draws v1, v2 or v3 at random, a third each) or v4 or v5
-(each full-letter call draws v4 or v5 at random, half and half, to compare
-the two layouts under the tight system prompt). With no row, or when the
+full-letter call draws v1, v2 or v3 at random, a third each) or v2, v4 or
+v5 (each full-letter call draws v2, v4 or v5 at random, a third each, to
+compare v2 with the same turn under the tight system prompt, and the two
+layouts under it; v1 and v3 are never drawn). With no row, or when the
 row cannot be read, letters use original; so does a pod running code from
 before a mode existed, which reads that mode as unknown. Every draft
 records the version that wrote it, so the staff page can compare how often
@@ -81,7 +82,7 @@ MODE_NEW = "new"
 MODE_SPLIT = "split"
 MODE_SECTIONED = "sectioned"
 MODE_THIRDS = "thirds"
-MODE_SPLIT_V4_V5 = "split_v4_v5"
+MODE_THIRDS_V2_V4_V5 = "thirds_v2_v4_v5"
 
 # Stored on LetterPromptMode rows, so a value keeps its meaning for good: add
 # modes, never repurpose one.
@@ -91,7 +92,10 @@ MODE_CHOICES = (
     (MODE_SPLIT, "Half and half: each draft is written with v1 or v2 at random"),
     (MODE_SECTIONED, "Sectioned prompt (v3) for every letter"),
     (MODE_THIRDS, "Thirds: each draft is written with v1, v2 or v3 at random"),
-    (MODE_SPLIT_V4_V5, "v4 or v5: each draft is written with v4 or v5 at random"),
+    (
+        MODE_THIRDS_V2_V4_V5,
+        "v2, v4 or v5: each draft is written with v2, v4 or v5 at random",
+    ),
 )
 
 _MODES = frozenset(m for m, _label in MODE_CHOICES)
@@ -103,7 +107,7 @@ MODE_VERSIONS = {
     MODE_SPLIT: (PROMPT_V1, PROMPT_V2),
     MODE_SECTIONED: (PROMPT_V3,),
     MODE_THIRDS: (PROMPT_V1, PROMPT_V2, PROMPT_V3),
-    MODE_SPLIT_V4_V5: (PROMPT_V4, PROMPT_V5),
+    MODE_THIRDS_V2_V4_V5: (PROMPT_V2, PROMPT_V4, PROMPT_V5),
 }
 
 # The modes that draw a version at random for each call: the runs the staff
@@ -164,8 +168,13 @@ def choose_prompt_version(mode: str) -> str:
         if draw < 2 / 3:
             return PROMPT_V2
         return PROMPT_V3
-    if mode == MODE_SPLIT_V4_V5:
-        return PROMPT_V5 if _split_draw() < 0.5 else PROMPT_V4
+    if mode == MODE_THIRDS_V2_V4_V5:
+        draw = _split_draw()
+        if draw < 1 / 3:
+            return PROMPT_V2
+        if draw < 2 / 3:
+            return PROMPT_V4
+        return PROMPT_V5
     return PROMPT_V1
 
 

@@ -195,7 +195,11 @@ def test_the_existing_modes_keep_their_values():
 
 
 def test_only_the_split_modes_draw_at_random():
-    assert apv.RANDOM_MODES == {apv.MODE_SPLIT, apv.MODE_THIRDS, apv.MODE_SPLIT_V4_V5}
+    assert apv.RANDOM_MODES == {
+        apv.MODE_SPLIT,
+        apv.MODE_THIRDS,
+        apv.MODE_THIRDS_V2_V4_V5,
+    }
 
 
 def test_an_unreadable_setting_means_original():
@@ -506,11 +510,11 @@ def _run_on_parallel_backends(prompt_mode):
 
 
 @pytest.mark.parametrize(
-    "draw,version", [(0.1, apv.PROMPT_V5), (0.9, apv.PROMPT_V4)]
+    "draw,version", [(0.5, apv.PROMPT_V4), (0.9, apv.PROMPT_V5)]
 )
-def test_v4_or_v5_sends_the_tight_system_prompt_and_stamps_the_version(draw, version):
+def test_v4_and_v5_send_the_tight_system_prompt_and_stamp_the_version(draw, version):
     with patch.object(apv, "_split_draw", lambda: draw):
-        drafts, fakes = _run_on_parallel_backends(apv.MODE_SPLIT_V4_V5)
+        drafts, fakes = _run_on_parallel_backends(apv.MODE_THIRDS_V2_V4_V5)
     sent = [p for fake in fakes.values() for p in fake.system_prompts]
     assert sent and set(sent) == {TIGHT_PATIENT_LETTER_PROMPT}
     prompts = [p for fake in fakes.values() for p in fake.prompts]
@@ -520,6 +524,17 @@ def test_v4_or_v5_sends_the_tight_system_prompt_and_stamps_the_version(draw, ver
     assert all(sectioned) if version == apv.PROMPT_V5 else not any(sectioned)
     full = [d for d in drafts if d.infer_type == "full" and d.text == LETTER]
     assert full and {d.prompt_version for d in full} == {version}
+
+
+def test_v2_in_the_thirds_keeps_the_backends_own_system_prompt():
+    with patch.object(apv, "_split_draw", lambda: 0.1):
+        drafts, fakes = _run_on_parallel_backends(apv.MODE_THIRDS_V2_V4_V5)
+    for fake in fakes.values():
+        assert fake.system_prompts
+        assert set(fake.system_prompts) == set(fake.system_prompts_map["full"])
+        assert all(p.endswith(apv.OUTPUT_CONTRACT) for p in fake.prompts)
+    full = [d for d in drafts if d.infer_type == "full" and d.text == LETTER]
+    assert full and {d.prompt_version for d in full} == {apv.PROMPT_V2}
 
 
 def test_original_mode_keeps_the_backends_own_system_prompt():
