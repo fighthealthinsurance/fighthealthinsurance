@@ -42,7 +42,7 @@
     ul.problems li { margin-bottom: 6px; }
     .copy-yes { color: #155724; }
     .copy-no, .copy-error { color: #c82333; font-weight: bold; }
-    .copy-skipped { color: #6c757d; }
+    .copy-skipped, .copy-late { color: #6c757d; }
     button.run { padding: 8px 16px; background: #0056b3; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 0.95em; }
     button.run:hover { background: #004085; }
   </style>
@@ -169,7 +169,7 @@
               {% if r.ok %}
                 <span class="status-badge ok">PASSED</span>
               {% else %}
-                <span class="status-badge fail">FAILED</span>
+                <span class="status-badge fail">FAILED</span>{% if r.step %} at {{ r.step }}{% endif %}
                 <div class="error-text">{{ r.error }}</div>
               {% endif %}
             </td>
@@ -207,7 +207,7 @@
         <strong>safe</strong>: a copy off the app's disk &middot;
         <strong>local only</strong>: copies only on the app's disk &middot;
         <strong>missing</strong>: no backend this process reaches has it &middot;
-        <strong>unknown</strong>: no copy found, but a backend errored, did not answer, or was reached after the time limit &middot;
+        <strong>unknown</strong>: no copy found, but a backend errored, did not answer (skipped), or was reached after the time limit (late) &middot;
         <strong>not checked</strong>: the check's time limit came first.
       </p>
 

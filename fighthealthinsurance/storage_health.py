@@ -347,7 +347,7 @@ def _state(copies: Dict[str, str], rows: List[Dict[str, Any]]) -> str:
         return SAFE
     if present:
         return LOCAL_ONLY
-    if {"error", "skipped"} & set(copies.values()):
+    if {"error", "skipped", "late"} & set(copies.values()):
         return UNKNOWN
     return MISSING
 
@@ -364,7 +364,7 @@ def sample_recent_files(
     """
     deadline = time.monotonic() + deadline_s
     reachable = {r["label"] for r in rows if r["reach"]["ok"]}
-    per_backend = {r["label"]: {"yes": 0, "no": 0, "error": 0} for r in rows}
+    per_backend = {r["label"]: {"yes": 0, "no": 0, "error": 0, "late": 0} for r in rows}
     states = {state: 0 for state in SAMPLE_STATES}
     fields: List[Dict[str, Any]] = []
     flagged: List[Dict[str, Any]] = []
@@ -401,13 +401,15 @@ def sample_recent_files(
                 else:
                     entry["sampled"] += 1
                     for r in rows:
-                        # A backend that did not answer, or one reached after
-                        # the deadline, is skipped rather than waited on.
-                        found = (
-                            _copy(r["backend"], name)
-                            if r["label"] in reachable and time.monotonic() <= deadline
-                            else "skipped"
-                        )
+                        # A backend that did not answer is skipped, and one
+                        # that answers but is reached after the deadline is
+                        # late; neither is waited on.
+                        if r["label"] not in reachable:
+                            found = "skipped"
+                        elif time.monotonic() > deadline:
+                            found = "late"
+                        else:
+                            found = _copy(r["backend"], name)
                         doc["copies"][r["label"]] = found
                         if found in per_backend[r["label"]]:
                             per_backend[r["label"]][found] += 1
@@ -479,27 +481,59 @@ def problems(
         # off-disk backend that answers is expected to hold every document.
         # A document safe on another off-disk backend still counts here:
         # it has lost a copy it should have.
+        # A check that errored or ran out of time on an off-disk backend
+        # confirms no copy either, so it is reported too: otherwise a
+        # document safe nowhere but the app's disk could read as healthy.
+        late = 0
         for r in reachable:
-            lacking = sample["per_backend"][r["label"]]["no"]
-            if r["off_disk"] and lacking:
+            counts = sample["per_backend"][r["label"]]
+            late += counts["late"]
+            if not r["off_disk"]:
+                continue
+            if counts["no"]:
                 add(
                     WARN,
-                    f"{r['label']} answers but has no copy of {lacking} of the "
-                    "recent documents checked: its write failed or was skipped.",
+                    f"{r['label']} answers but has no copy of {counts['no']} of "
+                    "the recent documents checked: its write failed or was "
+                    "skipped.",
                 )
-        if states[NOT_CHECKED]:
+            if counts["error"]:
+                add(
+                    WARN,
+                    f"{r['label']} answers but could not be checked for "
+                    f"{counts['error']} of the recent documents: their off-disk "
+                    "copy is unconfirmed.",
+                )
+        if states[NOT_CHECKED] or late:
+            cut = []
+            if states[NOT_CHECKED]:
+                cut.append(f"{states[NOT_CHECKED]} recent documents were not checked")
+            if late:
+                cut.append(f"{late} backend checks were cut off")
             add(
                 WARN,
-                f"{states[NOT_CHECKED]} recent documents were not checked: the "
-                f"{SAMPLE_DEADLINE_S:g}s limit came first, so a backend is slow "
-                "to answer.",
+                f"{' and '.join(cut).capitalize()}: the {SAMPLE_DEADLINE_S:g}s "
+                "limit came first, so a backend is slow to answer.",
             )
     if write_results:
         failed = [w for w in write_results if not w["ok"]]
-        if len(failed) == len(write_results):
-            add(FAIL, "No backend passed the write test: every upload will fail.")
+        steps = {w.get("step") for w in failed}
+        if failed and len(failed) == len(write_results):
+            if steps == {"write"}:
+                add(FAIL, "No backend accepted the test write: every upload will fail.")
+            elif steps <= {"write", "read"}:
+                add(
+                    FAIL,
+                    "No backend read back the test file: stored documents may "
+                    "not open.",
+                )
         for w in failed:
-            add(WARN, f"{w['label']} failed the write test: {w['error']}")
+            step = str(w.get("step") or "write")
+            add(
+                WARN,
+                f"{w['label']} failed the write test at the {step} step "
+                f"({_STEP_MEANING.get(step, 'see the error')}): {w['error']}",
+            )
     found.sort(key=lambda p: -_RANK[p["level"]])
     return found
 
@@ -539,6 +573,14 @@ def _remove_probe(backend: Storage, name: str) -> None:
         logger.warning(f"Could not remove storage probe {name} from {backend}: {e}")
 
 
+#: What a write test that stops at each step says about real documents.
+_STEP_MEANING = {
+    "write": "uploads get no copy there",
+    "read": "its copies may not open",
+    "delete": "deleting documents there fails, so data removal leaves copies",
+}
+
+
 def write_test(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Write a small file to each backend, read it back, and delete it.
 
@@ -557,6 +599,8 @@ def write_test(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "read_ms": None,
             "delete_ms": None,
             "error": None,
+            # The step under way, so a failure names it: write, read or delete.
+            "step": "write",
         }
         stored: Optional[str] = None
         try:
@@ -565,15 +609,18 @@ def write_test(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 functools.partial(backend.save, name, ContentFile(payload)),
             )
             stored = saved
+            result["step"] = "read"
             data, result["read_ms"] = _timed(
                 WRITE_STEP_TIMEOUT_S, functools.partial(_read, backend, saved)
             )
             if data != payload:
                 raise ValueError("read back different bytes than were written")
+            result["step"] = "delete"
             _, result["delete_ms"] = _timed(
                 WRITE_STEP_TIMEOUT_S, functools.partial(backend.delete, saved)
             )
             result["ok"] = True
+            result["step"] = None
         except Exception as e:
             logger.warning(f"Storage write test failed on {r['label']}: {e}")
             result["error"] = f"{type(e).__name__}: {e}"[:300]

@@ -375,7 +375,7 @@ class SampleRecentFilesTest(_StorageTestCase):
         ):
             sample = self.sample(deadline_s=1)
         self.assertEqual(
-            list(sample["flagged"][0]["copies"].values()), ["yes", "skipped", "skipped"]
+            list(sample["flagged"][0]["copies"].values()), ["yes", "late", "late"]
         )
 
     def test_rows_with_files_are_counted_per_field(self):
@@ -413,11 +413,53 @@ class ProblemsTest(_StorageTestCase):
         slot = {"label": "EXTERNAL_STORAGE_B", "level": "fail", "note": "down"}
         self.assertEqual(self.levels(unconfigured=[slot])[0], storage_health.FAIL)
 
-    def write_results(self, *oks):
+    def write_results(self, *oks, step="write"):
         return [
-            {"label": f"backend {i + 1}", "ok": ok, "error": None if ok else "EROFS"}
+            {
+                "label": f"backend {i + 1}",
+                "ok": ok,
+                "error": None if ok else "EROFS",
+                "step": None if ok else step,
+            }
             for i, ok in enumerate(oks)
         ]
+
+    def test_every_backend_failing_at_read_fails(self):
+        results = self.write_results(False, False, False, step="read")
+        found = storage_health.problems(self.rows(), [], None, results)
+        self.assertIn("No backend read back the test file", found[0]["text"])
+
+    def test_every_backend_failing_only_at_delete_does_not_claim_uploads_fail(self):
+        """A store that refuses deletes still takes uploads."""
+        results = self.write_results(False, False, False, step="delete")
+        found = storage_health.problems(self.rows(), [], None, results)
+        self.assertEqual({p["level"] for p in found}, {storage_health.WARN})
+
+    def test_errored_check_on_an_off_disk_backend_warns(self):
+        """An off-disk copy that cannot be checked is not a confirmed copy."""
+        self.plan_document()
+        with mock.patch.object(
+            self.backends[2], "exists", side_effect=OSError(13, "EACCES")
+        ):
+            sample = storage_health.sample_recent_files(self.rows())
+        found = storage_health.problems(self.rows(), [], sample)
+        self.assertIn("could not be checked for 1", found[0]["text"])
+
+    def test_checks_cut_off_by_the_deadline_warn(self):
+        self.plan_document()
+        clock = [0.0]
+
+        def slow_copy(backend, name):
+            clock[0] += 5.0
+            return "yes"
+
+        fake_time = mock.Mock(monotonic=lambda: clock[0])
+        with mock.patch.object(storage_health, "time", fake_time), mock.patch.object(
+            storage_health, "_copy", side_effect=slow_copy
+        ):
+            sample = storage_health.sample_recent_files(self.rows(), deadline_s=1)
+        found = storage_health.problems(self.rows(), [], sample)
+        self.assertIn("2 backend checks were cut off", found[0]["text"])
 
     def test_every_backend_failing_the_write_test_fails(self):
         results = self.write_results(False, False, False)
@@ -472,6 +514,13 @@ class WriteTestTest(_StorageTestCase):
         ):
             results = storage_health.write_test(self.rows())
         self.assertEqual([r["ok"] for r in results], [True, False, True])
+
+    def test_a_failed_delete_is_named_as_the_failing_step(self):
+        with mock.patch.object(
+            self.backends[0], "delete", side_effect=PermissionError("no delete")
+        ):
+            results = storage_health.write_test(self.rows())
+        self.assertEqual(results[0]["step"], "delete")
 
     def test_bytes_that_do_not_read_back_fail(self):
         with mock.patch.object(storage_health, "_read", return_value=b"other"):
