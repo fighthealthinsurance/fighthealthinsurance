@@ -115,6 +115,18 @@ class FindNextStepsDataIntegrityTest(TestCase):
         self.assertEqual(self.denial.appeal_fax_number, "555-222-3333")
         self.assertEqual(self.denial.procedure, "Updated procedure")
 
+    def test_clear_markers_from_overlapping_reviews_are_merged(self):
+        first = Denial.objects.get(pk=self.denial.pk)
+        second = Denial.objects.get(pk=self.denial.pk)
+
+        FindNextStepsHelper._note_cleared_on_review(first, "procedure")
+        FindNextStepsHelper._note_cleared_on_review(second, "diagnosis")
+
+        self.denial.refresh_from_db()
+        self.assertEqual(
+            set(self.denial.review_cleared.split()), {"procedure", "diagnosis"}
+        )
+
     def test_a_box_shown_filled_and_emptied_is_cleared(self):
         Denial.objects.filter(denial_id=self.denial.denial_id).update(
             date_of_service="2024-01-15", your_state="CA", state="CA"

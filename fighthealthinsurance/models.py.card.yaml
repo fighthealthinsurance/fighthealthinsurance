@@ -1,0 +1,27 @@
+card: 1
+name: models
+summary: "Django case models, including persisted review-clearing markers and query predicates"
+language: python
+kind: module
+interface:
+  - "Denial.cleared_on_review(field: str) -> bool"
+  - "Denial.not_cleared_on_review(field: str) -> Q"
+  - "class GenericQuestionGeneration"
+  - "class GenericContextGeneration"
+  - "class CMSCoverageCache"
+  - "class IMRDecision"
+  - "class InterestedProfessional"
+  - "class ProfessionalInquiry"
+  - "build_unsubscribe_url(token: str)"
+  - "class MailingListSubscriber"
+  - "class DemoRequests"
+  - "class FollowUpType"
+  - "class FollowUp"
+  - "class FollowUpSched"
+license: unknown
+provenance:
+  authored_by: unknown
+  agent: agent
+  human_reviewed: false
+triage:
+  - {"date": "2026-11-01", "agent": "agent", "task": "Preserve review-page corrections during late triage application", "outcome": "adopted", "notes": "Reuse Denial.cleared_on_review and Denial.not_cleared_on_review for the persisted review-clearing marker"}
