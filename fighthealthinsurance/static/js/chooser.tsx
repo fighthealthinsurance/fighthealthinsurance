@@ -1190,6 +1190,56 @@ const ToolCallList: React.FC<{ calls: ToolCall[] }> = ({ calls }) => {
   );
 };
 
+// ---------------------------------------------------------------------------
+// Review insights: a summary of how each review went, sent with the vote and
+// kept raw (ChooserVote.review_signals, cleaned by chooser_review_signals.py).
+
+type VoteInput = "keyboard" | "pointer";
+
+interface ReviewSignals {
+  first_interaction_ms: number | null;
+  pointer_moves: number;
+  pointer_downs: number;
+  key_presses: number;
+  scroll_events: number;
+  selection_changes: number;
+  hidden_count: number;
+  pointer_types: Set<string>;
+}
+
+const freshSignals = (): ReviewSignals => ({
+  first_interaction_ms: null,
+  pointer_moves: 0,
+  pointer_downs: 0,
+  key_presses: 0,
+  scroll_events: 0,
+  selection_changes: 0,
+  hidden_count: 0,
+  pointer_types: new Set(),
+});
+
+// The drafts in `ids` as their positions on the page (0 for Draft A).
+const positionsOf = (order: string[], ids: Set<string>): number[] =>
+  order.flatMap((id, index) => (ids.has(id) ? [index] : []));
+
+const signalsPayload = (
+  signals: ReviewSignals,
+  order: string[],
+  overflowing: Set<string>,
+  scrolledToEnd: Set<string>,
+  voteInput: VoteInput,
+  roundInPage: number,
+) => ({
+  ...signals,
+  pointer_types: Array.from(signals.pointer_types),
+  overflowing_positions: positionsOf(order, overflowing),
+  scrolled_to_end_positions: positionsOf(order, scrolledToEnd),
+  vote_input: voteInput,
+  round_in_page: roundInPage,
+  viewport_width: window.innerWidth,
+  webdriver: navigator.webdriver === true,
+});
+
 const CandidateCard: React.FC<{
   candidate: ChooserCandidate;
   label: string;
@@ -1203,6 +1253,12 @@ const CandidateCard: React.FC<{
   checkFacts: boolean;
   onSelect: () => void;
   onToggleFlag: () => void;
+  // Told each time the draft is opened with "Read it all".
+  onExpand: () => void;
+  // Told whether the draft is too long for its box, and when its box is
+  // scrolled to the end.
+  onOverflow: (overflowing: boolean) => void;
+  onScrolledToEnd: () => void;
 }> = ({
   candidate,
   label,
@@ -1213,8 +1269,19 @@ const CandidateCard: React.FC<{
   checkFacts,
   onSelect,
   onToggleFlag,
+  onExpand,
+  onOverflow,
+  onScrolledToEnd,
 }) => {
   const [expanded, setExpanded] = useState(false);
+  const viewport = useRef<HTMLDivElement>(null);
+  // Measured once the draft is laid out in its collapsed box.
+  useEffect(() => {
+    const box = viewport.current;
+    if (box && !expanded) onOverflow(box.scrollHeight > box.clientHeight + 1);
+    // Only the draft's own size matters, not a new callback identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidate.content]);
   const citations = useMemo(
     () => (checkFacts ? checkCitations(candidate.content, evidence) : []),
     [candidate.content, evidence, checkFacts],
@@ -1321,7 +1388,16 @@ const CandidateCard: React.FC<{
           <ToolCallList calls={candidate.tool_calls} />
         </Box>
       ) : null}
-      <ScrollArea h={expanded ? undefined : 320} offsetScrollbars>
+      <ScrollArea
+        h={expanded ? undefined : 320}
+        offsetScrollbars
+        viewportRef={viewport}
+        onScrollPositionChange={({ y }) => {
+          const box = viewport.current;
+          if (box && y + box.clientHeight >= box.scrollHeight - 4)
+            onScrolledToEnd();
+        }}
+      >
         <Text size="sm" style={{ whiteSpace: "pre-wrap" }}>
           <HighlightedDraft content={candidate.content} citations={citations} />
         </Text>
@@ -1333,7 +1409,8 @@ const CandidateCard: React.FC<{
           color="gray"
           onClick={(event) => {
             event.stopPropagation();
-            setExpanded((v) => !v);
+            if (!expanded) onExpand();
+            setExpanded(!expanded);
           }}
         >
           {expanded ? "Collapse" : "Read it all"}
@@ -1523,6 +1600,89 @@ const ChooserInterface: React.FC<{
   const [lastRoundTie, setLastRoundTie] = useState(false);
   const [lastRoundAllBad, setLastRoundAllBad] = useState(false);
   const [rankings, setRankings] = useState<RankingsState>("pending");
+  // How the case was reviewed, sent with the vote (ChooserVote.active_ms
+  // and expanded_candidate_ids): the time the page was visible since the
+  // case appeared, so a switch to another tab is not counted, and the
+  // drafts opened with "Read it all". Refs, not state: nothing shows them.
+  const activeMs = useRef(0);
+  const visibleSince = useRef<number | null>(null);
+  const expandedIds = useRef<Set<string>>(new Set());
+  // And a summary of how the review went (ChooserVote.review_signals; see
+  // chooser_review_signals.py for what each entry means), reset per case.
+  const signals = useRef<ReviewSignals>(freshSignals());
+  const overflowingIds = useRef<Set<string>>(new Set());
+  const scrolledToEndIds = useRef<Set<string>>(new Set());
+  const roundsThisPage = useRef(0);
+  const currentTaskId = state.task?.task_id ?? null;
+  useEffect(() => {
+    activeMs.current = 0;
+    expandedIds.current = new Set();
+    signals.current = freshSignals();
+    overflowingIds.current = new Set();
+    scrolledToEndIds.current = new Set();
+    visibleSince.current =
+      document.visibilityState === "visible" ? performance.now() : null;
+  }, [currentTaskId]);
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        if (visibleSince.current === null)
+          visibleSince.current = performance.now();
+      } else {
+        signals.current.hidden_count += 1;
+        if (visibleSince.current !== null) {
+          activeMs.current += performance.now() - visibleSince.current;
+          visibleSince.current = null;
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+  const reviewActiveMs = useCallback(
+    () =>
+      Math.round(
+        activeMs.current +
+          (visibleSince.current === null
+            ? 0
+            : performance.now() - visibleSince.current),
+      ),
+    [],
+  );
+  useEffect(() => {
+    const interacted = () => {
+      if (signals.current.first_interaction_ms === null)
+        signals.current.first_interaction_ms = reviewActiveMs();
+    };
+    const onPointerMove = () => {
+      signals.current.pointer_moves += 1;
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      signals.current.pointer_downs += 1;
+      if (event.pointerType)
+        signals.current.pointer_types.add(event.pointerType);
+      interacted();
+    };
+    const onKeyDown = () => {
+      signals.current.key_presses += 1;
+      interacted();
+    };
+    const onScroll = () => {
+      signals.current.scroll_events += 1;
+      interacted();
+    };
+    const options = { capture: true, passive: true };
+    window.addEventListener("pointermove", onPointerMove, options);
+    window.addEventListener("pointerdown", onPointerDown, options);
+    window.addEventListener("keydown", onKeyDown, options);
+    window.addEventListener("scroll", onScroll, options);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove, options);
+      window.removeEventListener("pointerdown", onPointerDown, options);
+      window.removeEventListener("keydown", onKeyDown, options);
+      window.removeEventListener("scroll", onScroll, options);
+    };
+  }, [reviewActiveMs]);
   // Null until the referee answers the question after their first round.
   // The ref is what fetches read, so a choice applies to the very next case.
   const [preference, setPreference] = useState<CasePreference | null>(null);
@@ -1693,81 +1853,101 @@ const ChooserInterface: React.FC<{
     fetchNextTaskRef.current = fetchNextTask;
   }, [fetchNextTask]);
 
-  const submitVote = useCallback(async () => {
-    if (!state.task) return;
-    const selected = state.task.candidates
-      .filter((candidate) => state.selectedIds.includes(candidate.id))
-      .map((candidate) => candidate.id);
-    const chosenId = state.allBad ? undefined : selected[0];
-    if (!state.allBad && !chosenId) return;
-    const tied = !state.allBad && selected.length > 1 ? selected : [];
-    const fouls = state.flaggedIds.length;
+  const submitVote = useCallback(
+    async (input: VoteInput) => {
+      if (!state.task) return;
+      const selected = state.task.candidates
+        .filter((candidate) => state.selectedIds.includes(candidate.id))
+        .map((candidate) => candidate.id);
+      const chosenId = state.allBad ? undefined : selected[0];
+      if (!state.allBad && !chosenId) return;
+      const tied = !state.allBad && selected.length > 1 ? selected : [];
+      const fouls = state.flaggedIds.length;
 
-    setState((prev) => ({ ...prev, mode: "loading" }));
+      setState((prev) => ({ ...prev, mode: "loading" }));
 
-    try {
-      const response = await fetch("/ziggy/rest/chooser/vote/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRFToken": getCSRFToken(),
-        },
-        credentials: "include",
-        body: JSON.stringify({
-          task_id: state.task.task_id,
-          ...(chosenId ? { chosen_candidate_id: chosenId } : {}),
-          presented_candidate_ids: state.task.candidates.map((c) => c.id),
-          flagged_candidate_ids: state.flaggedIds,
-          tied_candidate_ids: tied,
-          all_bad: state.allBad,
-          rationale: state.rationale,
-        }),
-      });
+      try {
+        const response = await fetch("/ziggy/rest/chooser/vote/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRFToken(),
+          },
+          credentials: "include",
+          body: JSON.stringify({
+            task_id: state.task.task_id,
+            ...(chosenId ? { chosen_candidate_id: chosenId } : {}),
+            presented_candidate_ids: state.task.candidates.map((c) => c.id),
+            flagged_candidate_ids: state.flaggedIds,
+            tied_candidate_ids: tied,
+            all_bad: state.allBad,
+            rationale: state.rationale,
+            active_ms: reviewActiveMs(),
+            // In display order, and only drafts still on the page.
+            expanded_candidate_ids: state.task.candidates
+              .map((c) => c.id)
+              .filter((id) => expandedIds.current.has(id)),
+            review_signals: signalsPayload(
+              signals.current,
+              state.task.candidates.map((c) => c.id),
+              overflowingIds.current,
+              scrolledToEndIds.current,
+              input,
+              roundsThisPage.current,
+            ),
+          }),
+        });
 
-      if (!response.ok) {
-        const refusal = await captchaRefusal(response);
-        if (refusal !== undefined) {
-          backToCaptcha(refusal);
-          return;
+        if (!response.ok) {
+          const refusal = await captchaRefusal(response);
+          if (refusal !== undefined) {
+            backToCaptcha(refusal);
+            return;
+          }
+          const errorData = await response.json();
+          throw new Error(errorData.error || "Failed to submit vote");
         }
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to submit vote");
-      }
 
-      const result = (await response.json()) as { review_count?: number };
-      if (result.review_count !== undefined)
-        setReviewCount(result.review_count);
-      const next = {
-        rounds: scoreboard.rounds + 1,
-        fouls: scoreboard.fouls + fouls,
-      };
-      writeScoreboard(next);
-      setScoreboard(next);
-      setLastRoundFouls(fouls);
-      setLastRoundTie(tied.length > 0);
-      setLastRoundAllBad(state.allBad);
-      setState((prev) => ({ ...prev, mode: "confirmation" }));
-    } catch (error) {
-      setState((prev) => ({
-        ...prev,
-        mode: "error",
-        error: error instanceof Error ? error.message : "Failed to submit vote",
-      }));
-    }
-  }, [
-    state.task,
-    state.selectedIds,
-    state.allBad,
-    state.rationale,
-    state.flaggedIds,
-    scoreboard,
-    backToCaptcha,
-  ]);
+        const result = (await response.json()) as { review_count?: number };
+        if (result.review_count !== undefined)
+          setReviewCount(result.review_count);
+        const next = {
+          rounds: scoreboard.rounds + 1,
+          fouls: scoreboard.fouls + fouls,
+        };
+        roundsThisPage.current += 1;
+        writeScoreboard(next);
+        setScoreboard(next);
+        setLastRoundFouls(fouls);
+        setLastRoundTie(tied.length > 0);
+        setLastRoundAllBad(state.allBad);
+        setState((prev) => ({ ...prev, mode: "confirmation" }));
+      } catch (error) {
+        setState((prev) => ({
+          ...prev,
+          mode: "error",
+          error:
+            error instanceof Error ? error.message : "Failed to submit vote",
+        }));
+      }
+    },
+    [
+      state.task,
+      state.selectedIds,
+      state.allBad,
+      state.rationale,
+      state.flaggedIds,
+      scoreboard,
+      backToCaptcha,
+      reviewActiveMs,
+    ],
+  );
 
   const handleSelectCandidate = useCallback((candidate: ChooserCandidate) => {
     // A flagged draft cannot win; clear its foul before selecting it.
     setState((prev) => {
       if (prev.flaggedIds.includes(candidate.id)) return prev;
+      signals.current.selection_changes += 1;
       return {
         ...prev,
         allBad: false,
@@ -1911,7 +2091,7 @@ const ChooserInterface: React.FC<{
       if (index >= 0 && index < task.candidates.length) {
         handleSelectCandidate(task.candidates[index]);
       } else if (event.key === "Enter" && canVote) {
-        submitVote();
+        submitVote("keyboard");
       }
     };
     window.addEventListener("keydown", handler);
@@ -2377,6 +2557,14 @@ const ChooserInterface: React.FC<{
                 checkFacts={isAppeal}
                 onSelect={() => handleSelectCandidate(candidate)}
                 onToggleFlag={() => handleToggleFlag(candidate)}
+                onExpand={() => expandedIds.current.add(candidate.id)}
+                onOverflow={(overflowing) => {
+                  if (overflowing) overflowingIds.current.add(candidate.id);
+                  else overflowingIds.current.delete(candidate.id);
+                }}
+                onScrolledToEnd={() =>
+                  scrolledToEndIds.current.add(candidate.id)
+                }
               />
             ))}
           </SimpleGrid>
@@ -2421,7 +2609,7 @@ const ChooserInterface: React.FC<{
               size="lg"
               radius="md"
               disabled={!canVote}
-              onClick={submitVote}
+              onClick={() => submitVote("pointer")}
               style={primaryButton(canVote)}
             >
               {castLabel}

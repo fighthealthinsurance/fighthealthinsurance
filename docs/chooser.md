@@ -147,6 +147,46 @@ page carries `data-captcha-passed` on `#chooser-root`, so a reload asks
 for no second tick. The Arena is linked from the home hero as "Help Improve Our
 Models".
 
+## Review insights
+
+Each vote keeps a raw record of how the review went, so the votes can be
+studied and weighted in more than one way later. Nothing here changes how a
+vote counts today, and nothing is ever refused over it.
+
+- `served_at`: when the next-task endpoint handed this session the task,
+  kept in the session (`chooser_served_at`, the last
+  `SESSION_SERVED_LIMIT` tasks) and copied onto the vote.
+  `ChooserVote.seconds_to_vote` is `created_at - served_at`, timed on the
+  server. Null when the vote came without a recorded serve (a request with
+  no session cookie, an older client).
+- `active_ms`: the page's count of the time it was visible between the
+  case appearing and the vote (time in another tab is left out), clamped to
+  a day (`ACTIVE_MS_CAP`). Null from clients that do not send it. When it
+  and `seconds_to_vote` disagree by more than network time, the server
+  figure is the one measured here.
+- `expanded_candidate_ids`: the presented drafts opened with "Read it
+  all", in display order. Tokens on the way in, like the other candidate
+  references, and they must be among the presented drafts.
+- `review_signals`: the page's interaction summary, cleaned by
+  `chooser_review_signals.clean_review_signals` (which documents each
+  key): pointer moves and presses, key presses, scrolls, pick changes,
+  times the page was hidden, visible time to the first interaction, the
+  pointer types seen (mouse, touch, pen), whether the vote was cast by
+  keyboard or pointer, rounds already voted in this page load, the
+  viewport width, `navigator.webdriver`, and by draft position (0 for
+  Draft A) which drafts overflowed their box and which were scrolled to
+  the end. A malformed entry is left out and named under `dropped`.
+- `network_class`, `asn_name`, `country`: the judge's network as
+  `client_network.classify` classes it (isp, hosting, ai_platform, tor,
+  unknown), the ASN's name, and Cloudflare's country. Never the address.
+  Blank when no Cloudflare address came with the request.
+- `user_agent`: the browser's user agent, cut to 400 characters.
+
+The position of the pick is already in the vote: `presented_candidate_ids`
+is in display order and the server shuffles that order every time.
+
+None of these fields leave the server in the exports.
+
 ## How a case is made (`chooser_tasks.py`)
 
 1. **Seed pair.** When `CHOOSER_SEED_FROM_RANKINGS` is on (default) the

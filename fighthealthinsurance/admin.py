@@ -1335,13 +1335,17 @@ class ChooserVoteAdmin(admin.ModelAdmin):
         "chosen_candidate",
         "tied_candidate_ids",
         "all_bad",
+        "seconds_to_vote",
+        "active_ms",
+        "expanded_candidate_ids",
+        "network_class",
         "session_key",
         "created_at",
     )
     search_fields = ("task__id", "session_key", "rationale")
-    list_filter = ("all_bad", "created_at")
+    list_filter = ("all_bad", "network_class", "created_at")
     ordering = ("-created_at",)
-    readonly_fields = ("id", "created_at")
+    readonly_fields = ("id", "created_at", "seconds_to_vote")
 
 
 @admin.register(AuditLog)

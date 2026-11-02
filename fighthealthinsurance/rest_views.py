@@ -56,6 +56,7 @@ from fighthealthinsurance.ml.ml_models import (
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance import chooser_complexity
 from fighthealthinsurance.chooser_practice_areas import normalize_practice_area
+from fighthealthinsurance.chooser_review_signals import clean_review_signals
 from fighthealthinsurance.chooser_tokens import candidate_token, resolve_candidate
 from fighthealthinsurance.upload_limits import stored_size_limit
 from fighthealthinsurance.models import (
@@ -2496,6 +2497,57 @@ class ChooserViewSet(viewsets.ViewSet):
     SESSION_ADDRESS_KEY = "chooser_address_key"
     SESSION_ADDRESS_UNTIL = "chooser_address_until"
 
+    # When each task was served to this session, so a vote can be timed by
+    # the server (ChooserVote.served_at) and not only by the client's word.
+    # Kept for the most recent few tasks: a judge has one case open at a
+    # time, and the session should not grow with every round.
+    SESSION_SERVED_KEY = "chooser_served_at"
+    SESSION_SERVED_LIMIT = 10
+    # The cap on a client's active_ms: a page left visible for a day is
+    # recorded as a day.
+    ACTIVE_MS_CAP = 24 * 60 * 60 * 1000
+    USER_AGENT_CHARS = 400
+
+    def _network_details(self, request: Request) -> dict:
+        """Improve review insights with the judge's network, as the
+        ChooserVote fields network_class, asn_name and country: classed and
+        named, never the address itself. Blank when there is no address
+        Cloudflare vouched for (local runs, in-cluster calls)."""
+        from fhi_users.audit import get_asn_info
+        from fighthealthinsurance import client_network
+
+        cf_country = client_network.cf_country_from_meta(request.META)
+        address = client_network.cf_ip_from_meta(request.META)
+        if not address or address == client_network.NO_ADDRESS:
+            return {"network_class": "", "asn_name": "", "country": cf_country}
+        _asn_number, asn_name = get_asn_info(address)
+        return {
+            "network_class": client_network.classify(address, asn_name, cf_country),
+            "asn_name": asn_name[:200],
+            "country": cf_country,
+        }
+
+    def _remember_served(self, request: Request, task_id: int) -> None:
+        """Note that ``task_id`` was just served to this session."""
+        served = dict(request.session.get(self.SESSION_SERVED_KEY) or {})
+        served.pop(str(task_id), None)
+        served[str(task_id)] = timezone.now().isoformat()
+        # Dicts keep insertion order, so the oldest serves go first.
+        while len(served) > self.SESSION_SERVED_LIMIT:
+            served.pop(next(iter(served)))
+        request.session[self.SESSION_SERVED_KEY] = served
+
+    def _served_at(self, request: Request, task_id: int) -> Optional[datetime.datetime]:
+        """When ``task_id`` was last served to this session, or None."""
+        served = request.session.get(self.SESSION_SERVED_KEY) or {}
+        value = served.get(str(task_id)) if isinstance(served, dict) else None
+        if not value:
+            return None
+        try:
+            return datetime.datetime.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None
+
     def _judged_by(self, request: Request, voter: dict) -> Q:
         """The votes or skips this judge already made: the session's, the
         signed-in user's from any session, and the ones made from the same
@@ -2724,6 +2776,7 @@ class ChooserViewSet(viewsets.ViewSet):
             response_data["review_count"] = ChooserVote.objects.filter(
                 user=voter["user"]
             ).count()
+        self._remember_served(request, task.id)
 
         return Response(
             serializers.ChooserTaskSerializer(response_data).data,
@@ -2839,9 +2892,13 @@ class ChooserViewSet(viewsets.ViewSet):
             resolve_candidate(v)
             for v in serializer.validated_data.get("tied_candidate_ids") or []
         ]
-        if (
-            not all_bad and chosen_candidate_id is None
-        ) or None in presented_resolved + flagged_resolved + tied_resolved:
+        expanded_resolved = [
+            resolve_candidate(v)
+            for v in serializer.validated_data.get("expanded_candidate_ids") or []
+        ]
+        if (not all_bad and chosen_candidate_id is None) or None in (
+            presented_resolved + flagged_resolved + tied_resolved + expanded_resolved
+        ):
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "Invalid candidate reference"}
@@ -2858,6 +2915,9 @@ class ChooserViewSet(viewsets.ViewSet):
         )
         tied_candidate_ids = list(
             dict.fromkeys(cid for cid in tied_resolved if cid is not None)
+        )
+        expanded_candidate_ids = list(
+            dict.fromkeys(cid for cid in expanded_resolved if cid is not None)
         )
 
         # Validate task exists and is in valid state
@@ -2945,6 +3005,15 @@ class ChooserViewSet(viewsets.ViewSet):
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if any(cid not in presented_candidate_ids for cid in expanded_candidate_ids):
+            return Response(
+                serializers.ErrorSerializer(
+                    {
+                        "error": "Expanded candidates must be among the presented candidates"
+                    }
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # A tie names the drafts the voter found equally best: two or more,
         # all shown, none flagged, and the chosen one among them (it stands
@@ -2992,6 +3061,16 @@ class ChooserViewSet(viewsets.ViewSet):
                 id=tied_candidate_ids[0], task=task
             )
 
+        active_ms = serializer.validated_data.get("active_ms")
+        if active_ms is not None:
+            active_ms = min(active_ms, self.ACTIVE_MS_CAP)
+        review_signals = clean_review_signals(
+            serializer.validated_data.get("review_signals")
+        )
+        user_agent = str(request.META.get("HTTP_USER_AGENT", ""))[
+            : self.USER_AGENT_CHARS
+        ]
+
         # One vote per session, and per signed-in user, is held by the
         # database too, for two votes racing from two sessions; atomic, so a
         # refused insert leaves the request's transaction usable.
@@ -3005,6 +3084,12 @@ class ChooserViewSet(viewsets.ViewSet):
                     tied_candidate_ids=tied_candidate_ids,
                     all_bad=all_bad,
                     rationale=serializer.validated_data["rationale"],
+                    served_at=self._served_at(request, task.id),
+                    active_ms=active_ms,
+                    expanded_candidate_ids=expanded_candidate_ids,
+                    review_signals=review_signals,
+                    user_agent=user_agent,
+                    **self._network_details(request),
                     **voter,
                 )
         except IntegrityError:

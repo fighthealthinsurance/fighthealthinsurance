@@ -4514,6 +4514,28 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
     # votes still count as presentations, with zero winning credit for all.
     all_bad = models.BooleanField(default=False)
     rationale = models.TextField(blank=True, default="")
+    # Review insights: how the review went, kept raw so the votes can be
+    # studied and weighted in more than one way later (see docs/chooser.md,
+    # "Review insights"). served_at is when the server handed this session
+    # the task, so created_at - served_at is timed on the server; NULL when
+    # the vote came without a recorded serve (an older client, or a session
+    # that lost it). active_ms is the page's count of the time it was
+    # visible between the case appearing and the vote, so a judge who
+    # switched tabs is not timed for it; NULL from clients that do not send
+    # it. expanded_candidate_ids are the presented drafts the judge opened
+    # with "Read it all".
+    served_at = models.DateTimeField(null=True, blank=True)
+    active_ms = models.PositiveIntegerField(null=True, blank=True)
+    expanded_candidate_ids = models.JSONField(default=list, blank=True)
+    # The page's interaction summary, as chooser_review_signals cleans it.
+    review_signals = models.JSONField(default=dict, blank=True)
+    # The judge's network as the server saw it: the class
+    # (client_network.classify: isp, hosting, tor, ...), the ASN's name and
+    # Cloudflare's country. Never the address. Blank when unknown.
+    network_class = models.CharField(max_length=20, blank=True, default="")
+    asn_name = models.CharField(max_length=200, blank=True, default="")
+    country = models.CharField(max_length=2, blank=True, default="")
+    user_agent = models.CharField(max_length=400, blank=True, default="")
     session_key = models.CharField(max_length=100, db_index=True)
     # Who else this judge is, so the Arena does not serve the same person a
     # case twice: the signed-in user (a person keeps their votes across
@@ -4567,6 +4589,13 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
         if len(tied) >= 2:
             return {cid: 1.0 / len(tied) for cid in tied}
         return {chosen_candidate_id: 1.0}
+
+    @property
+    def seconds_to_vote(self) -> typing.Optional[float]:
+        """Server-measured time from serving the task to receiving the vote."""
+        if self.served_at is None or self.created_at is None:
+            return None
+        return (self.created_at - self.served_at).total_seconds()
 
     @staticmethod
     def rounded_credit(credit: float) -> typing.Union[int, float]:
