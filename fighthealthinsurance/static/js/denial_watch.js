@@ -251,18 +251,20 @@ function iSource(s){const g=GI[s],n=esc(NAMES[s]);
 function iLeft(s){const g=GI[s];if(!g||!g.left_out.length)return '';const by=new Map();
   for(const x of g.left_out){if(!by.has(x.why))by.set(x.why,[]);by.get(x.why).push(x.n);}
   return 'Not in the table: '+esc(andList([...by].map(([why,n])=>andList(n)+' ('+why+')')))+'.';}
+/* In words, so a change reads without colour; from the rounded figures beside it, so the sum checks by eye. */
+function moved(a,b,dp=1){const d=parseFloat(pct(b,dp))-parseFloat(pct(a,dp));return Math.abs(d)<1e-9?'no change':(d<0?'down ':'up ')+Math.abs(d).toFixed(dp);}
 /* One state at a time, the one picked on the map or here, so no company is set against another state's. */
 let ipin=dsel;
 function iDraw(){const s=$('istate').value,g=GI[s];
   /* A mapped state with no insurer big enough for the table isn't a grey state. */
   if(!s){$('icount').textContent='';$('isource').hidden=$('ileft').hidden=true;$('itable').innerHTML=`<tbody><tr><td>${NAMES[ipin]?(ST[ipin]?`None of ${NAMES[ipin]}'s insurers reported the 50,000 in-network claims this table needs.`:OWN(ipin)+elsewhere(ipin)):''}</td></tr></tbody>`;return;}
   /* One state: no State column, since the picker names it. A report with no appeal counts gets no appeals column. */
-  const rows=rowsOf(s).slice().sort((a,b)=>b.r-a.r),ap=!g||g.appeals,left=iLeft(s);
+  const rows=rowsOf(s).slice().sort((a,b)=>b.r-a.r),ap=!g||g.appeals,left=iLeft(s),ch=!g;
   $('icount').textContent=rows.length+(rows.length>1?' insurers in ':' insurer in ')+NAMES[s]+(g?', '+g.year+' claims':'');
   $('isource').innerHTML=iSource(s);$('isource').hidden=false;
   $('ileft').innerHTML=left;$('ileft').hidden=!left;
-  $('itable').innerHTML='<thead><tr><th>Insurer</th><th>Denial rate</th><th class="dw-r">Claims</th>'+(ap?'<th class="dw-r">Appeals won</th>':'')+'</tr></thead><tbody>'+
-   rows.map(i=>`<tr><td>${esc(i.n)}</td><td class="dw-num dw-nowrap"><span class="dw-mini" style="width:${Math.max(2,i.r/IMAX*90)}px"></span>${pct(i.r)}</td><td class="dw-r dw-num">${big(i.c)}</td>${ap?`<td class="dw-r dw-num">${i.a!=null&&i.o!=null?pct(i.o/i.a,0)+' <span class="dw-note">('+fmt(i.o)+' of '+fmt(i.a)+')</span>':i.a!=null?'<span class="dw-note">not reported ('+fmt(i.a)+' appeals)</span>':'<span class="dw-note">too few</span>'}</td>`:''}</tr>`).join('')+'</tbody>';}
+  $('itable').innerHTML='<thead><tr><th>Insurer</th><th>Denial rate</th><th class="dw-r">Claims</th>'+(ch?'<th class="dw-r">Change from 2024</th>':'')+(ap?'<th class="dw-r">Appeals won</th>':'')+'</tr></thead><tbody>'+
+   rows.map(i=>`<tr><td>${esc(i.n)}</td><td class="dw-num dw-nowrap"><span class="dw-mini" style="width:${Math.max(2,i.r/IMAX*90)}px"></span>${pct(i.r)}</td><td class="dw-r dw-num">${big(i.c)}</td>${ch?`<td class="dw-r dw-num">${i.p!=null?moved(i.p,i.r):'<span class="dw-note">no 2024 figure</span>'}</td>`:''}${ap?`<td class="dw-r dw-num">${i.a!=null&&i.o!=null?pct(i.o/i.a,0)+' <span class="dw-note">('+fmt(i.o)+' of '+fmt(i.a)+')</span>':i.a!=null?'<span class="dw-note">not reported ('+fmt(i.a)+' appeals)</span>':'<span class="dw-note">too few</span>'}</td>`:''}</tr>`).join('')+'</tbody>';}
 $('istate').value=rowsOf(dsel)?dsel:states[0];
 $('istate').onchange=()=>{const s=$('istate').value;ipin=s;$('dmap')._pinned=s;dRead(s);iDraw();};
 $('dmap')._onPin=s=>{ipin=s;$('istate').value=rowsOf(s)?s:'';iDraw();};
@@ -285,6 +287,23 @@ document.querySelectorAll('#pamode button').forEach(b=>b.onclick=()=>{document.q
 paDraw('ma');
 
 /* IMR */
+/* what changed: two dots on one scale, hollow the earlier and solid the later, one colour because neither direction is plainly good */
+function dumbbell(a,b,max){const at=x=>Math.min(100,x/max*100);const lo=Math.min(a,b),hi=Math.max(a,b);
+  return `<span class="dw-dumb" aria-hidden="true"><i class="dw-dumb-line" style="left:${at(lo).toFixed(1)}%;width:${(at(hi)-at(lo)).toFixed(1)}%"></i><i class="dw-dumb-from" style="left:${at(a).toFixed(1)}%"></i><i class="dw-dumb-to" style="left:${at(b).toFixed(1)}%"></i></span>`;}
+/* A page still holding an older bundle skips this section, and the charts after it still draw. */
+const CH=D.changes;
+if(CH&&D.imr_periods){
+$('chcompany').innerHTML='<thead><tr><th>Company</th><th class="dw-r">2024</th><th class="dw-r">2025</th><th class="dw-r">Change, points</th><th>On one scale</th><th class="dw-r">Insurers that fell / rose</th></tr></thead><tbody>'+
+  CH.companies.filter(r=>r.k!=='All these insurers').map(r=>`<tr><th scope="row">${esc(r.k)}</th><td class="dw-r dw-num">${pct(r.r0)}</td><td class="dw-r dw-num">${pct(r.r1)}</td><td class="dw-r dw-num dw-nowrap">${moved(r.r0,r.r1)}</td><td>${dumbbell(r.r0,r.r1,.3)}</td><td class="dw-r dw-num">${r.fell} / ${r.rose}</td></tr>`).join('')+'</tbody>';
+$('chreasons').innerHTML='<thead><tr><th>Reason</th><th class="dw-r">2024</th><th class="dw-r">2025</th><th class="dw-r">Change</th></tr></thead><tbody>'+
+  CH.reasons.rows.map(r=>{const d=Math.round((r.per1-r.per0)*100)/100;return `<tr><th scope="row">${esc(r.k)}</th><td class="dw-r dw-num">${r.per0.toFixed(2)}</td><td class="dw-r dw-num">${r.per1.toFixed(2)}</td><td class="dw-r dw-num dw-nowrap">${d===0?'no change':(d<0?'down ':'up ')+Math.abs(d).toFixed(2)}</td></tr>`;}).join('')+'</tbody>';
+const AP=CH.appeals,apRow=(k,a)=>`<tr><th scope="row">${esc(k)}</th><td class="dw-r dw-num">${pct(a.r0)} <span class="dw-note">(${fmt(a.o0)} of ${fmt(a.f0)})</span></td><td class="dw-r dw-num">${pct(a.r1)} <span class="dw-note">(${fmt(a.o1)} of ${fmt(a.f1)})</span></td><td class="dw-r dw-num dw-nowrap">${moved(a.r0,a.r1)}</td></tr>`;
+$('chappeals').innerHTML='<thead><tr><th>Claim appeals reversed</th><th class="dw-r">2024</th><th class="dw-r">2025</th><th class="dw-r">Change, points</th></tr></thead><tbody>'+
+  apRow(`The ${AP.same.insurers} insurers`,AP.same)+apRow(`Without the ${AP.left_out} largest`,AP.without_largest)+apRow(`Oscar's ${AP.oscar.insurers} insurers`,AP.oscar)+'</tbody>';
+$('chreview').innerHTML='<thead><tr><th>Type of care</th><th class="dw-r">2021 to 2023</th><th class="dw-r">2024 and 2025</th><th class="dw-r">Change, points</th><th>On one scale</th></tr></thead><tbody>'+
+  D.imr_periods.rows.map(r=>`<tr><th scope="row">${esc(r.k)}</th><td class="dw-r dw-num">${pct(r.r0,0)} <span class="dw-note">of ${fmt(r.n0)}</span></td><td class="dw-r dw-num">${pct(r.r1,0)} <span class="dw-note">of ${fmt(r.n1)}</span></td><td class="dw-r dw-num dw-nowrap">${moved(r.r0,r.r1,0)}</td><td>${dumbbell(r.r0,r.r1,1)}</td></tr>`).join('')+'</tbody>';
+}
+
 $('imrbars').innerHTML=D.imr_cat.map(r=>`<div class="dw-bar dw-bar-good"><div class="dw-bar-name"><span>${esc(r.k)}</span><span class="dw-note dw-num">${fmt(r.n)} reviews</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${r.r*100}%"></div></div><div class="dw-bar-value dw-num">${pct(r.r,0)}</div></div>`).join('');
 
 /* coverage map */
