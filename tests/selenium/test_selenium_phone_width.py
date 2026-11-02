@@ -157,3 +157,24 @@ class SeleniumTestPhoneWidth(FHISeleniumBase, StaticLiveServerTestCase):
                 0,
                 "the table has width but the wrapper reports none",
             )
+
+    def test_the_state_index_letters_wrap_instead_of_scrolling_sideways(self):
+        """The A-Z bar was one row 916px wide in a 334px screen: most of the
+        letters were off to the side, behind a scroll nobody could see."""
+        self.set_window_size(334, 740)
+        self.open(f"{self.live_server_url}/state-help/")
+        self.wait_for_page_ready()
+        bar = self.execute_script(
+            """
+            var bar = document.querySelector('.quick-jump .fhi-button-bar');
+            if (!bar) return null;
+            var tops = new Set();
+            bar.querySelectorAll('a').forEach(function (a) {
+                tops.add(Math.round(a.getBoundingClientRect().top));
+            });
+            return {scroll: bar.scrollWidth, client: bar.clientWidth, rows: tops.size};
+            """
+        )
+        self.assertIsNotNone(bar, "no letter bar on the state index")
+        self.assertLessEqual(bar["scroll"], bar["client"] + 1, bar)
+        self.assertGreater(bar["rows"], 1, bar)

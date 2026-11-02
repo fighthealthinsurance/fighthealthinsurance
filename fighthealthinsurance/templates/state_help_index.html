@@ -201,6 +201,18 @@
         box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
 
+    /* The shared bar turns into one row that scrolls sideways on a phone,
+       which suits the glossary's sticky bar. Here it is not sticky, and the
+       row was 916px wide in a 334px screen with most letters off to the
+       side, so the letters wrap onto a few rows instead. */
+    @media (max-width: 575.98px) {
+        .quick-jump .fhi-button-bar {
+            flex-wrap: wrap;
+            justify-content: center;
+            overflow-x: visible;
+        }
+    }
+
     .state-card {
         text-decoration: none;
         color: inherit;

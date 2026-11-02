@@ -254,6 +254,45 @@ a:focus {
     }
 }
 
+/* A phone on its side has about 350px of height, and the stuck header,
+   143px with its menu row, took over a third of it on every page. There the
+   header scrolls away with the page instead, and the open menu with it. */
+@media (max-width: 991px) and (max-height: 500px) {
+    .navbar-default {
+        position: relative;
+    }
+}
+
+/* How tall the stuck header is, so the page can keep what it scrolls to
+   clear of it. Measured in Chromium with the menu closed: 121px on a
+   desktop from 992px to 1920px wide, 143px on a phone, where the logo sits
+   over the Menu row. Where the header is not stuck (the two rules above)
+   nothing is hidden under it. */
+:root {
+    --fhi-header-h: 122px;
+}
+
+@media (max-width: 991px) {
+    :root {
+        --fhi-header-h: 143px;
+    }
+}
+
+@media (max-width: 991px) and (max-height: 500px), (scripting: none) and (width < 992px) {
+    :root {
+        --fhi-header-h: 0px;
+    }
+}
+
+/* A control reached with Tab, or a heading reached from an in-page link,
+   used to land under the stuck header: on a phone the Submit button on
+   /scan and the terms checkbox on /explain-denial were focused and hidden.
+   The browser keeps this much of the top of the window clear when it
+   scrolls something into view. */
+html {
+    scroll-padding-top: calc(var(--fhi-header-h) + 0.5rem);
+}
+
 /*---------------------------------------
       HOME
   -----------------------------------------*/

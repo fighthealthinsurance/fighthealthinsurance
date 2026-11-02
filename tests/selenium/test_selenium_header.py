@@ -14,6 +14,7 @@ import time
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from selenium.webdriver import ActionChains
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from seleniumbase import BaseCase
 
 from .fhi_selenium_base import FHISeleniumBase
@@ -304,6 +305,111 @@ class SeleniumTestHeader(FHISeleniumBase, StaticLiveServerTestCase):
             return covered;
             """)
         assert covered == [], f"something is painted over these header items: {covered}"
+
+
+class SeleniumTestNothingHidesUnderTheHeader(FHISeleniumBase, StaticLiveServerTestCase):
+    """The stuck header is 143px tall on a phone. A control reached with Tab
+    used to scroll to the very top of the window, under it, so a keyboard
+    or switch user focused a Submit button they could not see. A phone on
+    its side lost a third of its height to the header, and the open menu ran
+    off the bottom of the screen."""
+
+    fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+    PHONE_LANDSCAPE = (844, 390)
+
+    @classmethod
+    def setUpClass(cls):
+        super(StaticLiveServerTestCase, cls).setUpClass()
+        super(BaseCase, cls).setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super(StaticLiveServerTestCase, cls).tearDownClass()
+        super(BaseCase, cls).tearDownClass()
+
+    HEADER = """
+        const header = document.querySelector('.navbar-default');
+        const style = getComputedStyle(header);
+        return {
+            position: style.position,
+            height: header.getBoundingClientRect().height,
+            reserved: parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop),
+        };
+    """
+
+    def test_the_scroll_padding_clears_the_closed_header_at_both_widths(self):
+        for size in (DESKTOP, PHONE):
+            with self.subTest(size=size):
+                self.set_window_size(*size)
+                self.open(f"{self.live_server_url}/")
+                self.wait_for_ready_state_complete()
+                header = self.execute_script(self.HEADER)
+                assert header["position"] == "sticky", header
+                assert header["reserved"] >= header["height"], header
+
+    def test_shift_tab_to_submit_on_a_phone_leaves_it_below_the_header(self):
+        """Tabbing back up to a control just above the window scrolls it to
+        the top edge. Before scroll-padding-top that was under the header."""
+        self.set_window_size(*PHONE)
+        self.open(f"{self.live_server_url}/scan")
+        self.wait_for_ready_state_complete()
+        found = self.execute_script("""
+            const button = document.getElementById('submit');
+            if (!button) { return 'NO BUTTON'; }
+            document.documentElement.style.scrollBehavior = 'auto';
+            const controls = Array.from(document.querySelectorAll(
+                'a[href], button, input:not([type=hidden]), textarea, select, summary'
+            )).filter(el => el.checkVisibility());
+            const next = controls[controls.indexOf(button) + 1];
+            if (!next) { return 'NOTHING AFTER IT'; }
+            next.focus({preventScroll: true});
+            // Just past the button, so it sits above the top of the window.
+            window.scrollTo(0, button.getBoundingClientRect().top + window.scrollY + 20);
+            return 'READY';
+        """)
+        assert found == "READY", found
+        ActionChains(self.driver).key_down(Keys.SHIFT).send_keys(Keys.TAB).key_up(
+            Keys.SHIFT
+        ).perform()
+        time.sleep(0.3)
+        edges = self.execute_script("""
+            return {
+                id: document.activeElement.id,
+                headerBottom: document.querySelector('.navbar-default').getBoundingClientRect().bottom,
+                top: document.activeElement.getBoundingClientRect().top,
+            };
+        """)
+        assert edges["id"] == "submit", edges
+        assert edges["top"] >= edges["headerBottom"], edges
+
+    def test_a_phone_on_its_side_lets_the_header_scroll_away(self):
+        self.set_window_size(*self.PHONE_LANDSCAPE)
+        self.open(f"{self.live_server_url}/")
+        self.wait_for_ready_state_complete()
+        header = self.execute_script(self.HEADER)
+        assert header["position"] == "relative", header
+
+    def test_the_open_phone_menu_ends_on_the_screen(self):
+        for size in (PHONE, self.PHONE_LANDSCAPE):
+            with self.subTest(size=size):
+                self.set_window_size(*size)
+                self.open(f"{self.live_server_url}/")
+                self.wait_for_ready_state_complete()
+                fits = self.execute_script("""
+                    const menu = document.querySelector('details.fhi-nav');
+                    menu.querySelector('summary').click();
+                    const list = menu.querySelector('.fhi-nav-list');
+                    const style = getComputedStyle(list);
+                    return {
+                        open: menu.open,
+                        overflowY: style.overflowY,
+                        listBottom: list.getBoundingClientRect().bottom,
+                        screen: window.innerHeight,
+                    };
+                """)
+                assert fits["open"] is True, fits
+                assert fits["overflowY"] == "auto", fits
+                assert fits["listBottom"] <= fits["screen"], fits
 
 
 class SeleniumTestDropdownLinksGoSomewhere(FHISeleniumBase, StaticLiveServerTestCase):

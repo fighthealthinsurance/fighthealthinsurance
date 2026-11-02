@@ -3335,6 +3335,19 @@ textarea,
     list-style: none;
 }
 
+/* On a phone the open menu is a column of nine rows and more, taller than a
+   phone on its side, and it ran off the bottom of the screen with no way to
+   reach the last links. It scrolls inside itself instead, leaving room for
+   the logo and the Menu row above it. Only on the phone menu: on a desktop
+   the list is a row whose dropdowns hang below it, and a scroller would clip
+   them. */
+@media (max-width: 991px) {
+    .fhi-nav[open] > .fhi-nav-list {
+        max-height: calc(100dvh - 9rem);
+        overflow-y: auto;
+    }
+}
+
 .fhi-nav-link {
     display: block;
     padding: var(--fhi-space-2) var(--fhi-space-3);
