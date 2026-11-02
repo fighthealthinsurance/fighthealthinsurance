@@ -94,13 +94,14 @@ COMPANY_INSURERS = {
         "Iowa Total Care, Inc.", "Meridian Health Plan of Michigan, Inc.", "QCA Health Plan, Inc.",
         "QualChoice Life & Health Insurance Company, Inc.", "Sunshine State Health Plan", "Superior Health Plan",
     },
-    "Florida Blue": {"Blue Cross and Blue Shield of Florida", "Health Options, Inc."},
+    "Florida Blue": {
+        "Blue Cross and Blue Shield of Florida", "Capital Health Plan", "Florida Health Care Plan, Inc.", "Health Options, Inc.",
+    },
 }
 COMPANY_PREFIXES = {"Oscar": "Oscar ", "UnitedHealthcare": "UnitedHealthcare "}
 OTHER_INSURERS = "All other insurers"
 CHANGE_COMPANIES = ("Centene", "Oscar", "Florida Blue", "UnitedHealthcare", OTHER_INSURERS)
 APPEAL_BOOKS_LEFT_OUT = 5  # the same-insurer appeal rate is also given without this many largest
-FIRST_REASONS_YEAR = 2022  # the 2020 and 2021 claims files have only some of the reason columns
 PLAN_DENIED_IN = "plan_number_claims_denied_in_network"
 # The PY2027 file splits plan-level in-network denials into these two, which add up to the older count.
 PLAN_DENIED_IN_2027 = (
@@ -498,38 +499,51 @@ def appeal_changes(pairs):
                 left_out=APPEAL_BOOKS_LEFT_OUT, largest=[f"{b['issuer']} ({b['state']})" for _, b in by_size[:APPEAL_BOOKS_LEFT_OUT]])
 
 
-def reason_changes(per_year, trend):
-    """Each reason per 100 in-network claims, by claims year, so a change in how many reasons are reported shows."""
-    claims = {t["year"]: t["in_claims"] for t in trend}
-    years = [cy for cy in CLAIMS_YEAR.values() if cy >= FIRST_REASONS_YEAR]
-    by_year = {cy: per_year[py][1] for py, cy in CLAIMS_YEAR.items() if cy in years}
-    rows = [dict(k=label, per=[round(by_year[y].get(col, 0.0) / claims[y] * 100, 2) for y in years],
-                 n=[by_year[y].get(col, 0.0) for y in years])
+def reason_changes(in_both):
+    """Each reason per 100 in-network claims in the two years, on the same insurers."""
+    claims = [sum(side(pair[n], "in")[0] for pair in in_both) for n in (0, 1)]
+
+    def count(col, pairs, n):
+        return sum(pair[n]["reasons"].get(col, 0.0) for pair in pairs)
+
+    rows = [dict(k=label, per0=round(count(col, in_both, 0) / claims[0] * 100, 2), per1=round(count(col, in_both, 1) / claims[1] * 100, 2),
+                 n0=count(col, in_both, 0), n1=count(col, in_both, 1))
             for col, label in REASONS.items()]
-    rows.sort(key=lambda r: -r["per"][-1])
-    # Paperwork denials at one company, from its plans' rows, set apart because of how far they moved.
+    rows.sort(key=lambda r: -r["per1"])
+    # Paperwork denials at one company, set apart because of how far they moved.
     paperwork = "plan_number_claims_denied_due_to_administrative_reason"
-    florida = []
-    for py in (LATEST_PY - 1, LATEST_PY):
-        here = [i for i in per_year[py][0] if company_of(i["issuer"]) == "Florida Blue"]
-        c, n = sum(i["rec_in"] or 0 for i in here), sum(i["reasons"].get(paperwork, 0.0) for i in here)
-        all_c, all_n = claims[CLAIMS_YEAR[py]], per_year[py][1][paperwork]
-        florida.append(dict(y=CLAIMS_YEAR[py], paperwork=n, without_per=round((all_n - n) / (all_c - c) * 100, 2)))
-    return dict(years=years, rows=rows, florida_blue=florida)
+    florida = [p for p in in_both if company_of(p[1]["issuer"]) == "Florida Blue"]
+    without = []
+    for n in (0, 1):
+        c = sum(side(p[n], "in")[0] for p in florida)
+        without.append(round((count(paperwork, in_both, n) - count(paperwork, florida, n)) / (claims[n] - c) * 100, 2))
+    return dict(rows=rows, florida_blue=dict(paperwork0=count(paperwork, florida, 0), paperwork1=count(paperwork, florida, 1),
+                                             without0=without[0], without1=without[1]))
 
 
-def build_changes(per_year, trend, states):
+def state_changes(in_both):
+    """Which states' rates fell and rose on the same insurers, the biggest rise first."""
+    totals = {}
+    for old, new in in_both:
+        t = totals.setdefault(new["state"], [0.0, 0.0, 0.0, 0.0])
+        for n, v in enumerate((*side(old, "in"), *side(new, "in"))):
+            t[n] += v
+    moved = {k: round(t[3] / t[2] - t[1] / t[0], 4) for k, t in totals.items()}
+    return dict(states=len(moved), fell=sum(d < 0 for d in moved.values()), flat=sorted(k for k, d in moved.items() if d == 0),
+                rose=sorted((k for k, d in moved.items() if d > 0), key=lambda k: (-moved[k], k)),
+                moved=moved)
+
+
+def build_changes(per_year):
     """What moved from the year before the latest to the latest: by company, reason and appeal, on the same insurers."""
     old = {(i["state"], i["id"]): i for i in per_year[LATEST_PY - 1][0]}
     pairs = [(old[k], i) for i in per_year[LATEST_PY][0] if (k := (i["state"], i["id"])) in old]
     in_both = [(a, b) for a, b in pairs if side(a, "in") and side(b, "in")]
     pre = [i for i in per_year[LATEST_PY][0] if i["pre_filed"] is not None and i["pre_over"] is not None and i["ap_over"] is not None]
     pre_filed, pre_over = sum(i["pre_filed"] for i in pre), sum(i["pre_over"] for i in pre)
-    moved = [(k, v["rate"] - v["prev"]) for k, v in states.items() if "prev" in v]
     return dict(year0=CLAIMS_YEAR[LATEST_PY - 1], year1=CLAIMS_YEAR[LATEST_PY], companies=company_changes(in_both),
                 appeals=dict(appeal_changes(pairs), pre_filed=pre_filed, pre_over=pre_over, pre_rate=round(pre_over / pre_filed, 4)),
-                reasons=reason_changes(per_year, trend),
-                states=dict(fell=sum(d < 0 for _, d in moved), rose=sorted((k for k, d in moved if d > 0), key=lambda k: -(states[k]["rate"] - states[k]["prev"]))))
+                reasons=reason_changes(in_both), states=state_changes(in_both))
 
 
 def build_denials():
@@ -576,7 +590,7 @@ def build_denials():
     reason_rows = sorted(({"k": REASONS[k], "v": v} for k, v in reasons.items()), key=lambda x: -x["v"])
     earlier = earlier_states(per_year, set(states))
     reports = load_state_reports(set(states), earlier)
-    return dict(trend=trend, states=states, issuers=table, reasons=reason_rows, changes=build_changes(per_year, trend, states),
+    return dict(trend=trend, states=states, issuers=table, reasons=reason_rows, changes=build_changes(per_year),
                 reason_meta=dict(entries=sum(reasons.values()), plan_denied_in=plan_denied),
                 oon_meta=oon_meta(issuers, types), earlier=earlier, state_reports=reports,
                 grey_issuers=grey_issuers(per_year, earlier, reports, load_state_report_insurers(reports)))
@@ -1255,7 +1269,7 @@ def main(argv=None):
               f"claims {r['c0']:,.0f} to {r['c1']:,.0f}", f"denied {r['d0']:,.0f} to {r['d1']:,.0f}", f"plan-level denied {r['pd0']:,.0f} to {r['pd1']:,.0f}")
     print("change appeals", ch["appeals"]); print("change states", ch["states"])
     for r in ch["reasons"]["rows"]:
-        print("change reason", r["k"], r["per"], [f"{n:,.0f}" for n in r["n"][-2:]])
+        print("change reason", r["k"], r["per0"], r["per1"], f"{r['n0']:,.0f} to {r['n1']:,.0f}")
     print("change florida blue", ch["reasons"]["florida_blue"]); print("imr periods", bundle["imr_periods"])
     print("issuers", len(bundle["issuers"]), "corr", bundle["corr"])
     for line in ("ma", "mcd", "mkt", "ffs"):

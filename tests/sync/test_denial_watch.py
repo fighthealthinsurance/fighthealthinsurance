@@ -312,27 +312,29 @@ class TestDenialWatchWhatChanged(TestCase):
 
     def test_states_sentence(self):
         states = self.changes["states"]
-        self.assertEqual(states["fell"] + len(states["rose"]), len(DATA["states"]))
+        self.assertEqual(states["states"], len(DATA["states"]))
+        self.assertEqual(states["fell"] + len(states["rose"]) + len(states["flat"]), states["states"])
         self.assertEqual(states["rose"], ["WI", "WY", "MT", "DE", "MI", "LA"])
-        self.assertIn(f"fell in {states['fell']} of the {len(DATA['states'])} HealthCare.gov states and rose in six", self.section)
+        self.assertEqual(states["flat"], ["WV"])
+        self.assertIn(f"rates fell in {states['fell']} of the {states['states']} HealthCare.gov states, held in West Virginia, and rose in six", self.section)
 
     def test_reasons_sentences(self):
-        rows = {r["k"]: r["per"] for r in self.changes["reasons"]["rows"]}
-        self.assertEqual(self.changes["reasons"]["years"], [2022, 2023, 2024, 2025])
+        rows = {r["k"]: r for r in self.changes["reasons"]["rows"]}
         paper = rows["Administrative (missing information, duplicate, late filing, billing)"]
-        self.assertIn(f"paperwork denials fell from {paper[-2]:.2f} to {paper[-1]:.2f}", self.section)
+        self.assertIn(f"paperwork denials fell from {paper['per0']:.2f} to {paper['per1']:.2f}", self.section)
         need = rows['"Not medically necessary" (physical health)']
-        self.assertIn(f"rose from {need[-2]:.2f} to {need[-1]:.2f}", self.section)
+        self.assertIn(f"rose from {need['per0']:.2f} to {need['per1']:.2f}", self.section)
         auth = rows["Prior authorization or referral required"]
-        self.assertIn(f"from {auth[-2]:.2f} to {auth[-1]:.2f}", self.section)
+        self.assertIn(f"from {auth['per0']:.2f} to {auth['per1']:.2f}", self.section)
 
     def test_florida_blue_is_more_than_the_whole_fall_in_paperwork(self):
-        old, new = self.changes["reasons"]["florida_blue"]
+        florida = self.changes["reasons"]["florida_blue"]
         row = next(r for r in self.changes["reasons"]["rows"] if r["k"].startswith("Administrative"))
-        fall = (row["n"][-2] - row["n"][-1]) / 1e6
-        self.assertGreater((old["paperwork"] - new["paperwork"]) / 1e6, fall)
-        self.assertIn(f"fell from {old['paperwork'] / 1e6:.1f} to {new['paperwork'] / 1e6:.1f} million, more than the {fall:.1f} million fall", self.section)
-        self.assertIn(f"Without it, the rate fell from {old['without_per']:.2f} to {new['without_per']:.2f}.", self.section)
+        fall = (row["n0"] - row["n1"]) / 1e6
+        self.assertGreater((florida["paperwork0"] - florida["paperwork1"]) / 1e6, fall)
+        self.assertIn(f"fell from {florida['paperwork0'] / 1e6:.1f} to {florida['paperwork1'] / 1e6:.1f} million, more than the {fall:.1f} million fall", self.section)
+        self.assertIn(f"barely moved, from {florida['without0']:.2f} to {florida['without1']:.2f}.", self.section)
+        self.assertLess(abs(florida["without0"] - florida["without1"]), 0.05)
 
     def test_appeals_sentences(self):
         appeals = self.changes["appeals"]
@@ -373,6 +375,7 @@ class TestDenialWatchCompanyGroups(TestCase):
             "Celtic Insurance Company": "Centene",
             "QCA Health Plan, Inc.": "Centene",
             "Health Options, Inc.": "Florida Blue",
+            "Florida Health Care Plan, Inc.": "Florida Blue",
             "Oscar Buckeye State Insurance Corp.": "Oscar",
             "UnitedHealthcare of Texas, Inc.": "UnitedHealthcare",
             "Blue Cross Blue Shield of Texas": self.builder.OTHER_INSURERS,
