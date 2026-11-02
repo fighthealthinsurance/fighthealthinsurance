@@ -381,6 +381,59 @@ class RegulatorEscalationReasonsTest(TestCase):
         )
         self.assertEqual(regulator_escalation_reasons(denial), [])
 
+    def test_a_rights_notice_naming_the_final_determination_is_not_a_reason(
+        self,
+    ):
+        """Required rights notices on a first denial name "the final adverse
+        determination" as the thing a right applies to."""
+        for notice in (
+            "You have the right to bring a civil action under section 502(a) "
+            "of ERISA following a final adverse benefit determination on "
+            "review.",
+            "You have the right to request an external review of a final "
+            "adverse determination.",
+            "The MRI was denied as not medically necessary. You have the "
+            "right to an independent external review of the final adverse "
+            "benefit determination.",
+        ):
+            with self.subTest(notice=notice):
+                denial = _FakeDenial(state="", denial_text=notice)
+                self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_a_final_determination_given_as_the_reason_for_a_right_is_a_reason(
+        self,
+    ):
+        denial = _FakeDenial(
+            state="",
+            denial_text=(
+                "You can seek external review because this is our final "
+                "adverse determination."
+            ),
+        )
+        self.assertTrue(regulator_escalation_reasons(denial))
+
+    def test_a_final_determination_after_now_that_is_a_reason(self):
+        denial = _FakeDenial(
+            state="",
+            denial_text=(
+                "You can seek external review now that this is our final "
+                "adverse determination."
+            ),
+        )
+        self.assertTrue(regulator_escalation_reasons(denial))
+
+    def test_a_final_determination_followed_by_a_rights_notice_is_a_reason(
+        self,
+    ):
+        denial = _FakeDenial(
+            state="",
+            denial_text=(
+                "This is our final adverse determination. You have the right "
+                "to request an external review."
+            ),
+        )
+        self.assertTrue(regulator_escalation_reasons(denial))
+
     def test_urgent_care_is_a_reason(self):
         denial = _FakeDenial(state="", urgent=True)
         reasons = regulator_escalation_reasons(denial)

@@ -30,9 +30,9 @@ spec:
               name: fight-health-insurance-secret
           - secretRef:
               name: fight-health-insurance-primary-secret
-          # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml).
+          # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml; scripts/build.sh applies it as fhi-feature-flags-staging).
           - configMapRef:
-              name: fhi-feature-flags
+              name: fhi-feature-flags-staging
           imagePullPolicy: Always
       restartPolicy: OnFailure
 ---
@@ -81,9 +81,9 @@ spec:
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
-          # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml).
+          # Last, so the repo's flags win over the Secrets (k8s/feature-flags.yaml; scripts/build.sh applies it as fhi-feature-flags-staging).
           - configMapRef:
-              name: fhi-feature-flags
+              name: fhi-feature-flags-staging
           imagePullPolicy: Always
           ports:
             - containerPort: 80

@@ -7,8 +7,10 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.db import connection
 from django.db.models import QuerySet
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
 from fighthealthinsurance import subscriber_hygiene as hygiene
@@ -303,6 +305,49 @@ class DeleteSubscribersTest(TestCase):
         deleted = hygiene.delete_subscribers([junk.id], whole_addresses_only=True)
 
         self.assertEqual(deleted, 0)
+
+    def test_whole_addresses_only_spares_a_copy_whose_twin_ends_in_a_tab(self):
+        """SQL TRIM strips only spaces; a twin stored with a trailing tab is
+        still the same address and still gets mailed."""
+        junk = make_subscriber("jane@hospital.org", name="http://spam.example")
+        make_subscriber("Jane@Hospital.org\t", name="Jane Doe")
+
+        deleted = hygiene.delete_subscribers([junk.id], whole_addresses_only=True)
+
+        self.assertEqual(deleted, 0)
+
+    def test_whole_addresses_only_blank_address_looks_only_at_blank_rows(self):
+        blank = make_subscriber("", name="http://spam.example")
+        make_subscriber("jane@hospital.org", name="Jane Doe")
+
+        with CaptureQueriesContext(connection) as queries:
+            deleted = hygiene.delete_subscribers([blank.id], whole_addresses_only=True)
+
+        self.assertEqual(deleted, 1)
+        self.assertEqual(MailingListSubscriber.objects.count(), 1)
+        # A blank icontains term would load every subscriber.
+        self.assertFalse([q["sql"] for q in queries if " LIKE " in q["sql"]])
+
+    def test_whole_addresses_only_blank_twin_spares_the_blank_copy(self):
+        blank = make_subscriber("", name="http://spam.example")
+        make_subscriber(" \t", name="Jane Doe")
+
+        deleted = hygiene.delete_subscribers([blank.id], whole_addresses_only=True)
+
+        self.assertEqual(deleted, 0)
+
+    def test_whole_addresses_only_finds_twins_past_the_first_batch(self):
+        with patch.object(hygiene, "_ADDRESS_BATCH_SIZE", 1):
+            first = make_subscriber("a@spam.org", name="http://spam.example")
+            second = make_subscriber("b@spam.org", name="http://spam.example")
+            make_subscriber("B@spam.org\t", name="Jane Doe")
+
+            deleted = hygiene.delete_subscribers(
+                [first.id, second.id], whole_addresses_only=True
+            )
+
+        self.assertEqual(deleted, 1)
+        self.assertTrue(MailingListSubscriber.objects.filter(id=second.id).exists())
 
     def test_whole_addresses_only_deletes_every_copy_when_all_selected(self):
         first = make_subscriber("bot@spam.org", name="http://spam.example")
