@@ -397,7 +397,9 @@ def _internal_appeals_done(denial_text: str) -> bool:
     return _final_word_stated(denial_text) or _later_level_decided(denial_text)
 
 
-_REASON_WORD_RE = re.compile(r"\b(?:because|since|given that|now that)\b", re.IGNORECASE)
+_REASON_WORD_RE = re.compile(
+    r"\b(?:because|since|given that|now that)\b", re.IGNORECASE
+)
 
 
 def _final_word_stated(denial_text: str) -> bool:
