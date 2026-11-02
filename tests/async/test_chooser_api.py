@@ -20,6 +20,7 @@ from fighthealthinsurance.chooser_tasks import (
 )
 from fighthealthinsurance.chooser_tokens import candidate_token, resolve_candidate
 from fighthealthinsurance.ml import research_judging
+from fighthealthinsurance.rest_views import ChooserViewSet
 from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserSkip,
@@ -1138,6 +1139,190 @@ class ChooserReviewOutcomesAPITest(APITestCase):
         self.assertEqual(task_response.json()["review_count"], 1)
         self.assertEqual(vote_response.json()["review_count"], 2)
         self.assertEqual(ChooserVote.objects.filter(user=user).count(), 2)
+
+
+class ChooserReviewInsightsAPITest(APITestCase):
+    """Review insights: server-timed serves, the page's active time and
+    interaction summary, the drafts opened with "Read it all", and the
+    judge's network and browser."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.task = ChooserTask.objects.create(task_type="appeal", status="READY")
+        self.candidate1 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-a",
+            content="Content A",
+        )
+        self.candidate2 = ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=1,
+            kind="appeal_letter",
+            model_name="model-b",
+            content="Content B",
+        )
+
+    def _payload(self, **extra):
+        return {
+            "task_id": self.task.id,
+            "chosen_candidate_id": candidate_token(self.candidate1.id),
+            "presented_candidate_ids": [
+                candidate_token(self.candidate1.id),
+                candidate_token(self.candidate2.id),
+            ],
+            **extra,
+        }
+
+    def _post(self, data):
+        return self.client.post(
+            reverse("chooser-vote"), json.dumps(data), content_type="application/json"
+        )
+
+    def test_vote_after_serve_records_server_time_to_vote(self):
+        self.client.get(reverse("chooser-next-appeal"))
+
+        self._post(self._payload())
+
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertIsNotNone(vote.served_at)
+        self.assertGreaterEqual(vote.seconds_to_vote, 0)
+
+    def test_vote_without_serve_has_no_server_time(self):
+        self._post(self._payload())
+
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertIsNone(vote.served_at)
+        self.assertIsNone(vote.seconds_to_vote)
+
+    def test_active_ms_and_expanded_drafts_are_stored(self):
+        data = self._payload(
+            active_ms=45000,
+            expanded_candidate_ids=[
+                candidate_token(self.candidate2.id),
+                candidate_token(self.candidate2.id),
+            ],
+        )
+
+        response = self._post(data)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(
+            (vote.active_ms, vote.expanded_candidate_ids),
+            (45000, [self.candidate2.id]),
+        )
+
+    def test_vote_without_telemetry_stores_defaults(self):
+        self._post(self._payload())
+
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual((vote.active_ms, vote.expanded_candidate_ids), (None, []))
+
+    def test_huge_active_ms_is_clamped_not_refused(self):
+        response = self._post(self._payload(active_ms=10**12))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            ChooserVote.objects.get(task=self.task).active_ms,
+            ChooserViewSet.ACTIVE_MS_CAP,
+        )
+
+    def test_negative_active_ms_is_rejected(self):
+        response = self._post(self._payload(active_ms=-1))
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_expanded_candidate_must_have_been_presented(self):
+        other_task = ChooserTask.objects.create(task_type="appeal", status="READY")
+        stranger = ChooserCandidate.objects.create(
+            task=other_task,
+            candidate_index=0,
+            kind="appeal_letter",
+            model_name="model-c",
+            content="Content C",
+        )
+
+        response = self._post(
+            self._payload(expanded_candidate_ids=[candidate_token(stranger.id)])
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Expanded", response.json()["error"])
+
+    def test_expanded_candidate_with_bad_token_is_rejected(self):
+        response = self._post(self._payload(expanded_candidate_ids=["nope"]))
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_review_signals_are_stored_cleaned(self):
+        signals = {"pointer_moves": 12, "vote_input": "keyboard", "extra": 1}
+
+        response = self._post(self._payload(review_signals=signals))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            ChooserVote.objects.get(task=self.task).review_signals,
+            {"pointer_moves": 12, "vote_input": "keyboard"},
+        )
+
+    def test_malformed_review_signals_do_not_lose_the_vote(self):
+        response = self._post(self._payload(review_signals="not a summary"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(ChooserVote.objects.get(task=self.task).review_signals, {})
+
+    def test_user_agent_is_stored(self):
+        self.client.post(
+            reverse("chooser-vote"),
+            json.dumps(self._payload()),
+            content_type="application/json",
+            HTTP_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64)",
+        )
+
+        self.assertEqual(
+            ChooserVote.objects.get(task=self.task).user_agent,
+            "Mozilla/5.0 (X11; Linux x86_64)",
+        )
+
+    def test_network_is_classed_without_storing_the_address(self):
+        with patch(
+            "fhi_users.audit.get_asn_info", return_value=("", "DIGITALOCEAN-ASN")
+        ):
+            self.client.post(
+                reverse("chooser-vote"),
+                json.dumps(self._payload()),
+                content_type="application/json",
+                HTTP_CF_CONNECTING_IP="203.0.113.7",
+                HTTP_CF_IPCOUNTRY="US",
+            )
+
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(
+            (vote.network_class, vote.asn_name, vote.country),
+            ("hosting", "DIGITALOCEAN-ASN", "US"),
+        )
+
+    def test_no_cloudflare_address_leaves_network_blank(self):
+        self._post(self._payload())
+
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual((vote.network_class, vote.asn_name), ("", ""))
+
+    def test_served_times_kept_for_recent_tasks_only(self):
+        view = ChooserViewSet()
+        request = MagicMock()
+        request.session = {}
+        for task_id in range(ChooserViewSet.SESSION_SERVED_LIMIT + 5):
+            view._remember_served(request, task_id)
+
+        served = request.session[ChooserViewSet.SESSION_SERVED_KEY]
+        self.assertEqual(
+            list(served),
+            [str(i) for i in range(5, ChooserViewSet.SESSION_SERVED_LIMIT + 5)],
+        )
 
 
 class ChooserTieVoteAPITest(APITestCase):

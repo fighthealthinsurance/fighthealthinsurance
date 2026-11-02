@@ -989,6 +989,16 @@ class ChooserVoteRequestSerializer(serializers.Serializer):
         trim_whitespace=True,
         default="",
     )
+    # Review insights (ChooserVote.active_ms, expanded_candidate_ids,
+    # review_signals). Optional, so older clients still vote; a value past
+    # the cap is clamped in the view rather than refused, since a judge who
+    # left the page open is no reason to lose their vote.
+    active_ms = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    expanded_candidate_ids = serializers.ListField(
+        child=serializers.CharField(), required=False, default=list
+    )
+    # Cleaned leniently by chooser_review_signals, never refused.
+    review_signals = serializers.JSONField(required=False, default=dict)
 
 
 class ChooserVoteResponseSerializer(serializers.Serializer):
