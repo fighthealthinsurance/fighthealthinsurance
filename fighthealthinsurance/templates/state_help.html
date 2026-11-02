@@ -41,7 +41,7 @@
                 <div class="contact-item">
                     <strong>Website:</strong>
                     <a href="{{ state.insurance_department.url }}" target="_blank" rel="noopener noreferrer">
-                        {{ state.insurance_department.url }}
+                        {{ state.insurance_department.url }} {% include 'partials/opens_in_new_tab.html' %}
                     </a>
                 </div>
                 {% endif %}
@@ -62,7 +62,7 @@
                 <div class="contact-item">
                     <strong>File a Complaint:</strong>
                     <a href="{{ state.insurance_department.complaint_url }}" target="_blank" rel="noopener noreferrer">
-                        File a complaint online
+                        File a complaint online {% include 'partials/opens_in_new_tab.html' %}
                     </a>
                 </div>
                 {% endif %}
@@ -90,7 +90,7 @@
                 {% endif %}
                 {% if state.consumer_assistance.cap_url %}
                 <a href="{{ state.consumer_assistance.cap_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound fhi-button-small">
-                    Visit Website {% include 'partials/opens_in_new_tab.html' %}
+                    Visit Website<span class="fhi-visually-hidden"> of {{ state.consumer_assistance.cap_name }}</span> {% include 'partials/opens_in_new_tab.html' %}
                 </a>
                 {% endif %}
             </div>
@@ -108,7 +108,7 @@
                 {% endif %}
                 {% if state.consumer_assistance.ship_url %}
                 <a href="{{ state.consumer_assistance.ship_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound fhi-button-small">
-                    Visit Website {% include 'partials/opens_in_new_tab.html' %}
+                    Visit Website<span class="fhi-visually-hidden"> of {{ state.consumer_assistance.ship_name }}</span> {% include 'partials/opens_in_new_tab.html' %}
                 </a>
                 {% endif %}
             </div>
@@ -155,7 +155,7 @@
                     {% endif %}
                     {% if state.medicaid.managed_care_ombudsman.url %}
                     <a href="{{ state.medicaid.managed_care_ombudsman.url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound fhi-button-small">
-                        Learn More
+                        Learn More {% include 'partials/opens_in_new_tab.html' %}
                     </a>
                     {% endif %}
                 </div>
@@ -256,13 +256,12 @@
         box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
 
+    /* Underlined at rest, not only on hover: these sit in running text,
+       and green alone does not mark them out from it for everyone. */
     .contact-item a {
         color: var(--fhi-green-ink);
-        text-decoration: none;
-    }
-
-    .contact-item a:hover {
         text-decoration: underline;
+        text-underline-offset: 0.15em;
     }
 
     .assistance-card {

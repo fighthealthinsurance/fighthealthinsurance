@@ -5,7 +5,7 @@
 <!-- User Information Section -->
 <div class="fhi-stack">
     <h4>Your Information</h4>
-    <p class="fhi-note">The details below go to our server when you send this form. Under each one we say what we keep, and where. Our <a href="{% url 'privacy_policy' %}" target="_blank">privacy policy</a> has the rest.</p>
+    <p class="fhi-note">The details below go to our server when you send this form. Under each one we say what we keep, and where. Our <a href="{% url 'privacy_policy' %}" target="_blank">privacy policy {% include 'partials/opens_in_new_tab.html' %}</a> has the rest.</p>
 
     <div class="fhi-cards fhi-cards-roomy">
         <div class="fhi-field-group">
@@ -62,14 +62,14 @@
     <div class="fhi-check-row">
         {{ form.tos_agreement }}
         <label for="tos">
-            I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I'll use this site only for my own insurance appeals, or for someone I'm helping who asked me to, not to diagnose or treat any condition. (required)
+            I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service {% include 'partials/opens_in_new_tab.html' %}</a>. I'll use this site only for my own insurance appeals, or for someone I'm helping who asked me to, not to diagnose or treat any condition. (required)
         </label>
     </div>
 
     <div class="fhi-check-row">
         {{ form.privacy_policy }}
         <label for="privacy">
-            I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>. (required)
+            I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy {% include 'partials/opens_in_new_tab.html' %}</a>. (required)
         </label>
     </div>
 

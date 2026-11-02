@@ -118,9 +118,14 @@ class _PageReader(HTMLParser):
         self.labels_open = 0
         self.chunks: list[str] = []
         self.policy_links_in_a_label: list[bool] = []
+        # Words drawn nowhere, such as a link's "(opens in a new tab)", are
+        # not part of what the page says on screen.
+        self.hidden_open = 0
 
     def handle_starttag(self, tag, attrs):
-        if tag == "form":
+        if tag == "span" and "fhi-visually-hidden" in (dict(attrs).get("class") or ""):
+            self.hidden_open += 1
+        elif tag == "form":
             self.forms_open += 1
         elif tag == "label":
             self.labels_open += 1
@@ -132,13 +137,16 @@ class _PageReader(HTMLParser):
             self.policy_links_in_a_label.append(self.labels_open > 0)
 
     def handle_endtag(self, tag):
-        if tag == "form" and self.forms_open:
+        if tag == "span" and self.hidden_open:
+            self.hidden_open -= 1
+        elif tag == "form" and self.forms_open:
             self.forms_open -= 1
         elif tag == "label" and self.labels_open:
             self.labels_open -= 1
 
     def handle_data(self, data):
-        self.chunks.append(data)
+        if not self.hidden_open:
+            self.chunks.append(data)
 
     @property
     def text(self) -> str:
