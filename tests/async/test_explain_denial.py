@@ -53,7 +53,11 @@ class TestExplainDenialView(TestCase):
         # Should re-render the form with validation error
         self.assertEqual(response.status_code, 200)
         # TOS is a required field
-        self.assertContains(response, "This field is required", count=1)
+        # Said in plain words, under the box it is about and in the list.
+        self.assertContains(
+            response, "Please tick the box to agree to the Terms of Service.</div>"
+        )
+        self.assertContains(response, '<a href="#tos">Please tick the box to agree')
 
     def test_explain_denial_post_missing_privacy_policy(self):
         """Test POST without privacy policy agreement fails validation."""
@@ -68,7 +72,12 @@ class TestExplainDenialView(TestCase):
         response = self.client.post(self.url, form_data)
         # Should re-render the form with validation error
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "This field is required", count=1)
+        # Said in plain words, under the box it is about and in the list.
+        self.assertContains(
+            response,
+            "Please tick the box to say you have read the Privacy Policy.</div>",
+        )
+        self.assertContains(response, '<a href="#privacy">Please tick the box to say')
 
     def test_explain_denial_post_valid_data_redirects_to_chat(self):
         """Test POST with valid data renders chat redirect template."""

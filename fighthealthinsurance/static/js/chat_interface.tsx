@@ -406,9 +406,14 @@ const TypingAnimation: React.FC<{ startTime?: number | null }> = ({ startTime })
 
   const statusMsg = getStatusMessage();
 
+  // The words a screen reader announces once, in a status region; the dots
+  // that change twice a second are drawn only, or every change would be read.
   return (
     <Box>
-      <span style={{ marginLeft: 4 }}>Typing{dots}</span>
+      <span role="status">
+        <span className="fhi-visually-hidden">Assistant is typing</span>
+        <span aria-hidden="true" style={{ marginLeft: 4 }}>Typing{dots}</span>
+      </span>
       {statusMsg && (
         <MantineText size="xs" c="dimmed" mt="xs" style={{ fontStyle: "italic" }}>
           {statusMsg}
@@ -1484,7 +1489,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 No messages yet. Start a conversation!
               </MantineText>
             ) : (
-              state.messages.map(renderMessage)
+              // A log, so each new message is read out as it arrives.
+              // Additions only: the typing timer and a reply that streams in
+              // change text that is already there, and reading every one of
+              // those changes would drown the conversation.
+              <div
+                role="log"
+                aria-live="polite"
+                aria-relevant="additions"
+                aria-label="Conversation"
+              >
+                {state.messages.map(renderMessage)}
+              </div>
             )}
 
             {state.isLoading && (
@@ -1596,6 +1612,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                       <Textarea
                         style={{ width: '100%' }}
                         value={""}
+                        aria-label="Message to the assistant"
                         placeholder={"Assistant is typing..."}
                         disabled
                         styles={{
@@ -1614,6 +1631,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                     ) : (
                       <>
                         <Textarea
+                          aria-label="Message to the assistant"
                           placeholder={"Type your message..."}
                           value={state.input}
                           onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>

@@ -11,10 +11,12 @@
         <div class="fhi-field-group">
             <label for="store_fname" class="fhi-label">First name (required)</label>
             {{ form.first_name }}
+            {% include "partials/field_error.html" with id="id_first_name_error" message=form.REQUIRED_MESSAGES.first_name errors=form.plain_errors.first_name filled=True %}
         </div>
         <div class="fhi-field-group">
             <label for="store_lname" class="fhi-label">Last name (required)</label>
             {{ form.last_name }}
+            {% include "partials/field_error.html" with id="id_last_name_error" message=form.REQUIRED_MESSAGES.last_name errors=form.plain_errors.last_name filled=True %}
         </div>
     </div>
     <p class="fhi-note">This browser keeps your name, and the chat tries to take it out of your messages before they're sent. Our server keeps the name you enter here only if you tick the news box below.</p>
@@ -22,13 +24,14 @@
     <div class="fhi-field-group">
         <label for="email" class="fhi-label">Email (required)</label>
         {{ form.email }}
-        <small class="fhi-note fhi-hint">Our server keeps your email with the record that you agreed to these terms. With each chat it keeps a scrambled version (a hash), so you can ask us to delete your chats. This browser keeps your email too, and the chat tries to take it out of your messages.</small>
+        {% include "partials/field_error.html" with id="id_email_error" message=form.REQUIRED_MESSAGES.email errors=form.plain_errors.email filled=True %}
+        <small class="fhi-note fhi-hint" id="email_hint">Our server keeps your email with the record that you agreed to these terms. With each chat it keeps a scrambled version (a hash), so you can ask us to delete your chats. This browser keeps your email too, and the chat tries to take it out of your messages.</small>
     </div>
 
     <div class="fhi-field-group">
         <label for="phone" class="fhi-label">Phone</label>
         {{ form.phone }}
-        <small class="fhi-note fhi-hint">Our server keeps your phone number only if you tick the news box below. This browser doesn't keep it, so the chat can't take it out of your messages.</small>
+        <small class="fhi-note fhi-hint" id="phone_hint">Our server keeps your phone number only if you tick the news box below. This browser doesn't keep it, so the chat can't take it out of your messages.</small>
     </div>
 
     <div class="fhi-field-group">
@@ -65,6 +68,7 @@
             I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I'll use this site only for my own insurance appeals, or for someone I'm helping who asked me to, not to diagnose or treat any condition. (required)
         </label>
     </div>
+    {% include "partials/field_error.html" with id="id_tos_agreement_error" message=form.REQUIRED_MESSAGES.tos_agreement errors=form.plain_errors.tos_agreement filled=True %}
 
     <div class="fhi-check-row">
         {{ form.privacy_policy }}
@@ -72,13 +76,14 @@
             I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>. (required)
         </label>
     </div>
+    {% include "partials/field_error.html" with id="id_privacy_policy_error" message=form.REQUIRED_MESSAGES.privacy_policy errors=form.plain_errors.privacy_policy filled=True %}
 
     <div class="fhi-check-row">
         {{ form.subscribe }}
         <label for="subscribe">
             Send me news from Fight Health Insurance and Fight Paperwork, our version for professionals. Optional, but we appreciate it!
         </label>
-        <small class="fhi-note">If you tick this, our server keeps your name, email, phone number and how you heard about us on our mailing list until you unsubscribe or ask us to delete your data.</small>
+        <small class="fhi-note" id="subscribe_hint">If you tick this, our server keeps your name, email, phone number and how you heard about us on our mailing list until you unsubscribe or ask us to delete your data.</small>
     </div>
 
     <div class="fhi-field-group">
@@ -89,7 +94,7 @@
     <div class="fhi-field-group">
         <label for="referral_source_details" class="fhi-label">Details (Optional)</label>
         {{ form.referral_source_details }}
-        <small class="fhi-note fhi-hint">For example, which search engine or who told you about us. Our server keeps both answers only if you tick the news box above.</small>
+        <small class="fhi-note fhi-hint" id="referral_source_details_hint">For example, which search engine or who told you about us. Our server keeps both answers only if you tick the news box above.</small>
     </div>
 </div>
 
@@ -105,7 +110,7 @@
         <label for="use_external_models">
             Let outside AI services help answer. <b>Optional. Your conversation is shared with those services</b>, under their own terms.
         </label>
-        <small class="fhi-note">
+        <small class="fhi-note" id="use_external_models_hint">
             Our own models answer first. With this on, outside services are asked too, so you still get a good answer if ours are slow, down or stuck. We try to remove the name, email, street address, city and ZIP code you entered above in your browser first; please leave out other identifying details, such as your phone number. Turn this off to keep your chat on our own models only.
         </small>
     </div>

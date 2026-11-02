@@ -1,0 +1,12 @@
+{% comment %} The list at the top of a form the server sent back, as on
+   assistant_terms.html: each message once more, linking to the field it is
+   about, so a screen reader hears what went wrong as the page loads and can
+   go straight to it. "errors" is a list of {"field_id", "text"}, such as
+   BaseConsentForm.error_summary; one with no field_id links nowhere. Draws
+   nothing when the list is empty. {% endcomment %}
+{% if errors %}
+<div class="fhi-form-errors" role="alert">
+    <p>Please check these and send the form again:</p>
+    <ul>{% for error in errors %}<li>{% if error.field_id %}<a href="#{{ error.field_id }}">{{ error.text }}</a>{% else %}{{ error.text }}{% endif %}</li>{% endfor %}</ul>
+</div>
+{% endif %}

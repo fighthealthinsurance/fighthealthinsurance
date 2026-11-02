@@ -59,6 +59,7 @@ cancelling paid for nothing and stopped nothing. Say both plainly.
   <input type="hidden" name="denial_id" value="{{ denial_id }}">
   {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
 
+  <label for="scrubbed_appeal_text" class="fhi-label">Your appeal letter (you can edit it)</label>
   {# Unindented on purpose: any space here becomes part of the letter. The browser drops the one line break after the tag. #}
   <textarea class="appeal_text fhi-field" name="appeal_text" id="scrubbed_appeal_text">
 {{ appeal }}</textarea>
@@ -151,14 +152,19 @@ cancelling paid for nothing and stopped nothing. Say both plainly.
 <form action="{% url 'stagefaxview' %}" method="post" class="fhi-stack form-wrapper">
   {% csrf_token %}
   {{fax_form}}
-  <div class="fax-pwyw-group" aria-label="Fax price (optional, pay what you want)">
+  {% comment %} A group of radios is a fieldset named by its legend, which a
+     screen reader reads with each choice; an aria-label on a plain div was
+     never announced. The legend is not drawn, so the row looks as it did:
+     the button under it already says pay what you want. {% endcomment %}
+  <fieldset class="fax-pwyw-group">
+    <legend class="fhi-visually-hidden">Fax price (optional, pay what you want)</legend>
     <label><input type="radio" name="fax_pwyw" value="0" checked>$0 <small>Need it free</small></label>
     <label><input type="radio" name="fax_pwyw" value="5">$5 <small>Original price</small></label>
     <label><input type="radio" name="fax_pwyw" value="10">$10 <small>Keep lights on</small></label>
     <label><input type="radio" name="fax_pwyw" value="custom">Custom
       <input type="number" min="1" max="1000" step="1" class="fax-custom-input" name="fax_amount_custom" placeholder="Amount" aria-label="Custom fax amount">
     </label>
-  </div>
+  </fieldset>
   <input type="hidden" name="fax_amount" value="0">
   <button id="fax_appeal" class="fhi-button fhi-button-primary">
     📠 {% if fax_payment_cancelled %}Fax It Again{% else %}Fax My Appeal{% endif %} (Pay What You Want)

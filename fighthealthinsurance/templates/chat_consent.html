@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% block title %}
-Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
+{% if form.errors %}Error: {% endif %}Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
 {% endblock title %}
 
 {% load static %}
@@ -22,11 +22,7 @@ Terms of Service & Setup - FightHealthInsurance Chat Assistant (Alpha)
   <div class="fhi-column fhi-stack fhi-stack-loose">
     <div class="fhi-card">
       <h2>Terms of Service & Your Information</h2>
-      {% if form.errors %}
-      <div class="fhi-notice fhi-notice-danger">
-        {{ form.errors }}
-      </div>
-      {% endif %}
+      {% include "partials/error_summary.html" with errors=form.error_summary %}
 
       <p>
         Before you start chatting with the FightHealthInsurance Assistant, please review and accept our terms of service and fill in your details below.

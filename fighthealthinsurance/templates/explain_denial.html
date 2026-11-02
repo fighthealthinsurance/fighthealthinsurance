@@ -2,7 +2,7 @@
 {% load static %}
 {% load bundles %}
 
-{% block title %}Explain My Denial - Fight Health Insurance{% endblock title %}
+{% block title %}{% if form.errors %}Error: {% endif %}Explain My Denial - Fight Health Insurance{% endblock title %}
 {% block metatitle %}Explain My Denial - Fight Health Insurance{% endblock metatitle %}
 {% block metadescription %}Paste your health insurance denial letter and get a plain English explanation from our AI assistant.{% endblock metadescription %}
 
@@ -41,22 +41,7 @@
             <p>You're not alone: insurers deny millions of claims a year. <a href="{% url 'denial-watch' %}">See how often, on Denial Watch</a>.</p>
             {% endif %}
             
-            {% if form.errors or form.non_field_errors %}
-            <div class="fhi-notice fhi-notice-danger">
-                {% if form.non_field_errors %}
-                    {{ form.non_field_errors }}
-                {% endif %}
-                {% if form.errors %}
-                    <ul>
-                    {% for field, errors in form.errors.items %}
-                        {% for error in errors %}
-                        <li>{{ field }}: {{ error }}</li>
-                        {% endfor %}
-                    {% endfor %}
-                    </ul>
-                {% endif %}
-            </div>
-            {% endif %}
+            {% include "partials/error_summary.html" with errors=form.error_summary %}
             
             <form class="fhi-stack" method="post" action="{% url 'explain_denial' %}" id="explain_denial_form">
                 {% csrf_token %}
@@ -75,10 +60,11 @@
                             name="denial_text"
                             rows="8"
                             placeholder="Paste the letter's text here"
+                            aria-describedby="denial_text_tip"
                             required>{{ denial_text|default:"" }}</textarea>
                         {% include "partials/letter_box_pick.html" with accept="image/*,.pdf" note="A photo or PDF, up to 20MB per file. We pull the text out for you." %}
                     </div>
-                    <div class="fhi-note">
+                    <div class="fhi-note" id="denial_text_tip">
                         Tip: include the whole letter, especially the parts that give the reason for the denial.
                     </div>
                 </div>

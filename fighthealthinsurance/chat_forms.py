@@ -211,7 +211,31 @@ def _shown(link: str) -> str:
 
 
 class BaseConsentForm(forms.Form):
-    """Shared consent fields for forms that collect user info + TOS agreement."""
+    """Shared consent fields for forms that collect user info + TOS agreement.
+
+    The pages these render on (chat_consent.html, explain_denial.html,
+    understand_policy.html) put each field's message under the field with
+    partials/field_error.html and list them at the top with
+    partials/error_summary.html. Django's own "This field is required." read
+    out of context, and the pages used to print it after the field's
+    internal name ("first_name: ..."), so a missing value says in plain words
+    what to fill in instead (REQUIRED_MESSAGES); any other refusal keeps the
+    server's own words, which say why.
+
+    A field's hint on the page is tied to it with aria-describedby: FIELD_HINTS
+    names the ids of the hints the page draws for each field, and a field the
+    server refused gets its message's id, id_<name>_error, after them.
+    """
+
+    REQUIRED_MESSAGES: dict[str, str] = {
+        "first_name": "Please enter your first name.",
+        "last_name": "Please enter your last name.",
+        "email": "Please enter your email address.",
+        "tos_agreement": "Please tick the box to agree to the Terms of Service.",
+        "privacy_policy": "Please tick the box to say you have read the Privacy Policy.",
+    }
+    # Field name -> ids of the hints the template draws for it, in order.
+    FIELD_HINTS: dict[str, tuple[str, ...]] = {}
 
     first_name = forms.CharField(
         max_length=100,
@@ -265,9 +289,83 @@ class BaseConsentForm(forms.Form):
         widget=forms.CheckboxInput(attrs={"class": "fhi-check", "id": "subscribe"}),
     )
 
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        for name, hint_ids in self.FIELD_HINTS.items():
+            if name in self.fields:
+                self._describe(name, *hint_ids)
+
+    def _describe(self, name: str, *ids: str) -> None:
+        """Add ids to the field's aria-describedby, keeping what is there."""
+        attrs = self.fields[name].widget.attrs
+        described = attrs.get("aria-describedby", "").split()
+        described.extend(i for i in ids if i not in described)
+        attrs["aria-describedby"] = " ".join(described)
+
+    @staticmethod
+    def error_id(name: str) -> str:
+        return f"id_{name}_error"
+
+    def full_clean(self) -> None:
+        super().full_clean()
+        # full_clean has just filled the errors, so this does not run it again.
+        for name in self.errors:
+            if name in self.fields:
+                self._describe(name, self.error_id(name))
+
+    @property
+    def plain_errors(self) -> dict[str, list[str]]:
+        """Each refused field's messages, in words a person can act on."""
+        if not self.is_bound:
+            return {}
+        plain: dict[str, list[str]] = {}
+        for name, errors in self.errors.as_data().items():
+            if name not in self.fields:
+                continue
+            plain[name] = [
+                (
+                    self.REQUIRED_MESSAGES.get(name, " ".join(error.messages))
+                    if error.code == "required"
+                    else " ".join(error.messages)
+                )
+                for error in errors
+            ]
+        return plain
+
+    @property
+    def error_summary(self) -> list[dict[str, str]]:
+        """What partials/error_summary.html lists: every message, in the
+        order the fields are on the form, each linking to its field, then
+        the form-wide ones, which link nowhere."""
+        if not self.is_bound:
+            return []
+        plain = self.plain_errors
+        summary = [
+            {"field_id": self[name].id_for_label or "", "text": text}
+            for name in self.fields
+            for text in plain.get(name, [])
+        ]
+        summary.extend(
+            {"field_id": "", "text": str(error)} for error in self.non_field_errors()
+        )
+        return summary
+
 
 class UnderstandPolicyForm(BaseConsentForm):
     """Form for uploading policy documents with consent"""
+
+    REQUIRED_MESSAGES = {
+        **BaseConsentForm.REQUIRED_MESSAGES,
+        "policy_document": "Please choose your policy document to upload.",
+        "document_type": "Please choose what kind of document this is.",
+        "plan_category": "Please choose what kind of plan this is.",
+    }
+    FIELD_HINTS = {
+        "document_type": ("document_type_hint",),
+        "policy_document": ("policy_document_hint", "policy_document_training_hint"),
+        "plan_category": ("plan_category_hint", "plan_category_regulators_hint"),
+        "user_question": ("user_question_hint",),
+    }
 
     policy_document = forms.FileField(
         required=True,
@@ -582,6 +680,15 @@ class PlanDocumentsReminderForm(StyledWidgetsMixin, forms.Form):
 
 class UserConsentForm(BaseConsentForm):
     """Form for user TOS consent and personal information collection"""
+
+    # The hints partials/user_consent_form_fields.html draws under them.
+    FIELD_HINTS = {
+        "email": ("email_hint",),
+        "phone": ("phone_hint",),
+        "subscribe": ("subscribe_hint",),
+        "referral_source_details": ("referral_source_details_hint",),
+        "use_external_models": ("use_external_models_hint",),
+    }
 
     phone = forms.CharField(
         max_length=20,

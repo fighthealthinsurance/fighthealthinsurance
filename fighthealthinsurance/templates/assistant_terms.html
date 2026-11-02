@@ -135,12 +135,12 @@ Remove personal details from running them together with a name
 	<section class="fhi-stack">
 	    <h2>Your denial letter</h2>
 	    <div class="fhi-field-group">
-		<label for="denial_text" id="denial_text_label" class="fhi-label">The letter your assistant sent</label>
-		<small class="fhi-hint">Take out your name, address and other personal details first, or fill in About you below and press Remove personal details. We keep this text to improve our AI, and people on our team may read it.</small>
+		<label for="denial_text" id="denial_text_label" class="fhi-label">The letter your assistant sent (required)</label>
+		<small class="fhi-hint" id="denial_text_hint">Take out your name, address and other personal details first, or fill in About you below and press Remove personal details. We keep this text to improve our AI, and people on our team may read it.</small>
 		<textarea name="denial_text" id="denial_text" rows="10" form="fuck_health_insurance_form"
-		    class="fhi-field"{% if form.denial_text.errors %} aria-invalid="true" aria-describedby="need_denial"{% endif %} data-from-assistant="true">{{ ocr_result }}</textarea>
+		    class="fhi-field" aria-required="true" aria-describedby="denial_text_hint denial_text_sent_hint{% if form.denial_text.errors %} need_denial{% endif %}"{% if form.denial_text.errors %} aria-invalid="true"{% endif %} data-from-assistant="true">{{ ocr_result }}</textarea>
 		{% include "partials/field_error.html" with id="need_denial" message="Paste your denial letter in the box above. No letter? Describe what was denied, for example: the pharmacy denied my PrEP." errors=form.denial_text.errors %}
-		<small class="fhi-hint">This version, with the personal details we could find removed, is sent to our server.</small>
+		<small class="fhi-hint" id="denial_text_sent_hint">This version, with the personal details we could find removed, is sent to our server.</small>
 	    </div>
 	    {% comment %} What the assistant sent on what was denied and the
 	       condition (assistant_terms_views.short_field). Agree keeps them as
@@ -176,11 +176,11 @@ Remove personal details from running them together with a name
 		</div>
 		<div class="fhi-field-group">
 		    <label for="email" class="fhi-label">
-		      <div id="email-label">Email <small class="fhi-hint">(<a href="#how-we-store-your-email">how we store it</a>)</small></div>
+		      <div id="email-label">Email (required) <small class="fhi-hint">(<a href="#how-we-store-your-email">how we store it</a>)</small></div>
 		      <span class="fhi-note">
 		      </span>
 		    </label>
-		    <input type="email" id="email" name="email" class="fhi-field" value="{{ form.email.value|default:'' }}"{% if form.email.errors %} aria-invalid="true" aria-describedby="email_error"{% endif %}>
+		    <input type="email" id="email" name="email" class="fhi-field" value="{{ form.email.value|default:'' }}" aria-required="true"{% if form.email.errors %} aria-invalid="true" aria-describedby="email_error"{% endif %}>
 		    {% include "partials/field_error.html" with id="email_error" message="We need your email to go on. It lets us delete your data later if you ask." invalid_message="Please check your email address. It should look like name@example.com." errors=form.email.errors filled=form.email.value %}
 		</div>
 		<div class="together-form-group">
@@ -204,11 +204,11 @@ Remove personal details from running them together with a name
 	       so by the box it would run before they are filled in. {% endcomment %}
 	    <div class="fhi-field-group">
 		<div>
-		    <button type="button" id="scrub-2" class="fhi-button fhi-button-secondary">
+		    <button type="button" id="scrub-2" class="fhi-button fhi-button-secondary" aria-describedby="scrub_hint">
 		      Remove personal details
 		    </button>
 		</div>
-		<small class="fhi-hint">Takes the name, email, street and ZIP code above out of your letter, in your browser. Check the letter afterwards for anything it missed.</small>
+		<small class="fhi-hint" id="scrub_hint">Takes the name, email, street and ZIP code above out of your letter, in your browser. Check the letter afterwards for anything it missed.</small>
 	    </div>
 	</section>
 	<section>
@@ -296,8 +296,8 @@ Remove personal details from running them together with a name
 				<label for="referral_source_details" class="fhi-label">
 					Details (Optional)
 				</label>
-				<input type="text" id="referral_source_details" name="referral_source_details" class="fhi-field" placeholder="E.g., which search engine, social media platform, or person's name">
-				<small class="fhi-note fhi-hint">Please provide specific details about your referral source if applicable</small>
+				<input type="text" id="referral_source_details" name="referral_source_details" class="fhi-field" placeholder="E.g., which search engine, social media platform, or person's name" aria-describedby="referral_source_details_hint">
+				<small class="fhi-note fhi-hint" id="referral_source_details_hint">Please provide specific details about your referral source if applicable</small>
 			</div>
 			<div class="fhi-check-row alert-box alert-box-warning">
 			<input type="checkbox" id="persistence_enabled" checked class="fhi-check">

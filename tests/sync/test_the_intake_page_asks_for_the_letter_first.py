@@ -382,7 +382,10 @@ class EachMessageSitsUnderItsFieldTest(TestCase):
                 with self.subTest(field=field_id):
                     field = self.soup.find(id=field_id)
                     self.assertIsNone(field.get("aria-invalid"))
-                    self.assertIsNone(field.get("aria-describedby"))
+                    # Its hints may describe it; no message does yet.
+                    described = (field.get("aria-describedby") or "").split()
+                    for message_id in MESSAGES:
+                        self.assertNotIn(message_id, described)
 
 
 class TheFormHoldsEveryControlTest(TestCase):
@@ -460,7 +463,9 @@ class TheServerSendsEachErrorBackByItsFieldTest(TestCase):
                 for field_id in fields:
                     field = soup.find(id=field_id)
                     self.assertEqual(field.get("aria-invalid"), "true")
-                    self.assertEqual(field.get("aria-describedby"), message_id)
+                    # The message joins the field's hints; it replaces none.
+                    described = field.get("aria-describedby").split()
+                    self.assertEqual(described[-1], message_id)
 
     def test_an_email_the_server_cannot_use_is_explained_in_its_own_words(self):
         data = dict(EVERYTHING_BUT_THE_PERSONAL_USE_BOX, personalonly="on")

@@ -2,7 +2,7 @@
 {% load static %}
 {% load bundles %}
 
-{% block title %}Understand My Policy - Fight Health Insurance{% endblock title %}
+{% block title %}{% if form.errors %}Error: {% endif %}Understand My Policy - Fight Health Insurance{% endblock title %}
 {% block metatitle %}Understand My Policy - Fight Health Insurance{% endblock metatitle %}
 {% block metadescription %}Upload your insurance policy document and get AI-powered analysis of coverage, exclusions, and appeal-relevant clauses.{% endblock metadescription %}
 
@@ -37,22 +37,7 @@
         <div class="fhi-card">
             <h2>Upload Your Policy Document</h2>
 
-            {% if form.errors or form.non_field_errors %}
-            <div class="fhi-notice fhi-notice-danger">
-                {% if form.non_field_errors %}
-                    {{ form.non_field_errors }}
-                {% endif %}
-                {% if form.errors %}
-                    <ul>
-                    {% for field, errors in form.errors.items %}
-                        {% for error in errors %}
-                        <li>{{ field }}: {{ error }}</li>
-                        {% endfor %}
-                    {% endfor %}
-                    </ul>
-                {% endif %}
-            </div>
-            {% endif %}
+            {% include "partials/error_summary.html" with errors=form.error_summary %}
 
             <form class="fhi-stack" method="post" action="{% url 'understand_policy' %}" id="understand_policy_form" enctype="multipart/form-data">
                 {% csrf_token %}
@@ -66,18 +51,20 @@
                     <div class="fhi-field-group">
                         <label for="document_type" class="fhi-label">Document type (required)</label>
                         {{ form.document_type }}
-                        <div class="fhi-note">
+                        <div class="fhi-note" id="document_type_hint">
                             Select the type of document you're uploading.
                         </div>
+                        {% include "partials/field_error.html" with id="id_document_type_error" message=form.REQUIRED_MESSAGES.document_type errors=form.plain_errors.document_type filled=True %}
                     </div>
 
                     <div class="fhi-field-group">
                         <label for="policy_document" class="fhi-label">Policy document (required)</label>
                         {{ form.policy_document }}
-                        <div class="fhi-note">
+                        <div class="fhi-note" id="policy_document_hint">
                             Upload your document (PDF, DOCX, or TXT — max 20MB).
                         </div>
-                        <div class="fhi-note">
+                        {% include "partials/field_error.html" with id="id_policy_document_error" message=form.REQUIRED_MESSAGES.policy_document errors=form.plain_errors.policy_document filled=True %}
+                        <div class="fhi-note" id="policy_document_training_hint">
                             <strong>Training use:</strong> Your document will be stored encrypted and may be used in de-identified form to train and improve our AI models, helping us better assist patients fighting insurance denials.
                         </div>
                     </div>
@@ -85,22 +72,23 @@
                     <div class="fhi-field-group">
                         <label for="plan_category" class="fhi-label">What kind of plan is this? (required)</label>
                         {{ form.plan_category }}
-                        <div class="fhi-note">
+                        <div class="fhi-note" id="plan_category_hint">
                             Knowing your plan type helps us identify the right regulator and appeal rights. Your plan type affects who oversees your appeals:
                         </div>
-                        <div class="fhi-note">
+                        <div class="fhi-note" id="plan_category_regulators_hint">
                             <strong>ERISA employer plans</strong> &rarr; Dept. of Labor &bull;
                             <strong>ACA Marketplace</strong> &rarr; HHS / State Insurance Dept. &bull;
                             <strong>Medicare</strong> &rarr; CMS &bull;
                             <strong>Medicaid/CHIP</strong> &rarr; State Medicaid Agency &bull;
                             <strong>Not sure?</strong> Select "I'm Not Sure" and we'll try to determine it from your document.
                         </div>
+                        {% include "partials/field_error.html" with id="id_plan_category_error" message=form.REQUIRED_MESSAGES.plan_category errors=form.plain_errors.plan_category filled=True %}
                     </div>
 
                     <div class="fhi-field-group">
                         <label for="user_question" class="fhi-label">Your question (optional)</label>
                         {{ form.user_question }}
-                        <div class="fhi-note">
+                        <div class="fhi-note" id="user_question_hint">
                             Have a specific question? Enter it here and we'll pay special attention to finding relevant information.
                         </div>
                     </div>
@@ -117,16 +105,19 @@
                         <div class="fhi-field-group">
                             <label for="{{ form.first_name.id_for_label }}" class="fhi-label">First name (required)</label>
                             {{ form.first_name }}
+                            {% include "partials/field_error.html" with id="id_first_name_error" message=form.REQUIRED_MESSAGES.first_name errors=form.plain_errors.first_name filled=True %}
                         </div>
                         <div class="fhi-field-group">
                             <label for="{{ form.last_name.id_for_label }}" class="fhi-label">Last name (required)</label>
                             {{ form.last_name }}
+                            {% include "partials/field_error.html" with id="id_last_name_error" message=form.REQUIRED_MESSAGES.last_name errors=form.plain_errors.last_name filled=True %}
                         </div>
                     </div>
 
                     <div class="fhi-field-group">
                         <label for="{{ form.email.id_for_label }}" class="fhi-label">Email (required)</label>
                         {{ form.email }}
+                        {% include "partials/field_error.html" with id="id_email_error" message=form.REQUIRED_MESSAGES.email errors=form.plain_errors.email filled=True %}
                     </div>
                 </div>
 
@@ -142,6 +133,7 @@
                             I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I understand this is information only, not legal or professional advice, and that my policy may be used, with identifying details removed as best we can, to train Fight Health Insurance's AI. (required)
                         </label>
                     </div>
+                    {% include "partials/field_error.html" with id="id_tos_agreement_error" message=form.REQUIRED_MESSAGES.tos_agreement errors=form.plain_errors.tos_agreement filled=True %}
 
                     <div class="fhi-check-row">
                         {{ form.privacy_policy }}
@@ -149,6 +141,7 @@
                             I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>. (required)
                         </label>
                     </div>
+                    {% include "partials/field_error.html" with id="id_privacy_policy_error" message=form.REQUIRED_MESSAGES.privacy_policy errors=form.plain_errors.privacy_policy filled=True %}
 
                     <div class="fhi-check-row">
                         {{ form.subscribe }}

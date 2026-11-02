@@ -10,9 +10,11 @@ from django.urls import reverse
 
 from fighthealthinsurance.chat_forms import UserConsentForm
 
+# aria-describedby ties the box to the note under it (what sharing means).
 CHECKED_CHECKBOX = (
     '<input type="checkbox" name="use_external_models" '
-    'class="fhi-check" id="use_external_models" checked>'
+    'class="fhi-check" id="use_external_models" '
+    'aria-describedby="use_external_models_hint" checked>'
 )
 
 

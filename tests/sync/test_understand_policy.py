@@ -327,7 +327,7 @@ class UnderstandPolicyViewTest(TestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "This field is required")
+        self.assertContains(response, "Please choose your policy document to upload.")
 
     def test_valid_pdf_upload_creates_document(self):
         pdf_content = b"%PDF-1.4 test policy content" + b"x" * 100

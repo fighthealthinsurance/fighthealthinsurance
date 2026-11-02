@@ -1356,7 +1356,7 @@ li > a.link {
 .appeal-donate-wrapper .pwyw-option small {color: #666;}
 
 /* Fax PWYW modifications */
-.fax-pwyw-group {display:flex; flex-wrap:wrap; gap:.6rem; margin:.75rem 0 1rem;}
+.fax-pwyw-group {display:flex; flex-wrap:wrap; gap:.6rem; margin:.75rem 0 1rem; min-width:0; padding:0; border:0;}
 .fax-pwyw-group label {background:#f7f7f7; padding:.5rem .75rem; border-radius:8px; border:1px solid #ddd; font-size:.75rem; flex:1 1 120px; cursor:pointer; position:relative;}
 .fax-pwyw-group input[type=radio] {margin-right:.35rem; accent-color:#a5c422;}
 .fax-custom-input {width:100%; margin-top:.4rem; padding:.35rem .5rem; font-size:1rem; border:1px solid #ccc; border-radius:6px;}
