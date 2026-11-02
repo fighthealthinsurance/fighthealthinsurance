@@ -479,3 +479,12 @@ class TestMLCitationsHelperCMSIntegration:
         )
 
         assert result == ["CMS NCD only"]
+
+
+def test_a_cached_retired_ncd_is_looked_up_again():
+    from fighthealthinsurance.ml.ml_citations_helper import _cached_cms_citations
+
+    current = f"NCD 20.31 Intensive Cardiac Rehabilitation {NCD_CITATION_MARKER}"
+    retired = f"NCD 20.10 Cardiac Rehabilitation Programs - RETIRED {NCD_CITATION_MARKER}"
+    assert _cached_cms_citations([current]) == [current]
+    assert _cached_cms_citations([current, retired]) is None

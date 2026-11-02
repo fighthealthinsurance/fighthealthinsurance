@@ -317,6 +317,20 @@ def is_confirm_delete_event(event: Any) -> bool:
     return _url_path(request.get("url")).rstrip("/") == CONFIRM_DELETE_PATH
 
 
+def _came_from_confirm_delete(event: Any) -> bool:
+    """True when the event's Referer is the delete confirmation link: the
+    next page someone opens from it carries the email and token there.
+    Never raises."""
+    request = event.get("request") if isinstance(event, dict) else None
+    headers = request.get("headers") if isinstance(request, dict) else None
+    if not isinstance(headers, dict):
+        return False
+    return any(
+        str(k).lower() == "referer" and _url_path(v).rstrip("/") == CONFIRM_DELETE_PATH
+        for k, v in headers.items()
+    )
+
+
 def _confirm_delete_values(request: Dict[str, Any]) -> Set[str]:
     """The email and token the request carried, in each form a string in the
     event could hold them."""
@@ -366,18 +380,24 @@ def strip_confirm_delete_details(event: Any) -> Any:
     the query string goes, and every other copy of either value in the event
     (the URL, the Referer header, the form body, breadcrumbs, the transaction
     name, spans) becomes "[Filtered]". An event that cannot be cleaned is
-    dropped. Never raises."""
-    if not is_confirm_delete_event(event):
+    dropped. An event from a page opened from that link has the values in
+    its Referer: those go too, and the page's own URL and query stay. Never
+    raises."""
+    on_page = is_confirm_delete_event(event)
+    if not on_page and not _came_from_confirm_delete(event):
         return event
     try:
         request = event.get("request")
         if not isinstance(request, dict):
             request = {}
-        values = _confirm_delete_values(request)
-        request.pop("query_string", None)
-        url = request.get("url")
-        if isinstance(url, str):
-            request["url"] = url.split("?", 1)[0]
+        if on_page:
+            values = _confirm_delete_values(request)
+            request.pop("query_string", None)
+            url = request.get("url")
+            if isinstance(url, str):
+                request["url"] = url.split("?", 1)[0]
+        else:
+            values = _confirm_delete_values({"headers": request.get("headers")})
         headers = request.get("headers")
         if isinstance(headers, dict):
             for key, value in headers.items():

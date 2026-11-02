@@ -131,6 +131,24 @@ class TestResendWaitsForASendUnderWay:
         assert fax.vendor_send_completed is True
         assert fax.destination == "4255551234"
 
+    def test_a_claim_left_by_a_sender_that_died_long_ago_does_not_block_resend(
+        self, test_denial
+    ):
+        """A Ray actor killed mid-send never releases its claim; past
+        SEND_ATTEMPT_LIVE the person can send the fax again."""
+        fax = _make_fax(
+            test_denial,
+            vendor_send_completed=True,
+            attempting_to_send_as_of=timezone.now() - timedelta(hours=3),
+        )
+        assert SendFaxHelper.resend_refusal(fax) is None
+        with patch(DISPATCH) as dispatch:
+            assert _resend(fax) is True
+        dispatch.assert_called_once()
+        fax.refresh_from_db()
+        assert fax.vendor_send_completed is False
+        assert fax.destination == "8005559999"
+
     def test_a_second_submit_after_the_first_resend_started_sends_nothing(
         self, test_denial
     ):

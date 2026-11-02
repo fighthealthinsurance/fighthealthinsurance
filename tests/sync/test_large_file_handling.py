@@ -267,3 +267,48 @@ class SaveTimeoutScalesWithSizeTest(TestCase):
         self.assertGreater(big, small)
         # A sizeless stream still gets the base window.
         self.assertEqual(save_timeout_seconds(object()), small)
+
+
+def _png_header(width: int, height: int) -> bytes:
+    """A PNG that claims these dimensions; Image.open reads only this much."""
+    import struct
+    import zlib
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    chunk = b"IHDR" + ihdr
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + struct.pack(">I", len(ihdr))
+        + chunk
+        + struct.pack(">I", zlib.crc32(chunk) & 0xFFFFFFFF)
+        + struct.pack(">I", 0)
+        + b"IEND"
+        + struct.pack(">I", zlib.crc32(b"IEND") & 0xFFFFFFFF)
+    )
+
+
+class ServerOcrNeverHandsAHugeImageToTheFallbackTest(TestCase):
+    def test_an_image_pillow_refuses_as_a_decompression_bomb_is_skipped(self):
+        # 14000 x 14000 is past twice Pillow's MAX_IMAGE_PIXELS, so
+        # Image.open itself raises instead of returning the size.
+        from io import BytesIO
+        from unittest.mock import Mock
+
+        view = views.OCRView()
+        view._easy_ocr_reader = Mock()
+        text = view._ocr([BytesIO(_png_header(14000, 14000))])
+        self.assertEqual(text, "")
+        view._easy_ocr_reader.readtext.assert_not_called()
+
+    def test_a_tesseract_timeout_is_not_retried_without_one(self):
+        from io import BytesIO
+        from unittest.mock import Mock
+
+        view = views.OCRView()
+        view._easy_ocr_reader = Mock()
+        with patch(
+            "pytesseract.image_to_string", side_effect=RuntimeError("Tesseract process timeout")
+        ):
+            text = view._ocr([BytesIO(_png_header(100, 100))])
+        self.assertEqual(text, "")
+        view._easy_ocr_reader.readtext.assert_not_called()

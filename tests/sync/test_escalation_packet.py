@@ -292,10 +292,36 @@ class RegulatorEscalationReasonsTest(TestCase):
             "We denied your first-level appeal; we received your second-level appeal.",
             "Your second-level appeal concerns our original denial decision and is being processed.",
             "This responds to your third-level appeal.",
+            "Your level 1 appeal has been denied and a level 2 appeal is available within 60 days.",
+            "We denied your first-level appeal, and a second-level appeal is available.",
         ):
             with self.subTest(text=text):
                 denial = _FakeDenial(state="", denial_text=text)
                 self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_exhaustion_as_a_prerequisite_is_not_a_reason(self):
+        for text in (
+            "This is not medically necessary. You may appeal this decision within 180 days. External review is available after internal appeals are exhausted.",
+            "External review is available only after internal appeals have been exhausted.",
+            "Before requesting external review, internal appeals must be exhausted.",
+            "Typically, internal appeals must be exhausted before external review.",
+            "You are not required to have exhausted your appeals before contacting the Department.",
+            "Your plan requires that internal appeals be exhausted prior to filing a lawsuit.",
+            "Upon a final adverse determination, you may request an external review.",
+            "Following a final adverse benefit determination, you can request external review.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_a_final_determination_after_an_opening_phrase_is_a_reason(self):
+        for text in (
+            "After careful review, this is our final adverse determination.",
+            "We upheld our first-level decision and denied your second-level appeal.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertTrue(regulator_escalation_reasons(denial))
 
     def test_more_ways_to_say_the_internal_appeals_are_done(self):
         for text in (
