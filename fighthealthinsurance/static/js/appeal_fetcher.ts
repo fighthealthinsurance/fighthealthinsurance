@@ -225,20 +225,9 @@ function fadeStatusMessage(text: string, color?: string): void {
 function createStatusIndicator(): HTMLElement {
   const statusDiv = document.createElement('div');
   statusDiv.id = 'appeal-status-indicator';
-  statusDiv.style.cssText = `
-    position: fixed;
-    top: 80px;
-    right: 20px;
-    background: white;
-    border: 2px solid #ADD100;
-    border-radius: 12px;
-    padding: 16px 20px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    z-index: 1000;
-    max-width: 340px;
-    min-width: 280px;
-    transition: all 0.3s ease;
-  `;
+  // Placement and frame live in custom.css (#appeal-status-indicator): a
+  // floating card on wider screens, part of the page flow on phones, where a
+  // fixed card sat under the sticky header over almost half the screen.
 
   // Add spinner animation style
   const style = document.createElement('style');
@@ -272,16 +261,23 @@ function createStatusIndicator(): HTMLElement {
       <div style="flex: 1; background: #e0e0e0; border-radius: 10px; height: 8px; overflow: hidden;">
         <div id="status-progress" style="background: linear-gradient(to right, #ADD100, #7B920A); height: 100%; width: 0%; transition: width 0.5s ease;"></div>
       </div>
-      <div id="status-count" style="font-size: 0.85rem; font-weight: 600; color: #7B920A;">0/3</div>
+      <div id="status-count" role="status" style="font-size: 0.85rem; font-weight: 600; color: var(--fhi-green-ink);">${draftsReadyText(0)}</div>
     </div>
     <div id="appeal-wait-times" style="display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: var(--fhi-text-micro); color: var(--fhi-muted); margin-bottom: 8px;">
       <span>First appeal: <span id="wait-first" style="font-weight: 600; color: #555;">0s</span></span>
       <span>Current appeal: <span id="wait-current" style="font-weight: 600; color: #555;">0s</span></span>
       <span>Total: <span id="wait-total" style="font-weight: 600; color: #555;">0s</span></span>
     </div>
-    <div id="status-message" style="font-size: 0.8rem; color: var(--fhi-muted); line-height: 1.4; font-style: italic; transition: opacity 0.2s ease;">${progressMessages[0]}</div>
+    <div id="status-message" role="status" aria-live="polite" style="font-size: 0.8rem; color: var(--fhi-muted); line-height: 1.4; font-style: italic; transition: opacity 0.2s ease;">${progressMessages[0]}</div>
   `;
   return statusDiv;
+}
+
+// The count under the progress bar, in words, so it reads the same aloud as
+// it looks. It is a live region of its own: the person hears each draft land.
+function draftsReadyText(appealsCount: number): string {
+  const ready = Math.min(Math.max(appealsCount, 0), 3);
+  return `${ready} of 3 drafts ready`;
 }
 
 function formatDuration(ms: number): string {
@@ -338,7 +334,7 @@ function updateStatusIndicator(status: typeof connectionStatus, appealsCount: nu
     markAllDone();
     renderChecklist();
     statusProgress.style.width = '100%';
-    statusCount.textContent = `${appealsCount}/3`;
+    statusCount.textContent = draftsReadyText(appealsCount);
     const statusMessage = document.getElementById('status-message');
     if (statusMessage) {
       statusMessage.textContent = 'Your appeals are ready! Choose the one you like best.';
@@ -367,7 +363,7 @@ function updateStatusIndicator(status: typeof connectionStatus, appealsCount: nu
 
   const progress = Math.min((appealsCount / 3) * 100, 100);
   statusProgress.style.width = `${progress}%`;
-  statusCount.textContent = `${appealsCount}/3`;
+  statusCount.textContent = draftsReadyText(appealsCount);
 }
 
 function rotateStatusMessage(): void {
@@ -413,7 +409,15 @@ function showLoading(): void {
   const existingIndicator = document.getElementById('appeal-status-indicator');
   if (!existingIndicator) {
     const statusIndicator = createStatusIndicator();
-    document.body.appendChild(statusIndicator);
+    // Right under the page heading, so on a phone (where the panel is in the
+    // page flow, see custom.css) it is what the person sees while they wait,
+    // and so it comes straight after the heading in reading order.
+    const heading = document.querySelector('h1');
+    if (heading && heading.parentNode) {
+      heading.parentNode.insertBefore(statusIndicator, heading.nextSibling);
+    } else {
+      document.body.appendChild(statusIndicator);
+    }
   }
   renderChecklist();
   updateStatusIndicator('connecting', 0);

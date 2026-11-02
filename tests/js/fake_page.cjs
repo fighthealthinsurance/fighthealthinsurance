@@ -427,6 +427,7 @@ const ESCALATION_MARKUP = `
 // Mirrors appeals.html. test_appeal_fetcher_behaviour.py checks these ids
 // against the rendered template.
 const APPEALS_MARKUP = `
+<h1 class="fhi-step-title">Your appeal</h1>
 <div id="loading-text" style="text-align:center; padding:1rem;">
   <h2>Generating Your Appeals</h2>
 </div>

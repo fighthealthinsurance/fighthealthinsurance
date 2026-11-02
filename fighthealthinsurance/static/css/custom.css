@@ -1347,6 +1347,33 @@ li > a.link {
     color: var(--fhi-muted);
 }
 
+/* The "Generating your appeals" panel the appeal fetcher puts on the drafts
+   page while the letters are written. On wider screens it floats beside the
+   page; on a phone a fixed card sat under the sticky header and covered
+   almost half the screen for the whole one to three minute wait, so there
+   it sits in the page flow under the heading instead. */
+#appeal-status-indicator {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    background: #fff;
+    border: 2px solid var(--fhi-lime);
+    border-radius: 12px;
+    padding: 16px 20px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    max-width: 340px;
+    min-width: 280px;
+    transition: all 0.3s ease;
+}
+@media (max-width: 768px) {
+    #appeal-status-indicator {
+        position: static;
+        min-width: 0;
+        max-width: none;
+        margin: 1rem 0;
+    }
+}
 /* Appeal page reuse */
 .appeal-donate-wrapper {margin:1.25rem 0;}
 .appeal-donate-wrapper .pwyw-panel {background: #fff; color: #333; border: 2px solid var(--fhi-lime);}

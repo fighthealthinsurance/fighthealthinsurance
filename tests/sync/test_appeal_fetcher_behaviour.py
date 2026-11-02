@@ -362,3 +362,63 @@ def test_an_external_models_rerun_keeps_its_progress_panel(compiled):
     result = run_scenario(compiled, "external_rerun_keeps_its_progress_panel")
     assert result["ended"]["statusMessage"].startswith(READY)
     assert result["duringTheRerun"]["indicatorShown"] is True
+
+
+# ------------------------------------------- the progress panel while it waits
+
+
+@needs_node
+def test_the_progress_panel_comes_straight_after_the_page_heading(compiled):
+    """On a phone it is in the page flow, so where it is inserted is where it shows."""
+    opened = run_scenario(compiled, "part_way_through")["opened"]
+    assert opened["indicatorFollowsTheHeading"] is True
+
+
+@needs_node
+def test_the_rotating_status_message_is_a_polite_live_region(compiled):
+    opened = run_scenario(compiled, "part_way_through")["opened"]
+    assert opened["statusRole"] == "status"
+    assert opened["statusLive"] == "polite"
+
+
+@needs_node
+def test_the_draft_count_says_in_words_how_many_are_ready(compiled):
+    result = run_scenario(compiled, "part_way_through")
+    assert result["opened"]["countText"] == "0 of 3 drafts ready"
+    assert result["afterOne"]["countText"] == "1 of 3 drafts ready"
+    assert result["afterTwo"]["countText"] == "2 of 3 drafts ready"
+    assert result["afterTwo"]["countRole"] == "status"
+
+
+def _panel_rules():
+    from tests.sync.test_contrast import load_rules
+
+    return [r for r in load_rules() if "#appeal-status-indicator" in r.selectors]
+
+
+def test_the_progress_panel_is_placed_by_the_stylesheet_not_inline():
+    """A fixed card written into a style attribute could not be undone on phones."""
+    fetcher = FETCHER.read_text()
+    assert "position: fixed" not in fetcher
+    assert "z-index" not in fetcher
+    top_level = [r for r in _panel_rules() if not r.media]
+    assert any(("position", "fixed", False) in r.declarations for r in top_level)
+
+
+def test_on_a_phone_the_progress_panel_sits_in_the_page_flow():
+    phone = {}
+    for rule in _panel_rules():
+        if "max-width: 768px" in rule.media:
+            phone.update({prop: value for prop, value, _ in rule.declarations})
+    assert phone.get("position") == "static", phone
+    assert phone.get("min-width") == "0", phone
+    assert phone.get("max-width") == "none", phone
+
+
+def test_the_draft_count_uses_the_ink_green_not_the_olive():
+    """--fhi-olive (#7B920A) at 13.6px is 3.52:1 on white, under 4.5:1."""
+    count_line = next(
+        line for line in FETCHER.read_text().splitlines() if 'id="status-count"' in line
+    )
+    assert "color: var(--fhi-green-ink)" in count_line, count_line
+    assert "#7B920A" not in count_line.upper(), count_line

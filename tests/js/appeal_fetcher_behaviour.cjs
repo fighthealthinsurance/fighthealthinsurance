@@ -110,6 +110,13 @@ function snapshot() {
       ? panel.querySelectorAll('button').map((b) => ({text: norm(b.textContent), type: b.type}))
       : [],
     indicatorShown: !!byId('appeal-status-indicator'),
+    indicatorFollowsTheHeading: byId('appeal-status-indicator')
+      ? page.document.querySelector('h1').nextSibling === byId('appeal-status-indicator')
+      : null,
+    statusRole: status ? status.getAttribute('role') || null : null,
+    statusLive: status ? status.getAttribute('aria-live') || null : null,
+    countText: byId('status-count') ? norm(byId('status-count').textContent) : null,
+    countRole: byId('status-count') ? byId('status-count').getAttribute('role') || null : null,
     statusMessage: status ? norm(status.textContent) : null,
     loadingTextDisplay: byId('loading-text').style.display || '',
     externalPromptDisplay: byId('external-models-prompt').style.display || '',
@@ -186,6 +193,18 @@ const scenarios = {
     await flush();
     page.clock.advance(1500);
     return {ended: snapshot()};
+  },
+
+  // Two letters in and the third still being written: what the progress
+  // panel says while the person waits.
+  part_way_through() {
+    const ws = start(false);
+    ws.fireOpen();
+    const opened = snapshot();
+    ws.fireMessage(letter(LETTER_A, 101));
+    const afterOne = snapshot();
+    ws.fireMessage(letter(LETTER_B, 102));
+    return {opened, afterOne, afterTwo: snapshot()};
   },
 
   // Every socket closes cleanly having written nothing.
