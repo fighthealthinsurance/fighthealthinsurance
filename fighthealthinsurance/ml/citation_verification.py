@@ -47,6 +47,10 @@ What happens to a citation:
   redirect or a page that is not the registry's JSON): the citation is kept
   with ``UNVERIFIED_LABEL`` in front, so the letter writer knows not to lean
   on it.
+* A run of CFR citations ("45 CFR 147.136 and Section 147.999", "Part 147
+  or Part 148", "147.104, § 147.136 and § 147.999"): each item is an
+  identifier of its own, read in the run's title, and handled as above. A
+  run with a bare number in it ("147.136 and 147.140") is not looked up.
 * Every identifier found: kept as it is.
 * No identifier at all (a guideline title, a URL, a plain-text reference):
   kept as it is. There is nothing to look up.
@@ -272,6 +276,73 @@ def _stuck_or_listed(text: str, start: int, end: int) -> bool:
     )
 
 
+# A later item in a run of CFR citations that names its own kind: "45 CFR
+# 147.136 and Section 147.999", "45 CFR Part 147 or Part 148", "45 CFR
+# 147.104, § 147.136 and § 147.999". Each item is an identifier of its own,
+# read in the title of the citation the run starts with. A keyword followed
+# by a whole citation ("and Section 29 CFR ...") is not an item; that
+# citation is read on its own. A bare number in the run ("147.136 and
+# 147.140") still makes it a list that is not looked up (_LISTED_SECTION).
+_CFR_RUN_ITEM = re.compile(
+    r"\s{0,2}(?:,\s{0,3}(?:(?:and|or|&)\s{1,3})?|;\s{0,3}|\s(?:and|or|&)\s{1,3})"
+    r"(?P<kw>(?P<kw_part>Parts?\b)|Sec(?:tion)?s?\b\.?|(?P<signs>§{1,2}))\s{0,3}"
+    r"(?!\d{1,3}\s{0,3}(?:C\.?\s{0,2}F\.?\s{0,2}R\b|U\.?\s{0,2}S\.?\s{0,2}C\b))"
+    r"(?P<part>\d{1,5})(?:\.(?P<sub>\d{1,5})"
+    r"(?:(?P<dash>["
+    + _DASH
+    + r"])(?P<tail>\d{1,5}[A-Z]?)(?!\.\d))?)?"
+    + _SECTION_RANGE
+    + _SUBSECTIONS
+    + _STUCK_ON,
+    re.IGNORECASE,
+)
+
+
+def _cfr_run(text: str, end: int) -> List[re.Match[str]]:
+    """The keyword items listed right after a CFR citation ending at
+    ``end``, in order."""
+    items: List[re.Match[str]] = []
+    while len(items) < MAX_LOOKUPS:
+        item = _CFR_RUN_ITEM.match(text, end)
+        if item is None:
+            break
+        items.append(item)
+        end = item.end()
+    return items
+
+
+def _listed_bare(text: str, end: int) -> bool:
+    """Whether a bare number (not a keyword item) is listed at ``end``."""
+    return bool(_LISTED_SECTION.match(text, end)) and not _CFR_RUN_ITEM.match(text, end)
+
+
+def _cfr_section(m: re.Match[str]) -> Tuple[str, bool]:
+    """The section a CFR match (a citation or a run item) names, "" for a
+    part, and whether it is a range.
+
+    A range of sections is never looked up: checking one end could call a
+    real range missing after a misparse. Ranges are "§§", a second section
+    after a dash or "through"/"to", or an abbreviated one: a typographic
+    dash, or a hyphen between two plain numbers ("438.400-424", "438.2-10").
+    The one hyphenated form taken as a section is the Title 29 style, three
+    or more decimal digits and a suffix of one or two ("2560.503-1"), or a
+    suffix with a letter ("2590.715-2719A"). When in doubt it is a range, so
+    it is not looked up."""
+    part, sub = m.group("part"), m.group("sub")
+    dash, tail = m.group("dash"), m.group("tail")
+    section = f"{part}.{sub}" if sub else ""
+    if tail:
+        section += f"-{tail}"
+    section_style = (
+        tail is not None
+        and sub is not None
+        and (not tail.isdigit() or (len(sub) >= 3 and len(tail) <= 2))
+    )
+    abbreviated = bool(tail) and (dash != "-" or not section_style)
+    is_range = bool(m.group("range")) or m.group("signs") == "§§" or abbreviated
+    return section, is_range
+
+
 _CFR_SECTION_VALID = re.compile(r"^\d{1,5}\.\d{1,5}(?:-\d{1,5}[A-Z]?)?$")
 # CFR has 50 titles; the U.S. Code 54.
 _CFR_TITLES = 50
@@ -384,36 +455,58 @@ def find_occurrences(citation: str) -> List[Occurrence]:
         token = m.group(1).rstrip(_ALWAYS_TRAILING)
         add("pmid", token[:20], m.start(), m.end(), not _PMID_VALID.match(token))
     for m in _CFR_TEXT.finditer(text):
-        title, part, sub = m.group("title"), m.group("part"), m.group("sub")
-        dash, tail = m.group("dash"), m.group("tail")
+        title, part = m.group("title"), m.group("part")
         stuck = m.groups()[-1]
-        section = f"{part}.{sub}" if sub else ""
-        if tail:
-            section += f"-{tail}"
-        # A range of sections is never looked up: checking one end could
-        # call a real range missing after a misparse. Ranges are "§§", a
-        # second section after a dash or "through"/"to", or an abbreviated
-        # one: a typographic dash, or a hyphen between two plain numbers
-        # ("438.400-424", "438.2-10"). The one hyphenated form taken as a
-        # section is the Title 29 style, three or more decimal digits and a
-        # suffix of one or two ("2560.503-1"), or a suffix with a letter
-        # ("2590.715-2719A"). When in doubt it is a range, so it is not
-        # looked up.
-        section_style = (
-            tail is not None
-            and sub is not None
-            and (not tail.isdigit() or (len(sub) >= 3 and len(tail) <= 2))
-        )
-        abbreviated = bool(tail) and (dash != "-" or not section_style)
-        is_range = bool(m.group("range")) or m.group("signs") == "§§" or abbreviated
+        section, is_range = _cfr_section(m)
+        # Keyword items listed after it ("and Section 147.999") are each an
+        # identifier of their own (below). A bare number anywhere in the run
+        # makes the whole run a list that is not looked up. With no run this
+        # is the same test a lone citation always had.
+        run = _cfr_run(text, m.end())
+        listed = any(_listed_bare(text, e) for e in [m.end(), *(r.end() for r in run)])
+        title_bad = not (1 <= int(title) <= _CFR_TITLES)
         bad = (
             bool(stuck)
             or is_range
-            or _stuck_or_listed(text, m.start(), m.end())
-            or not (1 <= int(title) <= _CFR_TITLES)
+            or listed
+            or bool(_DOT_STUCK_ON.match(text, m.end()))
+            or bool(_PLURAL_KEYWORD.search(text, m.start(), m.end()))
+            or title_bad
         )
         value = f"{int(title)}/{int(part)}/{section}"
         add("cfr", value, m.start(), m.end(), bad)
+        # Each later item takes the title from the citation the run starts
+        # with, and is read against the item before it: a section must be in
+        # that item's part ("45 CFR 147.136 and Section 147.999" is 45 CFR
+        # 147.999), and a part may only follow a part ("45 CFR Part 147 and
+        # Part 148" is 45 CFR Part 148). An item that can't be read that way
+        # ("and Section 4.2" of a plan, "and Part 2" after a section, a
+        # section with no part in it) is an identifier that is not sent, so
+        # its citation is labelled rather than passed as checked.
+        prev_part, prev_is_part = int(part), not section
+        for r in run:
+            r_section, r_range = _cfr_section(r)
+            r_part = int(r.group("part"))
+            if r.group("kw_part"):
+                fits = prev_is_part and not r.group("sub")
+            else:
+                fits = bool(r.group("sub")) and r_part == prev_part
+            r_bad = (
+                bad
+                or not fits
+                or bool(r.groups()[-1])
+                or r_range
+                or bool(_DOT_STUCK_ON.match(text, r.end()))
+                or bool(_PLURAL_KEYWORD.search(text, r.start("kw"), r.end()))
+            )
+            add(
+                "cfr",
+                f"{int(title)}/{r_part}/{r_section}",
+                r.start("kw"),
+                r.end(),
+                r_bad,
+            )
+            prev_part, prev_is_part = r_part, not r_section
     for m in _USC_TEXT.finditer(text):
         title, section, stuck = m.group(1), m.group(2), m.group(4)
         bad = (

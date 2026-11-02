@@ -1166,3 +1166,176 @@ class TestFollowUpsAsync:
                 cv.find_identifiers(f"doi:{REAL_DOI}"), may_send=_yes
             )
         assert time.monotonic() - start < 2
+
+
+class TestConjoinedCitations:
+    """Each item in a run of CFR citations ("X and Y", "X or Y", "X, Y and
+    Z") is an identifier of its own, read in the title of the first."""
+
+    def test_a_section_after_and_takes_the_first_items_title(self):
+        ids = cv.find_identifiers("45 CFR 147.136 and Section 147.999")
+        assert ids == [
+            cv.Identifier("cfr", "45/147/147.136"),
+            cv.Identifier("cfr", "45/147/147.999"),
+        ]
+
+    def test_a_part_after_and_takes_the_first_items_title(self):
+        ids = cv.find_identifiers("45 CFR Part 147 and Part 148")
+        assert ids == [
+            cv.Identifier("cfr", "45/147/"),
+            cv.Identifier("cfr", "45/148/"),
+        ]
+
+    def test_a_section_after_or_is_its_own_identifier(self):
+        ids = cv.find_identifiers("45 CFR 147.136 or Section 147.999")
+        assert ids == [
+            cv.Identifier("cfr", "45/147/147.136"),
+            cv.Identifier("cfr", "45/147/147.999"),
+        ]
+
+    def test_each_item_of_a_three_item_list_is_its_own_identifier(self):
+        ids = cv.find_identifiers("45 CFR 147.104, Section 147.136 and Section 147.999")
+        assert ids == [
+            cv.Identifier("cfr", "45/147/147.104"),
+            cv.Identifier("cfr", "45/147/147.136"),
+            cv.Identifier("cfr", "45/147/147.999"),
+        ]
+
+    def test_section_sign_items_are_their_own_identifiers(self):
+        ids = cv.find_identifiers("45 CFR 147.104, § 147.136, and § 147.999.")
+        assert ids == [
+            cv.Identifier("cfr", "45/147/147.104"),
+            cv.Identifier("cfr", "45/147/147.136"),
+            cv.Identifier("cfr", "45/147/147.999"),
+        ]
+
+    def test_each_item_has_its_own_span(self):
+        text = "45 CFR 147.136 and Section 147.999"
+        spans = [text[o.start : o.end] for o in cv.find_occurrences(text)]
+        assert spans == ["45 CFR 147.136", "Section 147.999"]
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # A section in another part than the item before it.
+            "45 CFR 147.136 and Section 4.2 of the plan",
+            # A part after a section.
+            "45 CFR 147.136 and Part 2",
+            # A section with no part in it.
+            "45 CFR 147.136 and Section 2",
+            # A plural keyword.
+            "45 CFR 147.136 and Sections 147.138",
+            # A dot stuck to the item.
+            "45 CFR 147.136 and Section 147.999.1",
+        ],
+    )
+    def test_an_item_that_cannot_be_read_in_context_is_not_sendable(self, text):
+        first, later = cv.find_identifiers(text)
+        assert first == cv.Identifier("cfr", "45/147/147.136")
+        assert later.malformed
+
+    def test_a_bare_number_in_a_run_still_makes_it_a_list(self):
+        ids = cv.find_identifiers("45 CFR 147.136 and Section 147.138, 147.999")
+        assert ids and all(i.malformed for i in ids)
+
+    def test_a_bad_title_makes_every_item_unsendable(self):
+        ids = cv.find_identifiers("99 CFR 1.2 and Section 1.3")
+        assert len(ids) == 2 and all(i.malformed for i in ids)
+
+    def test_a_whole_citation_after_a_keyword_is_read_on_its_own(self):
+        ids = cv.find_identifiers("45 CFR 147.136 and Section 29 CFR 2560.503-1")
+        assert ids == [
+            cv.Identifier("cfr", "45/147/147.136"),
+            cv.Identifier("cfr", "29/2560/2560.503-1"),
+        ]
+
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ("45 CFR 147.136", [("45/147/147.136", False, 0, 14)]),
+            ("45 CFR Part 147", [("45/147/", False, 0, 15)]),
+            ("See 45 CFR § 147.136(b)(1).", [("45/147/147.136", False, 4, 26)]),
+            ("29 C.F.R. 2560.503-1", [("29/2560/2560.503-1", False, 0, 20)]),
+            ("45 CFR 147.136, internal claims", [("45/147/147.136", False, 0, 14)]),
+            ("45 CFR 147.136 and other rules", [("45/147/147.136", False, 0, 14)]),
+            ("45 CFR 147.136 and 147.140", [("45/147/147.136", True, 0, 14)]),
+            ("42 CFR 438.400–424", [("42/438/438.400-424", True, 0, 18)]),
+            ("45 CFR 147.136oops", [("45/147/147.136", True, 0, 18)]),
+            ("99 CFR 12.3", [("99/12/12.3", True, 0, 11)]),
+        ],
+    )
+    def test_a_single_citation_reads_as_before(self, text, expected):
+        got = [
+            (o.ident.value, o.ident.malformed, o.start, o.end)
+            for o in cv.find_occurrences(text)
+            if o.ident.kind == "cfr"
+        ]
+        assert got == expected
+
+
+@pytest.mark.asyncio
+class TestConjoinedCitationsChecked:
+    async def test_a_missing_section_after_and_is_found_missing(self):
+        statuses, _seen = await _check("45 CFR 147.136 and Section 147.999")
+        assert statuses == {
+            _key("cfr", "45/147/147.136"): cv.FOUND,
+            _key("cfr", "45/147/147.999"): cv.MISSING,
+        }
+
+    async def test_a_missing_part_after_and_is_found_missing(self):
+        statuses, _seen = await _check("45 CFR Part 147 and Part 148")
+        assert statuses == {
+            _key("cfr", "45/147/"): cv.FOUND,
+            _key("cfr", "45/148/"): cv.MISSING,
+        }
+
+    async def test_a_missing_section_after_or_is_found_missing(self):
+        statuses, _seen = await _check("45 CFR 147.136 or Section 147.999")
+        assert statuses[_key("cfr", "45/147/147.999")] == cv.MISSING
+
+    async def test_a_missing_last_item_of_three_is_found_missing(self):
+        statuses, _seen = await _check(
+            "45 CFR 147.104, Section 147.136 and Section 147.999"
+        )
+        assert statuses == {
+            _key("cfr", "45/147/147.104"): cv.FOUND,
+            _key("cfr", "45/147/147.136"): cv.FOUND,
+            _key("cfr", "45/147/147.999"): cv.MISSING,
+        }
+
+    async def test_a_citation_with_a_missing_later_item_is_dropped(self, checks_on):
+        out, _seen = await _verify(["45 CFR 147.136 and Section 147.999"])
+        assert out == []
+
+    async def test_a_citation_whose_items_all_exist_is_kept(self, checks_on):
+        citation = "45 CFR 147.104 and Section 147.136"
+        out, _seen = await _verify([citation])
+        assert out == [citation]
+
+    async def test_a_missing_later_item_is_cut_from_a_long_answer(self, checks_on):
+        answer = (
+            "Evidence for the treatment. " * 20
+            + "See 45 CFR 147.136 and Section 147.999."
+        )
+        (out,), _seen = await _verify([answer])
+        assert "45 CFR 147.136 and " + cv.REMOVED_REFERENCE in out
+        assert "147.999" not in out
+
+    async def test_an_item_that_cannot_be_read_labels_the_citation(self, checks_on):
+        citation = "45 CFR 147.136 and Part 2"
+        out, _seen = await _verify([citation])
+        assert out == [cv.UNVERIFIED_LABEL + citation]
+
+    async def test_single_citations_are_handled_as_before(self, checks_on):
+        citations = [
+            "45 CFR 147.136",
+            "45 CFR 147.999",
+            "45 CFR 147.136, internal claims and appeals",
+            "45 CFR 147.136 and 147.140",
+        ]
+        out, _seen = await _verify(citations)
+        assert out == [
+            "45 CFR 147.136",
+            "45 CFR 147.136, internal claims and appeals",
+            cv.UNVERIFIED_LABEL + "45 CFR 147.136 and 147.140",
+        ]
