@@ -539,7 +539,7 @@ def build_changes(per_year):
     old = {(i["state"], i["id"]): i for i in per_year[LATEST_PY - 1][0]}
     pairs = [(old[k], i) for i in per_year[LATEST_PY][0] if (k := (i["state"], i["id"])) in old]
     in_both = [(a, b) for a, b in pairs if side(a, "in") and side(b, "in")]
-    pre = [i for i in per_year[LATEST_PY][0] if i["pre_filed"] is not None and i["pre_over"] is not None and i["ap_over"] is not None]
+    pre = [i for i in per_year[LATEST_PY][0] if i["pre_filed"] is not None and i["pre_over"] is not None]
     pre_filed, pre_over = sum(i["pre_filed"] for i in pre), sum(i["pre_over"] for i in pre)
     too_many = sorted((i["state"], i["id"]) for i in pre if i["pre_over"] > i["pre_filed"])
     if too_many:
