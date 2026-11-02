@@ -189,7 +189,7 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         for row in rows:
             old, new = float(row[1].rstrip("%")), float(row[2].rstrip("%"))
             word = "down" if new < old else "up"
-            self.assertEqual(row[3], f"{word} {abs(new - old):.1f}", row[0])
+            self.assertEqual(row[3], "no change" if new == old else f"{word} {abs(new - old):.1f}", row[0])
         for table, count in (("chreasons", 9), ("chappeals", 3), ("chreview", len(DATA["imr_periods"]["rows"]))):
             self.assertEqual(self.execute_script(f"return document.querySelectorAll('#{table} tbody tr').length"), count, table)
 

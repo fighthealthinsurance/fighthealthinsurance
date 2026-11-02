@@ -541,6 +541,9 @@ def build_changes(per_year):
     in_both = [(a, b) for a, b in pairs if side(a, "in") and side(b, "in")]
     pre = [i for i in per_year[LATEST_PY][0] if i["pre_filed"] is not None and i["pre_over"] is not None and i["ap_over"] is not None]
     pre_filed, pre_over = sum(i["pre_filed"] for i in pre), sum(i["pre_over"] for i in pre)
+    too_many = sorted((i["state"], i["id"]) for i in pre if i["pre_over"] > i["pre_filed"])
+    if too_many:
+        sys.exit(f"more before-care appeals won than filed for {too_many}; the page has no rule for that")
     return dict(year0=CLAIMS_YEAR[LATEST_PY - 1], year1=CLAIMS_YEAR[LATEST_PY], companies=company_changes(in_both),
                 appeals=dict(appeal_changes(pairs), pre_filed=pre_filed, pre_over=pre_over, pre_rate=round(pre_over / pre_filed, 4)),
                 reasons=reason_changes(in_both), states=state_changes(in_both))
@@ -643,7 +646,8 @@ def build_imr():
     cats = [dict(k=IMR_LABELS.get(k, k), n=int(g.size), r=round(float(g.mean()), 3))
             for k, g in recent.groupby("TreatmentCategory").o if g.size >= 100]
     cats.sort(key=lambda x: -x["r"])
-    earlier, later = d[d.ReportYear.isin(IMR_EARLIER)], d[d.ReportYear.isin(IMR_LATER)]
+    decided = d[d.Determination.notna()]
+    earlier, later = decided[decided.ReportYear.isin(IMR_EARLIER)], decided[decided.ReportYear.isin(IMR_LATER)]
     periods = []
     for k, g in earlier.groupby("TreatmentCategory").o:
         g1 = later[later.TreatmentCategory == k].o

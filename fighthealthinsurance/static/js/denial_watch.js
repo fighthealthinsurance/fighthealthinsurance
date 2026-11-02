@@ -288,9 +288,11 @@ paDraw('ma');
 
 /* IMR */
 /* what changed: two dots on one scale, hollow the earlier and solid the later, one colour because neither direction is plainly good */
-function dumbbell(a,b,max){const at=x=>Math.min(100,x/max*100).toFixed(1);const lo=Math.min(a,b);
-  return `<span class="dw-dumb" aria-hidden="true"><i class="dw-dumb-line" style="left:${at(lo)}%;width:${(Math.abs(b-a)/max*100).toFixed(1)}%"></i><i class="dw-dumb-from" style="left:${at(a)}%"></i><i class="dw-dumb-to" style="left:${at(b)}%"></i></span>`;}
+function dumbbell(a,b,max){const at=x=>Math.min(100,x/max*100);const lo=Math.min(a,b),hi=Math.max(a,b);
+  return `<span class="dw-dumb" aria-hidden="true"><i class="dw-dumb-line" style="left:${at(lo).toFixed(1)}%;width:${(at(hi)-at(lo)).toFixed(1)}%"></i><i class="dw-dumb-from" style="left:${at(a).toFixed(1)}%"></i><i class="dw-dumb-to" style="left:${at(b).toFixed(1)}%"></i></span>`;}
+/* A page still holding an older bundle skips this section, and the charts after it still draw. */
 const CH=D.changes;
+if(CH&&D.imr_periods){
 $('chcompany').innerHTML='<thead><tr><th>Company</th><th class="dw-r">2024</th><th class="dw-r">2025</th><th class="dw-r">Change, points</th><th>On one scale</th><th class="dw-r">Insurers that fell / rose</th></tr></thead><tbody>'+
   CH.companies.filter(r=>r.k!=='All these insurers').map(r=>`<tr><th scope="row">${esc(r.k)}</th><td class="dw-r dw-num">${pct(r.r0)}</td><td class="dw-r dw-num">${pct(r.r1)}</td><td class="dw-r dw-num dw-nowrap">${moved(r.r0,r.r1)}</td><td>${dumbbell(r.r0,r.r1,.3)}</td><td class="dw-r dw-num">${r.fell} / ${r.rose}</td></tr>`).join('')+'</tbody>';
 $('chreasons').innerHTML='<thead><tr><th>Reason</th><th class="dw-r">2024</th><th class="dw-r">2025</th><th class="dw-r">Change</th></tr></thead><tbody>'+
@@ -300,6 +302,7 @@ $('chappeals').innerHTML='<thead><tr><th>Claim appeals reversed</th><th class="d
   apRow(`The ${AP.same.insurers} insurers`,AP.same)+apRow(`Without the ${AP.left_out} largest`,AP.without_largest)+apRow(`Oscar's ${AP.oscar.insurers} insurers`,AP.oscar)+'</tbody>';
 $('chreview').innerHTML='<thead><tr><th>Type of care</th><th class="dw-r">2021 to 2023</th><th class="dw-r">2024 and 2025</th><th class="dw-r">Change, points</th><th>On one scale</th></tr></thead><tbody>'+
   D.imr_periods.rows.map(r=>`<tr><th scope="row">${esc(r.k)}</th><td class="dw-r dw-num">${pct(r.r0,0)} <span class="dw-note">of ${fmt(r.n0)}</span></td><td class="dw-r dw-num">${pct(r.r1,0)} <span class="dw-note">of ${fmt(r.n1)}</span></td><td class="dw-r dw-num dw-nowrap">${moved(r.r0,r.r1,0)}</td><td>${dumbbell(r.r0,r.r1,1)}</td></tr>`).join('')+'</tbody>';
+}
 
 $('imrbars').innerHTML=D.imr_cat.map(r=>`<div class="dw-bar dw-bar-good"><div class="dw-bar-name"><span>${esc(r.k)}</span><span class="dw-note dw-num">${fmt(r.n)} reviews</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${r.r*100}%"></div></div><div class="dw-bar-value dw-num">${pct(r.r,0)}</div></div>`).join('');
 

@@ -281,7 +281,7 @@ class TestDenialWatchWhatChanged(TestCase):
         everyone = self.companies["All these insurers"]
         self.assertIn(f"Among the {everyone['insurers']} insurers with figures in both years", self.section)
         self.assertIn(f"fell from {everyone['r0'] * 100:.1f}% to {everyone['r1'] * 100:.1f}%", self.section)
-        self.assertEqual(everyone["fell"] + everyone["rose"], everyone["insurers"])
+        self.assertLessEqual(everyone["fell"] + everyone["rose"], everyone["insurers"])
         for field in ("insurers", "c0", "d0", "c1", "d1"):
             self.assertEqual(
                 everyone[field],
@@ -332,8 +332,9 @@ class TestDenialWatchWhatChanged(TestCase):
         row = next(r for r in self.changes["reasons"]["rows"] if r["k"].startswith("Administrative"))
         fall = (row["n0"] - row["n1"]) / 1e6
         self.assertGreater((florida["paperwork0"] - florida["paperwork1"]) / 1e6, fall)
-        self.assertIn(f"fell from {florida['paperwork0'] / 1e6:.1f} to {florida['paperwork1'] / 1e6:.1f} million, more than the {fall:.1f} million fall", self.section)
+        self.assertIn(f"fell from {florida['paperwork0'] / 1e6:.1f} to {florida['paperwork1'] / 1e6:.1f} million paperwork denials, more than the {fall:.1f} million fall", self.section)
         self.assertIn(f"barely moved, from {florida['without0']:.2f} to {florida['without1']:.2f}.", self.section)
+        self.assertIn("Don't read that paperwork fall as real yet.", self.section)
         self.assertLess(abs(florida["without0"] - florida["without1"]), 0.05)
 
     def test_appeals_sentences(self):
