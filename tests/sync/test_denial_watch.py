@@ -265,6 +265,144 @@ class TestDenialWatchCopyMatchesData(TestCase):
         self.assertIn(f"diabetes ({corr['diabetes']:.2f})", self.content)
 
 
+class TestDenialWatchWhatChanged(TestCase):
+    """The 2024 to 2025 section's sentences name numbers from the bundle's changes."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.content = _page()
+        i = cls.content.index('id="what-changed"')
+        cls.section = cls.content[i : cls.content.index('id="coverage"', i)]
+        cls.changes = DATA["changes"]
+        cls.companies = {r["k"]: r for r in cls.changes["companies"]}
+
+    def test_rates_are_on_the_same_insurers_in_both_years(self):
+        everyone = self.companies["All these insurers"]
+        self.assertIn(f"Among the {everyone['insurers']} insurers with figures in both years", self.section)
+        self.assertIn(f"fell from {everyone['r0'] * 100:.1f}% to {everyone['r1'] * 100:.1f}%", self.section)
+        self.assertEqual(everyone["fell"] + everyone["rose"], everyone["insurers"])
+        for field in ("insurers", "c0", "d0", "c1", "d1"):
+            self.assertEqual(
+                everyone[field],
+                sum(r[field] for k, r in self.companies.items() if k != "All these insurers"),
+            )
+
+    def test_only_the_three_named_companies_fell(self):
+        for name in ("Centene", "Oscar", "Florida Blue"):
+            self.assertLess(self.companies[name]["r1"], self.companies[name]["r0"], name)
+            self.assertEqual(self.companies[name]["rose"], 0, name)
+        rest = [self.companies["UnitedHealthcare"], self.companies["All other insurers"]]
+        old = sum(r["d0"] for r in rest) / sum(r["c0"] for r in rest)
+        new = sum(r["d1"] for r in rest) / sum(r["c1"] for r in rest)
+        self.assertIn(f"the other insurers' rate rose from {old * 100:.1f}% to {new * 100:.1f}%", self.section)
+        self.assertLess(old, new)
+
+    def test_the_cautions_on_the_falls_match_the_data(self):
+        centene, oscar, florida = (self.companies[k] for k in ("Centene", "Oscar", "Florida Blue"))
+        self.assertIn(
+            f"Claims grew {round((centene['c1'] / centene['c0'] - 1) * 100)}% at Centene and {round((oscar['c1'] / oscar['c0'] - 1) * 100)}% at Oscar.",
+            self.section,
+        )
+        self.assertIn(f"total denials fell from {centene['d0'] / 1e6:.1f} to {centene['d1'] / 1e6:.1f} million", self.section)
+        self.assertIn(f"rose from {centene['pd0'] / 1e6:.1f} to {centene['pd1'] / 1e6:.1f} million", self.section)
+        self.assertIn(f"down from about {round(florida['pd0'] / florida['d0'] * 100)}% in 2024", self.section)
+        self.assertAlmostEqual(florida["pd1"] / florida["d1"], 1 / 3, delta=0.02)
+        self.assertIn("We can't tell a real change from a change in how a company counts.", self.section)
+
+    def test_states_sentence(self):
+        states = self.changes["states"]
+        self.assertEqual(states["fell"] + len(states["rose"]), len(DATA["states"]))
+        self.assertEqual(states["rose"], ["WI", "WY", "MT", "DE", "MI", "LA"])
+        self.assertIn(f"fell in {states['fell']} of the {len(DATA['states'])} HealthCare.gov states and rose in six", self.section)
+
+    def test_reasons_sentences(self):
+        rows = {r["k"]: r["per"] for r in self.changes["reasons"]["rows"]}
+        self.assertEqual(self.changes["reasons"]["years"], [2022, 2023, 2024, 2025])
+        paper = rows["Administrative (missing information, duplicate, late filing, billing)"]
+        self.assertIn(f"paperwork denials fell from {paper[-2]:.2f} to {paper[-1]:.2f}", self.section)
+        need = rows['"Not medically necessary" (physical health)']
+        self.assertIn(f"rose from {need[-2]:.2f} to {need[-1]:.2f}", self.section)
+        auth = rows["Prior authorization or referral required"]
+        self.assertIn(f"from {auth[-2]:.2f} to {auth[-1]:.2f}", self.section)
+
+    def test_florida_blue_is_more_than_the_whole_fall_in_paperwork(self):
+        old, new = self.changes["reasons"]["florida_blue"]
+        row = next(r for r in self.changes["reasons"]["rows"] if r["k"].startswith("Administrative"))
+        fall = (row["n"][-2] - row["n"][-1]) / 1e6
+        self.assertGreater((old["paperwork"] - new["paperwork"]) / 1e6, fall)
+        self.assertIn(f"fell from {old['paperwork'] / 1e6:.1f} to {new['paperwork'] / 1e6:.1f} million, more than the {fall:.1f} million fall", self.section)
+        self.assertIn(f"Without it, the rate fell from {old['without_per']:.2f} to {new['without_per']:.2f}.", self.section)
+
+    def test_appeals_sentences(self):
+        appeals = self.changes["appeals"]
+        same, rest = appeals["same"], appeals["without_largest"]
+        self.assertIn(
+            f"Among the {same['insurers']} insurers reporting appeals in both years, they reversed {same['r0'] * 100:.1f}% of claim appeals in 2024 and {same['r1'] * 100:.1f}% in 2025.",
+            self.section,
+        )
+        self.assertIn(f"it went from {rest['r0'] * 100:.1f}% to {rest['r1'] * 100:.1f}%", self.section)
+        self.assertEqual(sum(n.startswith("Oscar") for n in appeals["largest"]), 3)
+        self.assertIn("five large appeal counts, three of them Oscar's", self.section)
+        self.assertIn(f"Insurers reversed {appeals['pre_rate'] * 100:.1f}% of those.", self.section)
+
+    def test_review_sentences(self):
+        rows = {r["k"]: r for r in DATA["imr_periods"]["rows"]}
+        cancer, surgery = rows["Cancer care"], rows["Reconstructive surgery"]
+        self.assertIn(f"Cancer care rose from {_pct(cancer['r0'])} in 2021 to 2023 to {_pct(cancer['r1'])}", self.section)
+        self.assertIn(f"Reconstructive surgery fell from {_pct(surgery['r0'])} to {_pct(surgery['r1'])}", self.section)
+
+    def test_method_describes_the_groups_and_the_counts(self):
+        everyone = self.companies["All these insurers"]
+        i = self.content.index('id="method-what-changed"')
+        method = self.content[i : self.content.index('id="method-coverage"', i)]
+        self.assertIn(f"{everyone['pd1'] / 1e6:.1f} million against {everyone['d1'] / 1e6:.1f} million", method)
+        self.assertIn("QCA Health Plan and QualChoice in Arkansas", method)
+        for name in self.changes["appeals"]["largest"][:3]:
+            self.assertIn(name.split(" (")[0].replace(", Inc.", ""), method)
+
+
+class TestDenialWatchCompanyGroups(TestCase):
+    """Which company an insurer's name belongs to."""
+
+    def setUp(self):
+        self.builder = _load_builder()
+
+    def test_names_sort_into_companies(self):
+        for name, company in {
+            "Celtic Insurance Company": "Centene",
+            "QCA Health Plan, Inc.": "Centene",
+            "Health Options, Inc.": "Florida Blue",
+            "Oscar Buckeye State Insurance Corp.": "Oscar",
+            "UnitedHealthcare of Texas, Inc.": "UnitedHealthcare",
+            "Blue Cross Blue Shield of Texas": self.builder.OTHER_INSURERS,
+        }.items():
+            self.assertEqual(self.builder.company_of(name), company, name)
+
+    def test_an_unlisted_centene_insurer_stops_the_build(self):
+        with self.assertRaises(SystemExit):
+            self.builder.company_of("Ambetter of Somewhere Inc.")
+
+    def test_the_prior_rate_in_the_insurer_table_needs_the_table_size_in_2024(self):
+        rows = [r for r in DATA["issuers"] if r["p"] is not None]
+        self.assertGreater(len(rows), 100)
+        self.assertTrue(all(0 < r["p"] < 1 for r in rows))
+        self.assertTrue(any(r["p"] is None for r in DATA["issuers"]))
+
+    def test_appeals_tally_needs_both_counts_in_both_years(self):
+        def insurer(name, filed, won):
+            return dict(issuer=name, state="TX", ap_filed=filed, ap_over=won)
+
+        pairs = [
+            (insurer("Oscar Insurance Company", 100, 50), insurer("Oscar Insurance Company", 300, 30)),
+            (insurer("B", 100, None), insurer("B", 100, 50)),
+            (insurer("C", 0, 0), insurer("C", 100, 50)),
+        ]
+        with mock.patch.object(self.builder, "APPEAL_BOOKS_LEFT_OUT", 0):
+            same = self.builder.appeal_changes(pairs)["same"]
+        self.assertEqual((same["insurers"], same["r0"], same["r1"]), (1, 0.5, 0.1))
+
+
 class TestDenialWatchStaging(TestCase):
     """The staging flag controls both routing and discoverability."""
 
@@ -2404,12 +2542,13 @@ THEMES = [
     ("why-appeal", "Why should I appeal?", "method-why-appeal"),
     ("who-denies", "Who is denying the most?", "method-who-denies"),
     ("what-why", "What are they denying, and why?", "method-what-why"),
+    ("what-changed", "What changed from 2024 to 2025?", "method-what-changed"),
     ("coverage", "Who doesn't have coverage?", "method-coverage"),
 ]
 
 
 class TestDenialWatchThemes(TestCase):
-    """Four questions carry the page, each short, with its method one link away."""
+    """Five questions carry the page, each short, with its method one link away."""
 
     @classmethod
     def setUpClass(cls):
@@ -2906,7 +3045,7 @@ class TestDenialWatchSourcesFold(TestCase):
         groups = re.findall(r'<div class="dw-method" id="([\w-]+)">', self.sources)
         self.assertEqual(
             groups,
-            ["method-data", "method-why-appeal", "method-who-denies", "method-what-why", "method-coverage", "method-costs", "method-other"],
+            ["method-data", "method-why-appeal", "method-who-denies", "method-what-why", "method-what-changed", "method-coverage", "method-costs", "method-other"],
         )
         for group in groups + ["method-enroll-pointer"]:
             self.assertIn(f'id="{group}"', self.fold)

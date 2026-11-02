@@ -80,6 +80,11 @@ doubled against about 1%, about 7 and 4 for every 100 under 65);
   claims. CMS's out-of-network reason counts closed-network denials, so it is
   left out, as KFF leaves it out.
 - The California IMR file has some exact duplicate rows, which are dropped.
+- "What changed" compares the latest two claims years on the same insurers.
+  `COMPANY_INSURERS` and `COMPANY_PREFIXES` in `build_bundle.py` group insurers
+  by the names in CMS's files, and an unlisted name that looks like Centene or
+  Florida Blue stops the build. Each new year, recheck who owns whom, then reread
+  that section's copy; `TestDenialWatchWhatChanged` checks its numbers.
 - `medicare_prices.csv` tags each shown drug that has a Medicare-negotiated
   price, one row per brand with the CMS page it was checked against. The build
   doesn't look drugs up, so after a refresh check any newly shown drug against

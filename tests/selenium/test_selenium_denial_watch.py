@@ -180,6 +180,19 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         self.assertIn("These reports have no appeal counts.", self.get_text("#isource"))
         self.assertIn("Not in the table: Aetna CVS Health (no 2025 report posted)", self.get_text("#ileft"))
 
+    def test_what_changed_tables_are_drawn_and_a_change_matches_its_figures(self):
+        self._open()
+        rows = self.execute_script(
+            "return [...document.querySelectorAll('#chcompany tbody tr')].map(r => [...r.cells].map(c => c.textContent))"
+        )
+        self.assertEqual([r[0] for r in rows], [c["k"] for c in DATA["changes"]["companies"] if c["k"] != "All these insurers"])
+        for row in rows:
+            old, new = float(row[1].rstrip("%")), float(row[2].rstrip("%"))
+            word = "down" if new < old else "up"
+            self.assertEqual(row[3], f"{word} {abs(new - old):.1f}", row[0])
+        for table, count in (("chreasons", 9), ("chappeals", 3), ("chreview", len(DATA["imr_periods"]["rows"]))):
+            self.assertEqual(self.execute_script(f"return document.querySelectorAll('#{table} tbody tr').length"), count, table)
+
     def test_map_buttons_wrap_on_a_phone(self):
         self._open(375, 812)
         sizes = self.execute_script(

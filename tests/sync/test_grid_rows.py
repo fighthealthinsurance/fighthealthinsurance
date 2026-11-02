@@ -108,10 +108,10 @@ class JumpTilesAreOneRowOnADesktopTest(TestCase):
             _declared(narrow, "grid-template-columns"), "repeat(2, minmax(0, 1fr))"
         )
 
-    def test_denial_watch_has_the_seven_tiles_this_was_sized_for(self):
+    def test_denial_watch_has_the_eight_tiles_this_was_sized_for(self):
         text = (TEMPLATES / "denial_watch.html").read_text()
         nav = text[text.index('<nav class="fhi-jump-links"') :]
-        self.assertEqual(nav[: nav.index("</nav>")].count("<a "), 7)
+        self.assertEqual(nav[: nav.index("</nav>")].count("<a "), 8)
 
 
 @override_settings(MCP_SERVER_ENABLED=True)
