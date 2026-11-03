@@ -26,7 +26,7 @@ VOTE_INPUTS = ("keyboard", "pointer")
 # Whole-number counters the page keeps for each case.
 COUNT_KEYS = (
     # Visible time (see ChooserVote.active_ms) until the first click, tap,
-    # key or scroll on the case.
+    # key or scroll anywhere on the page while the case is open.
     "first_interaction_ms",
     "pointer_moves",
     "pointer_downs",
@@ -80,7 +80,8 @@ def _choice(options: tuple) -> Callable[[Any], Optional[str]]:
 
 
 def _pointer_types(value: Any) -> Optional[List[str]]:
-    if not isinstance(value, list) or len(value) > len(POINTER_TYPES):
+    """The pointer types seen, each once; None if any entry is not one."""
+    if not isinstance(value, list) or len(value) > MAX_POSITIONS:
         return None
     if any(not isinstance(v, str) or v not in POINTER_TYPES for v in value):
         return None

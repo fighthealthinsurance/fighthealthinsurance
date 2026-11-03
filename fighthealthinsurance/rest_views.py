@@ -2519,7 +2519,9 @@ class ChooserViewSet(viewsets.ViewSet):
         cf_country = client_network.cf_country_from_meta(request.META)
         address = client_network.cf_ip_from_meta(request.META)
         if not address or address == client_network.NO_ADDRESS:
-            return {"network_class": "", "asn_name": "", "country": cf_country}
+            # Cloudflare sets both headers, so a country alone came from
+            # somewhere else.
+            return {"network_class": "", "asn_name": "", "country": ""}
         _asn_number, asn_name = get_asn_info(address)
         return {
             "network_class": client_network.classify(address, asn_name, cf_country),
@@ -2896,9 +2898,9 @@ class ChooserViewSet(viewsets.ViewSet):
             resolve_candidate(v)
             for v in serializer.validated_data.get("expanded_candidate_ids") or []
         ]
-        if (not all_bad and chosen_candidate_id is None) or None in (
-            presented_resolved + flagged_resolved + tied_resolved + expanded_resolved
-        ):
+        if (
+            not all_bad and chosen_candidate_id is None
+        ) or None in presented_resolved + flagged_resolved + tied_resolved:
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "Invalid candidate reference"}
@@ -2916,9 +2918,17 @@ class ChooserViewSet(viewsets.ViewSet):
         tied_candidate_ids = list(
             dict.fromkeys(cid for cid in tied_resolved if cid is not None)
         )
+        # Review insights, never a reason to refuse the vote: a reference
+        # that names no presented draft is left out, and noted under the
+        # review signals' "dropped" below.
         expanded_candidate_ids = list(
-            dict.fromkeys(cid for cid in expanded_resolved if cid is not None)
+            dict.fromkeys(
+                cid
+                for cid in expanded_resolved
+                if cid is not None and cid in presented_candidate_ids
+            )
         )
+        expanded_dropped = len(expanded_candidate_ids) < len(set(expanded_resolved))
 
         # Validate task exists and is in valid state
         try:
@@ -3005,15 +3015,6 @@ class ChooserViewSet(viewsets.ViewSet):
                 ).data,
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if any(cid not in presented_candidate_ids for cid in expanded_candidate_ids):
-            return Response(
-                serializers.ErrorSerializer(
-                    {
-                        "error": "Expanded candidates must be among the presented candidates"
-                    }
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
         # A tie names the drafts the voter found equally best: two or more,
         # all shown, none flagged, and the chosen one among them (it stands
@@ -3063,10 +3064,15 @@ class ChooserViewSet(viewsets.ViewSet):
 
         active_ms = serializer.validated_data.get("active_ms")
         if active_ms is not None:
-            active_ms = min(active_ms, self.ACTIVE_MS_CAP)
+            active_ms = max(0, min(active_ms, self.ACTIVE_MS_CAP))
         review_signals = clean_review_signals(
             serializer.validated_data.get("review_signals")
         )
+        if expanded_dropped:
+            review_signals["dropped"] = [
+                *review_signals.get("dropped", []),
+                "expanded_candidate_ids",
+            ]
         user_agent = str(request.META.get("HTTP_USER_AGENT", ""))[
             : self.USER_AGENT_CHARS
         ]

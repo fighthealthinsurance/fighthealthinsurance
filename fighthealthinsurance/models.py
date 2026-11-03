@@ -4592,10 +4592,13 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
 
     @property
     def seconds_to_vote(self) -> typing.Optional[float]:
-        """Server-measured time from serving the task to receiving the vote."""
+        """Server-measured time from serving the task to receiving the vote;
+        None when either end is missing or the clock stepped back between
+        them (served_at and created_at are both kept as they were)."""
         if self.served_at is None or self.created_at is None:
             return None
-        return (self.created_at - self.served_at).total_seconds()
+        seconds = (self.created_at - self.served_at).total_seconds()
+        return seconds if seconds >= 0 else None
 
     @staticmethod
     def rounded_credit(credit: float) -> typing.Union[int, float]:

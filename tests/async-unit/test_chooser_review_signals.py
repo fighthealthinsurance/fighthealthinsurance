@@ -79,6 +79,6 @@ def test_booleans_are_not_counts():
 
 
 def test_duplicate_pointer_types_are_collapsed():
-    assert clean_review_signals({"pointer_types": ["touch", "mouse", "touch"]}) == {
-        "pointer_types": ["mouse", "touch"]
-    }
+    assert clean_review_signals(
+        {"pointer_types": ["touch", "mouse", "touch", "mouse"]}
+    ) == {"pointer_types": ["mouse", "touch"]}

@@ -993,7 +993,7 @@ class ChooserVoteRequestSerializer(serializers.Serializer):
     # review_signals). Optional, so older clients still vote; a value past
     # the cap is clamped in the view rather than refused, since a judge who
     # left the page open is no reason to lose their vote.
-    active_ms = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    active_ms = serializers.IntegerField(required=False, allow_null=True)
     expanded_candidate_ids = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )

@@ -1275,12 +1275,25 @@ const CandidateCard: React.FC<{
 }) => {
   const [expanded, setExpanded] = useState(false);
   const viewport = useRef<HTMLDivElement>(null);
-  // Measured once the draft is laid out in its collapsed box.
+  // Read by the measurement below, which outlives the render that set it.
+  const expandedNow = useRef(expanded);
+  expandedNow.current = expanded;
+  const reportOverflow = useRef(onOverflow);
+  reportOverflow.current = onOverflow;
+  // Measured once the draft is laid out in its collapsed box, and again
+  // whenever the box changes size (a resize rewraps the draft).
   useEffect(() => {
     const box = viewport.current;
-    if (box && !expanded) onOverflow(box.scrollHeight > box.clientHeight + 1);
-    // Only the draft's own size matters, not a new callback identity.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!box) return;
+    const measure = () => {
+      if (!expandedNow.current)
+        reportOverflow.current(box.scrollHeight > box.clientHeight + 1);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    return () => observer.disconnect();
   }, [candidate.content]);
   const citations = useMemo(
     () => (checkFacts ? checkCitations(candidate.content, evidence) : []),
@@ -1613,8 +1626,10 @@ const ChooserInterface: React.FC<{
   const overflowingIds = useRef<Set<string>>(new Set());
   const scrolledToEndIds = useRef<Set<string>>(new Set());
   const roundsThisPage = useRef(0);
-  const currentTaskId = state.task?.task_id ?? null;
-  useEffect(() => {
+  // Called as a case is seated, before its drafts render: their cards
+  // record their measurements from their first effects, which run before
+  // any effect of this component would.
+  const resetReviewTracking = useCallback(() => {
     activeMs.current = 0;
     expandedIds.current = new Set();
     signals.current = freshSignals();
@@ -1622,7 +1637,7 @@ const ChooserInterface: React.FC<{
     scrolledToEndIds.current = new Set();
     visibleSince.current =
       document.visibilityState === "visible" ? performance.now() : null;
-  }, [currentTaskId]);
+  }, []);
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === "visible") {
@@ -1818,6 +1833,7 @@ const ChooserInterface: React.FC<{
         const task: ChooserTask = await response.json();
         if (stale()) return;
         if (task.review_count !== undefined) setReviewCount(task.review_count);
+        resetReviewTracking();
         setState((prev) => ({
           ...prev,
           mode: "voting",
@@ -1846,7 +1862,7 @@ const ChooserInterface: React.FC<{
         window.clearTimeout(deadline);
       }
     },
-    [captchaToken, backToCaptcha],
+    [captchaToken, backToCaptcha, resetReviewTracking],
   );
 
   useEffect(() => {
@@ -2609,7 +2625,11 @@ const ChooserInterface: React.FC<{
               size="lg"
               radius="md"
               disabled={!canVote}
-              onClick={() => submitVote("pointer")}
+              // A click the keyboard made (Enter or Space on the focused
+              // button) has no pointer behind it: detail is 0.
+              onClick={(event) =>
+                submitVote(event.detail === 0 ? "keyboard" : "pointer")
+              }
               style={primaryButton(canVote)}
             >
               {castLabel}

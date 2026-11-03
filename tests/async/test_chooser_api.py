@@ -1230,12 +1230,20 @@ class ChooserReviewInsightsAPITest(APITestCase):
             ChooserViewSet.ACTIVE_MS_CAP,
         )
 
-    def test_negative_active_ms_is_rejected(self):
+    def test_negative_active_ms_is_stored_as_zero(self):
         response = self._post(self._payload(active_ms=-1))
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(ChooserVote.objects.get(task=self.task).active_ms, 0)
 
-    def test_expanded_candidate_must_have_been_presented(self):
+    def test_seconds_to_vote_is_none_when_the_clock_stepped_back(self):
+        self._post(self._payload())
+        vote = ChooserVote.objects.get(task=self.task)
+        vote.served_at = vote.created_at + datetime.timedelta(seconds=5)
+
+        self.assertIsNone(vote.seconds_to_vote)
+
+    def test_unpresented_expanded_candidate_is_dropped_not_refused(self):
         other_task = ChooserTask.objects.create(task_type="appeal", status="READY")
         stranger = ChooserCandidate.objects.create(
             task=other_task,
@@ -1246,16 +1254,30 @@ class ChooserReviewInsightsAPITest(APITestCase):
         )
 
         response = self._post(
-            self._payload(expanded_candidate_ids=[candidate_token(stranger.id)])
+            self._payload(
+                expanded_candidate_ids=[
+                    candidate_token(stranger.id),
+                    candidate_token(self.candidate1.id),
+                ]
+            )
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("Expanded", response.json()["error"])
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(
+            (vote.expanded_candidate_ids, vote.review_signals),
+            ([self.candidate1.id], {"dropped": ["expanded_candidate_ids"]}),
+        )
 
-    def test_expanded_candidate_with_bad_token_is_rejected(self):
+    def test_expanded_candidate_with_bad_token_is_dropped_not_refused(self):
         response = self._post(self._payload(expanded_candidate_ids=["nope"]))
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(
+            (vote.expanded_candidate_ids, vote.review_signals),
+            ([], {"dropped": ["expanded_candidate_ids"]}),
+        )
 
     def test_review_signals_are_stored_cleaned(self):
         signals = {"pointer_moves": 12, "vote_input": "keyboard", "extra": 1}
@@ -1306,10 +1328,17 @@ class ChooserReviewInsightsAPITest(APITestCase):
         )
 
     def test_no_cloudflare_address_leaves_network_blank(self):
-        self._post(self._payload())
+        self.client.post(
+            reverse("chooser-vote"),
+            json.dumps(self._payload()),
+            content_type="application/json",
+            HTTP_CF_IPCOUNTRY="US",
+        )
 
         vote = ChooserVote.objects.get(task=self.task)
-        self.assertEqual((vote.network_class, vote.asn_name), ("", ""))
+        self.assertEqual(
+            (vote.network_class, vote.asn_name, vote.country), ("", "", "")
+        )
 
     def test_served_times_kept_for_recent_tasks_only(self):
         view = ChooserViewSet()

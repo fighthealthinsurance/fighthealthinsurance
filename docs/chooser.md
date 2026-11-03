@@ -161,16 +161,18 @@ vote counts today, and nothing is ever refused over it.
   no session cookie, an older client).
 - `active_ms`: the page's count of the time it was visible between the
   case appearing and the vote (time in another tab is left out), clamped to
-  a day (`ACTIVE_MS_CAP`). Null from clients that do not send it. When it
+  between zero and a day (`ACTIVE_MS_CAP`). Null from clients that do not send it. When it
   and `seconds_to_vote` disagree by more than network time, the server
   figure is the one measured here.
 - `expanded_candidate_ids`: the presented drafts opened with "Read it
   all", in display order. Tokens on the way in, like the other candidate
-  references, and they must be among the presented drafts.
+  references; one that names no presented draft is left out, and
+  `expanded_candidate_ids` is then listed under `review_signals.dropped`.
 - `review_signals`: the page's interaction summary, cleaned by
   `chooser_review_signals.clean_review_signals` (which documents each
   key): pointer moves and presses, key presses, scrolls, pick changes,
-  times the page was hidden, visible time to the first interaction, the
+  times the page was hidden, visible time to the first interaction
+  anywhere on the page while the case is open, the
   pointer types seen (mouse, touch, pen), whether the vote was cast by
   keyboard or pointer, rounds already voted in this page load, the
   viewport width, `navigator.webdriver`, and by draft position (0 for
