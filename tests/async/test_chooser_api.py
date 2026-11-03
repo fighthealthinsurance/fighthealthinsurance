@@ -1330,6 +1330,20 @@ class ChooserReviewInsightsAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(ChooserVote.objects.get(task=self.task).review_signals, {})
 
+    def test_null_review_details_are_stored_as_empty(self):
+        response = self._post(
+            self._payload(
+                active_ms=None, expanded_candidate_ids=None, review_signals=None
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(
+            (vote.active_ms, vote.expanded_candidate_ids, vote.review_signals),
+            (None, [], {}),
+        )
+
     def test_user_agent_is_stored(self):
         self.client.post(
             reverse("chooser-vote"),

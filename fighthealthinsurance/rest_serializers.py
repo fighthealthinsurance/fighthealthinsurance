@@ -996,7 +996,9 @@ class ChooserVoteRequestSerializer(serializers.Serializer):
     # never cost a vote.
     active_ms = serializers.JSONField(required=False, allow_null=True)
     expanded_candidate_ids = serializers.JSONField(required=False, allow_null=True)
-    review_signals = serializers.JSONField(required=False, default=dict)
+    review_signals = serializers.JSONField(
+        required=False, allow_null=True, default=dict
+    )
 
 
 class ChooserVoteResponseSerializer(serializers.Serializer):
