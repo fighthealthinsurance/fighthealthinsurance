@@ -1236,6 +1236,40 @@ class ChooserReviewInsightsAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(ChooserVote.objects.get(task=self.task).active_ms, 0)
 
+    def test_non_numeric_active_ms_is_dropped_not_refused(self):
+        response = self._post(self._payload(active_ms="soon"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(
+            (vote.active_ms, vote.review_signals),
+            (None, {"dropped": ["active_ms"]}),
+        )
+
+    def test_expanded_candidates_that_are_not_a_list_are_dropped_not_refused(self):
+        response = self._post(self._payload(expanded_candidate_ids="all of them"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(
+            (vote.expanded_candidate_ids, vote.review_signals),
+            ([], {"dropped": ["expanded_candidate_ids"]}),
+        )
+
+    def test_malformed_expanded_entry_keeps_its_valid_siblings(self):
+        response = self._post(
+            self._payload(
+                expanded_candidate_ids=["", 7, candidate_token(self.candidate2.id)]
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        vote = ChooserVote.objects.get(task=self.task)
+        self.assertEqual(
+            (vote.expanded_candidate_ids, vote.review_signals),
+            ([self.candidate2.id], {"dropped": ["expanded_candidate_ids"]}),
+        )
+
     def test_seconds_to_vote_is_none_when_the_clock_stepped_back(self):
         self._post(self._payload())
         vote = ChooserVote.objects.get(task=self.task)

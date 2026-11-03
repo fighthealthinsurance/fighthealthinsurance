@@ -82,3 +82,9 @@ def test_duplicate_pointer_types_are_collapsed():
     assert clean_review_signals(
         {"pointer_types": ["touch", "mouse", "touch", "mouse"]}
     ) == {"pointer_types": ["mouse", "touch"]}
+
+
+def test_pointer_types_longer_than_the_bound_are_dropped():
+    assert clean_review_signals({"pointer_types": ["mouse"] * 17}) == {
+        "dropped": ["pointer_types"]
+    }

@@ -161,7 +161,9 @@ vote counts today, and nothing is ever refused over it.
   no session cookie, an older client).
 - `active_ms`: the page's count of the time it was visible between the
   case appearing and the vote (time in another tab is left out), clamped to
-  between zero and a day (`ACTIVE_MS_CAP`). Null from clients that do not send it. When it
+  between zero and a day (`ACTIVE_MS_CAP`). Null from clients that do not send it,
+  or that send something other than a number (then listed under
+  `review_signals.dropped`). When it
   and `seconds_to_vote` disagree by more than network time, the server
   figure is the one measured here.
 - `expanded_candidate_ids`: the presented drafts opened with "Read it

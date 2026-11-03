@@ -56,7 +56,10 @@ from fighthealthinsurance.ml.ml_models import (
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance import chooser_complexity
 from fighthealthinsurance.chooser_practice_areas import normalize_practice_area
-from fighthealthinsurance.chooser_review_signals import clean_review_signals
+from fighthealthinsurance.chooser_review_signals import (
+    MAX_POSITIONS,
+    clean_review_signals,
+)
 from fighthealthinsurance.chooser_tokens import candidate_token, resolve_candidate
 from fighthealthinsurance.upload_limits import stored_size_limit
 from fighthealthinsurance.models import (
@@ -2508,6 +2511,16 @@ class ChooserViewSet(viewsets.ViewSet):
     ACTIVE_MS_CAP = 24 * 60 * 60 * 1000
     USER_AGENT_CHARS = 400
 
+    @classmethod
+    def _clamp_active_ms(cls, value: typing.Any) -> Optional[int]:
+        """A client's active_ms as stored: a number clamped to between zero
+        and ACTIVE_MS_CAP, or None for anything that is not a number."""
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        if value != value:  # NaN
+            return None
+        return int(max(0, min(value, cls.ACTIVE_MS_CAP)))
+
     def _network_details(self, request: Request) -> dict:
         """Improve review insights with the judge's network, as the
         ChooserVote fields network_class, asn_name and country: classed and
@@ -2894,10 +2907,15 @@ class ChooserViewSet(viewsets.ViewSet):
             resolve_candidate(v)
             for v in serializer.validated_data.get("tied_candidate_ids") or []
         ]
-        expanded_resolved = [
-            resolve_candidate(v)
-            for v in serializer.validated_data.get("expanded_candidate_ids") or []
-        ]
+        # Review insights: a list of up to MAX_POSITIONS references, or
+        # nothing; any other shape is noted as dropped below, not refused.
+        expanded_raw = serializer.validated_data.get("expanded_candidate_ids")
+        expanded_usable = (
+            isinstance(expanded_raw, list) and len(expanded_raw) <= MAX_POSITIONS
+        )
+        expanded_resolved = (
+            [resolve_candidate(v) for v in expanded_raw] if expanded_usable else []
+        )
         if (
             not all_bad and chosen_candidate_id is None
         ) or None in presented_resolved + flagged_resolved + tied_resolved:
@@ -2928,7 +2946,9 @@ class ChooserViewSet(viewsets.ViewSet):
                 if cid is not None and cid in presented_candidate_ids
             )
         )
-        expanded_dropped = len(expanded_candidate_ids) < len(set(expanded_resolved))
+        expanded_dropped = (expanded_raw is not None and not expanded_usable) or len(
+            expanded_candidate_ids
+        ) < len(set(expanded_resolved))
 
         # Validate task exists and is in valid state
         try:
@@ -3062,17 +3082,21 @@ class ChooserViewSet(viewsets.ViewSet):
                 id=tied_candidate_ids[0], task=task
             )
 
-        active_ms = serializer.validated_data.get("active_ms")
-        if active_ms is not None:
-            active_ms = max(0, min(active_ms, self.ACTIVE_MS_CAP))
+        active_raw = serializer.validated_data.get("active_ms")
+        active_ms = self._clamp_active_ms(active_raw)
         review_signals = clean_review_signals(
             serializer.validated_data.get("review_signals")
         )
-        if expanded_dropped:
-            review_signals["dropped"] = [
-                *review_signals.get("dropped", []),
-                "expanded_candidate_ids",
-            ]
+        dropped = [
+            name
+            for name, was_dropped in (
+                ("active_ms", active_raw is not None and active_ms is None),
+                ("expanded_candidate_ids", expanded_dropped),
+            )
+            if was_dropped
+        ]
+        if dropped:
+            review_signals["dropped"] = [*review_signals.get("dropped", []), *dropped]
         user_agent = str(request.META.get("HTTP_USER_AGENT", ""))[
             : self.USER_AGENT_CHARS
         ]
