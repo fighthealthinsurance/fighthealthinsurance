@@ -13,6 +13,7 @@ from django.db.utils import NotSupportedError
 from django.utils import timezone
 from datetime import timedelta
 
+from fighthealthinsurance import procedure_categories
 from fighthealthinsurance.condition_rankings import eligible_denials
 from fighthealthinsurance.constants import TEST_ACCOUNT_EMAILS
 from fighthealthinsurance.models import (
@@ -1070,99 +1071,110 @@ pubmed_article_export = _make_jsonl_export_view(
 )
 
 
-@staff_member_required
-def procedures_denied_chart(request):
-    """
-    Create a chart showing the count of each procedure that has been denied,
-    grouped together in a case-insensitive and space-insensitive way.
-    """
-    # Get all denials with procedures that aren't empty or None
-    denials_with_procedures = (
-        Denial.objects.exclude(Q(hashed_email__in=_get_excluded_hashed_emails()))
-        .exclude(Q(procedure__isnull=True) | Q(procedure=""))
-        .values_list("procedure", flat=True)
+def _top_n_with_other(df, label_col, top_n, other_label):
+    """The first ``top_n`` rows of a count-sorted ``df``, the rest summed
+    into one ``other_label`` row."""
+    if len(df) <= top_n:
+        return df
+    other = pd.DataFrame(
+        {label_col: [other_label], "count": [df.iloc[top_n:]["count"].sum()]}
     )
+    return pd.concat([df.iloc[:top_n].copy(), other])
 
-    # Process procedures to normalize them (case insensitive, remove spaces)
-    procedure_counts = {}
-    for procedure in denials_with_procedures:
-        if procedure:
-            # Normalize the procedure name: lowercase and remove extra spaces
-            normalized_proc = " ".join(procedure.lower().split())
-            procedure_counts[normalized_proc] = (
-                procedure_counts.get(normalized_proc, 0) + 1
-            )
 
-    # Convert to DataFrame for visualization
-    df = pd.DataFrame(
-        {
-            "procedure": list(procedure_counts.keys()),
-            "count": list(procedure_counts.values()),
-        }
-    )
-
-    if df.empty:
-        return HttpResponse("No procedure data available.", content_type="text/plain")
-
-    # Sort by count in descending order
-    df = df.sort_values("count", ascending=False)
-
-    # Limit to top 15 procedures for the chart and aggregate the rest
-    top_n = 15
-    if len(df) > top_n:
-        top_df = df.iloc[:top_n].copy()
-        other_count = df.iloc[top_n:]["count"].sum()
-        top_df = pd.concat(
-            [
-                top_df,
-                pd.DataFrame(
-                    {"procedure": ["Other Procedures"], "count": [other_count]}
-                ),
-            ]
-        )
-        chart_df = top_df
-    else:
-        chart_df = df
-
-    # Create a Bokeh figure
+def _denied_bar_chart(chart_df, label_col, title, axis_label, color):
     p = figure(
-        title="Most Commonly Denied Procedures",
-        x_range=chart_df["procedure"].tolist(),
+        title=title,
+        x_range=chart_df[label_col].tolist(),
         height=500,
         width=800,
         toolbar_location="right",
         tools="hover,pan,box_zoom,reset,save",
-        tooltips=[("Procedure", "@procedure"), ("Count", "@count")],
+        tooltips=[(axis_label, f"@{{{label_col}}}"), ("Count", "@count")],
     )
-
-    # Create bar plot
-    source = ColumnDataSource(chart_df)
     p.vbar(
-        x="procedure",
+        x=label_col,
         top="count",
         width=0.8,
-        source=source,
-        color="firebrick",
+        source=ColumnDataSource(chart_df),
+        color=color,
         line_color="white",
     )
-
-    # Customize the chart appearance
     p.xaxis.major_label_orientation = 3.14 / 4  # Rotate x-axis labels 45 degrees
     p.xgrid.grid_line_color = None
     p.y_range.start = 0
-    p.xaxis.axis_label = "Procedures"
+    p.xaxis.axis_label = axis_label
     p.yaxis.axis_label = "Number of Denials"
+    return p
 
-    # Generate Bokeh components
-    script, div = components(p)
 
-    # Generate HTML table for full data (not just what's in the chart)
-    df_html = df.to_html(classes=["table", "table-striped", "table-hover"], index=False)
+@staff_member_required
+def procedures_denied_chart(request):
+    """
+    Two views of denied procedures: each procedure (grouped in a
+    case-insensitive and space-insensitive way), and the broad category an
+    LLM sorted it into (procedure_categories.py; filled by the
+    ``categorize_procedures`` command, so this page never calls a model).
+    """
+    procedure_counts = procedure_categories.denied_procedure_counts()
+    if not procedure_counts:
+        return HttpResponse("No procedure data available.", content_type="text/plain")
 
-    # Calculate total number of procedures
-    total_procedures = df["count"].sum()
-    total_unique_procedures = len(df)
-    totals_html = f"<p>Total denials with procedures: {total_procedures}</p><p>Total unique procedures: {total_unique_procedures}</p>"
+    df = pd.DataFrame(procedure_counts.most_common(), columns=["procedure", "count"])
+    chart_df = _top_n_with_other(df, "procedure", 15, "Other Procedures")
+    procedure_chart = _denied_bar_chart(
+        chart_df,
+        "procedure",
+        "Most Commonly Denied Procedures",
+        "Procedures",
+        "firebrick",
+    )
+
+    categories = procedure_categories.stored_categories()
+    totals_by_category = procedure_categories.category_counts(
+        procedure_counts, categories
+    )
+    examples: dict[str, list[str]] = {}
+    distinct_per_category: Counter[str] = Counter()
+    for procedure, _ in procedure_counts.most_common():
+        category = categories.get(procedure, procedure_categories.UNCATEGORIZED)
+        distinct_per_category[category] += 1
+        bucket = examples.setdefault(category, [])
+        if len(bucket) < 3:
+            bucket.append(procedure)
+    category_df = pd.DataFrame(
+        [
+            {
+                "category": category,
+                "count": count,
+                "procedures": distinct_per_category[category],
+                "top procedures": ", ".join(examples.get(category, [])),
+            }
+            for category, count in totals_by_category.most_common()
+        ]
+    )
+    category_chart = _denied_bar_chart(
+        category_df[["category", "count"]],
+        "category",
+        "Denied Procedures by Category",
+        "Category",
+        "steelblue",
+    )
+
+    script, (div, category_div) = components((procedure_chart, category_chart))
+
+    table_classes = ["table", "table-striped", "table-hover"]
+    df_html = df.to_html(classes=table_classes, index=False)
+    category_df_html = category_df.to_html(classes=table_classes, index=False)
+
+    total_procedures = int(df["count"].sum())
+    uncategorized = distinct_per_category[procedure_categories.UNCATEGORIZED]
+    totals_html = (
+        f"<p>Total denials with procedures: {total_procedures}</p>"
+        f"<p>Total unique procedures: {len(df)}</p>"
+        f"<p>Unique procedures not yet categorized: {uncategorized}"
+        " (run <code>manage.py categorize_procedures</code>)</p>"
+    )
 
     return render(
         request,
@@ -1171,6 +1183,13 @@ def procedures_denied_chart(request):
             "script": script,
             "div": div,
             "df_html": df_html,
+            "extra_charts": [
+                {
+                    "title": "By category",
+                    "div": category_div,
+                    "df_html": category_df_html,
+                }
+            ],
             "totals_html": totals_html,
             "title": "Denied Procedures Analysis",
         },

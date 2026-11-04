@@ -102,6 +102,7 @@ TASKS = (
     # Everything else.
     "chooser",
     "staff_query",
+    "procedure_categories",
     "intro_email",
     "probe",
     "other",

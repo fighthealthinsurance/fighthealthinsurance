@@ -1573,6 +1573,25 @@ class MedicalTermCheck(models.Model):
         return f"{self.kind} {self.term!r}: {state}"
 
 
+class ProcedureCategory(models.Model):
+    """The broad category an internal LLM sorted a denied procedure into.
+
+    Written by procedure_categories.py (the ``categorize_procedures``
+    command) and read by the staff procedures-denied chart, so a page load
+    never calls a model. ``procedure`` is the normalized spelling
+    (lower-cased, whitespace collapsed), the same key the chart groups by,
+    so each distinct procedure costs one classification however many
+    denials name it.
+    """
+
+    procedure = models.CharField(max_length=300, unique=True)
+    category = models.CharField(max_length=80, db_index=True)
+    categorized_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"{self.procedure!r}: {self.category}"
+
+
 class NICEGuidance(models.Model):
     """
     Caches a single guidance item retrieved from the NICE syndication API.

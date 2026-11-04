@@ -33,7 +33,7 @@ Each request carries four labels, all from fixed sets:
 | Label | Values |
 | --- | --- |
 | `surface`: where the work entered | `site` (patient pages and sockets), `pro` (professional chat, prior auth, a professional's case), `assistant` (a case an AI assistant brought in), `staff` (`/timbit` tools), `system` (no person behind it: probes, the chooser, PubMed prefetch), `unknown` |
-| `task`: what the model did | `appeal_letter`, `appeal_precompute`, `synthesis`, `prior_auth_letter`, `regulator_letter`, `chat_reply`, `chat_summary`, `chat_analysis`, `entity_extraction`, `questions`, `citations`, `doc_summary`, `policy_analysis`, `pubmed_summary`, `triage`, `letter_scoring`, `reply_gate`, `reply_shadow`, `research_judging`, `chooser`, `staff_query`, `intro_email`, `probe`, `other` |
+| `task`: what the model did | `appeal_letter`, `appeal_precompute`, `synthesis`, `prior_auth_letter`, `regulator_letter`, `chat_reply`, `chat_summary`, `chat_analysis`, `entity_extraction`, `questions`, `citations`, `doc_summary`, `policy_analysis`, `pubmed_summary`, `triage`, `letter_scoring`, `reply_gate`, `reply_shadow`, `research_judging`, `chooser`, `staff_query`, `procedure_categories`, `intro_email`, `probe`, `other` |
 | `tier` | `internal`, `external` |
 | `network_class` | `isp`, `hosting`, `ai_platform`, `tor`, `unknown`, `none` |
 

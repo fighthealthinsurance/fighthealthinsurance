@@ -1,16 +1,8 @@
 <!DOCTYPE html>
+{% load bokeh_resources %}
 <html>
-  <script src="https://cdn.bokeh.org/bokeh/release/bokeh-3.6.2.min.js"
-          crossorigin="anonymous"></script>
-  <script src="https://cdn.bokeh.org/bokeh/release/bokeh-widgets-3.6.2.min.js"
-          crossorigin="anonymous"></script>
-  <script src="https://cdn.bokeh.org/bokeh/release/bokeh-tables-3.6.2.min.js"
-          crossorigin="anonymous"></script>
-  <script src="https://cdn.bokeh.org/bokeh/release/bokeh-gl-3.6.2.min.js"
-          crossorigin="anonymous"></script>
-  <script src="https://cdn.bokeh.org/bokeh/release/bokeh-mathjax-3.6.2.min.js"
-          crossorigin="anonymous"></script>
   <head>
+    {% bokeh_js %}
     <title>{{ title|default:"Bokeh Chart" }}</title>
     {{ script | safe }}
   </head>
@@ -23,6 +15,16 @@
     <div class="data">
       {{ df_html|safe }}
     </div>
+    {% for chart in extra_charts %}
+    <h2>{{ chart.title }}</h2>
+    <div class="graph">
+      {{ chart.div | safe }}
+    </div>
+    <h3>Data</h3>
+    <div class="data">
+      {{ chart.df_html|safe }}
+    </div>
+    {% endfor %}
     <h2>Summary</h2>
     <div class="totals">
       {{ totals_html|safe }}
