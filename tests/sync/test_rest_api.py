@@ -291,8 +291,11 @@ class DenialEndToEnd(APITestCase):
             content_type="application/json",
         )
         find_next_steps_parsed: Dict[str, Any] = find_next_steps_response.json()
-        # Make sure we got back a reasonable set of questions. Reduced to 4 since in_network is handled separately for professionals
-        assert len(find_next_steps_parsed["combined_form"]) >= 4
+        # Make sure we got back a reasonable set of questions: urgent,
+        # pre-service and the medical reason (in_network is asked earlier for
+        # professionals, and the patient's history is left to the generated
+        # questions).
+        assert len(find_next_steps_parsed["combined_form"]) >= 3
         # The outcome rides along, so an empty form can be told apart later:
         # a finished run with nothing to ask, or a run that did not finish.
         assert find_next_steps_parsed["questions_outcome"] == "questions"
