@@ -712,6 +712,19 @@ jobs:
       - name: Setup DB (long story)
         run: ./scripts/ci_setup_db.sh
 
+      # The SDK downloads the Temporal CLI and the Java test server into the
+      # temp dir, named by SDK version, on the first test that needs each.
+      # temporal.download has refused that with a 429; keep the binaries
+      # between runs (the tests also retry a failed download).
+      - name: Cache the Temporal server binaries
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/temporal-sdk-python-*
+            /tmp/temporal-test-server-sdk-python-*
+          key: temporal-bin-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: temporal-bin-${{ runner.os }}-
+
       - name: Run tests
         run: ENVIRONMENT=Test tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-temporal
         env:

@@ -18,6 +18,7 @@ Word files are read by word_text (tests/sync/test_word_text.py).
 """
 
 import datetime
+import hashlib
 import io
 import re
 import time
@@ -507,7 +508,11 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
         self.share_from()
         (row,) = self.address_rows()
         self.assertRegex(row.name, r"^[0-9a-f]{64}$")
-        self.assertNotIn("203", row.name)
+        # Not assertNotIn("203", ...): a random 64-hex digest contains that
+        # substring about 1.5% of the time, which failed this test at random.
+        self.assertNotIn(ADDRESS, row.name)
+        # Keyed: not a plain hash anyone could brute-force back to the address.
+        self.assertNotEqual(row.name, hashlib.sha256(ADDRESS.encode()).hexdigest())
         self.assertEqual(row.count, 1)
 
 
