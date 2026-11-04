@@ -82,6 +82,10 @@ def _served_sample(probe_model: str, served: set[str], limit: int = 8) -> list[s
 
 
 from fighthealthinsurance.env_utils import get_env_variable
+from fighthealthinsurance.keep_your_care import (
+    KEEP_YOUR_CARE_URL,
+    keep_your_care_prompt_links,
+)
 from fighthealthinsurance.ml import llm_usage, spend
 from fighthealthinsurance.ml.ml_metrics import (
     labelled_ml_calls,
@@ -259,7 +263,8 @@ PRIOR_AUTH_SYSTEM_PROMPT = (
     "and medical questions. Provide accurate, helpful, and concise information."
 )
 
-MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (ages 19-64) who got Medicaid through the ACA expansion to meet a work rule to get or keep Medicaid. Most states start on January 1, 2027, and a few started earlier.
+MEDICAID_WORK_REQUIREMENTS_BLOCK = (
+    """New federal rules require many adults (ages 19-64) who got Medicaid through the ACA expansion to meet a work rule to get or keep Medicaid. Most states start on January 1, 2027, and a few started earlier.
 
 **Key Points:**
 - Each month, any one of these counts: 80 hours per month of work, job training, school or volunteering (any mix), half-time school on its own, or at least $580 in household income
@@ -269,7 +274,22 @@ MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (age
 - To keep Medicaid during an appeal, ask for a fair hearing before the end date on your notice
 - Details vary by state
 
-For who is exempt and what to do if you get a notice, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)"""
+For who is exempt and what to do if you get a notice, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)
+
+For free help keeping your coverage, including your state's deadlines and navigators, see [Keep Your Care]("""
+    + KEEP_YOUR_CARE_URL
+    + """)"""
+)
+
+# Keep Your Care has its own page for some states only, so the model is
+# handed the full list rather than left to build a /states/<code>/ URL that
+# may not exist.
+KEEP_YOUR_CARE_STATE_LINK_RULE = (
+    "If you already know the user's state and it is one of these, use its "
+    "Keep Your Care page in place of the Keep Your Care link above, exactly "
+    "as written (any other state keeps the link above):\n"
+    + keep_your_care_prompt_links()
+)
 
 
 # How we invite someone into the eligibility check. Four places have to say
@@ -2104,7 +2124,10 @@ WRONG Examples:
             + MEDICAID_WORK_REQUIREMENTS_BLOCK
             + """
 
-RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use the text above, then """
+RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. """
+            + KEEP_YOUR_CARE_STATE_LINK_RULE
+            + """
+Use the text above, then """
             + MEDICAID_ELIGIBILITY_OFFER_RULE
             + """ Nothing else.
 """

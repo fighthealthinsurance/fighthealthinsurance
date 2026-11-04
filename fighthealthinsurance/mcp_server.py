@@ -2815,6 +2815,9 @@ def build_mcp_server(django_http_app: Optional[ASGIApp] = None) -> FastMCP:
                             if ombudsman
                             else None
                         ),
+                        # Help keeping Medicaid under the work requirements;
+                        # only states the site has a page for.
+                        "keep_your_care": found.keep_your_care_url,
                     }
                 ),
                 "external_review": _compact(

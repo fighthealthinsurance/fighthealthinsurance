@@ -42,6 +42,7 @@ Your state has to check its own records first, such as payroll data, and ask you
 
 ### Where can I get help? {#where-can-i-get-help}
 - Your state's Medicaid agency: find it on our [state help pages](/state-help/).
+- [Keep Your Care](https://keepyourcare.org/), a nonprofit, explains the rules and deadlines and connects you with navigators. It has its own pages for [California](https://keepyourcare.org/states/ca/), [Georgia](https://keepyourcare.org/states/ga/), [Illinois](https://keepyourcare.org/states/il/), [Michigan](https://keepyourcare.org/states/mi/), [New York](https://keepyourcare.org/states/ny/), [North Carolina](https://keepyourcare.org/states/nc/) and [Virginia](https://keepyourcare.org/states/va/).
 - Our [chat](/chat) can look up your state's Medicaid contacts, and its experimental eligibility check gives a rough estimate. Only your state can decide for real.
 - Legal aid groups can help with a hearing.
 

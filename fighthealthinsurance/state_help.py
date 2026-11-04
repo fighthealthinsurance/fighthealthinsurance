@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from loguru import logger
 
+from fighthealthinsurance.keep_your_care import keep_your_care_url
 from fighthealthinsurance.static_data import read_static_text
 
 
@@ -264,6 +265,11 @@ class StateHelp:
         self.additional_resources: list[AdditionalResource] = [
             AdditionalResource(r) for r in data.get("additional_resources", [])
         ]
+
+    @property
+    def keep_your_care_url(self) -> Optional[str]:
+        """This state's Keep Your Care page, or None when the site has none."""
+        return keep_your_care_url(self.abbreviation)
 
     def __repr__(self) -> str:
         """
