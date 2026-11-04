@@ -59,7 +59,16 @@ AMBIGUOUS_LETTER = (
 
 def shown(page, name):
     """What the review page shows in a field: an input's value, the values
-    of a select's chosen options, or the values of the ticked boxes."""
+    of a select's chosen options, or the values of the ticked boxes. A
+    two-step plan question (form_utils.PlanSourcePicker) shows the plan
+    source its ticked answers come to."""
+    group = page.find(id=f"id_{name}", class_="fhi-plan-picker")
+    if group is not None:
+        return [
+            box.get("data-plan-source") or box["value"]
+            for box in group.find_all("input", checked=True)
+            if box.get("data-plan-source") or box["name"] == name
+        ]
     element = page.find(attrs={"name": name})
     assert element is not None, f"the review page has no {name} field"
     if element.name == "select":
@@ -277,9 +286,13 @@ class ReviewPageClearsWhatThePersonEmptiedTest(ReviewPageTestBase):
         self.submit(data)
         self.assertEqual(self.denial.denial_type.count(), 0)
 
-    def test_unticking_every_plan_source_clears_them(self):
+    def test_a_post_with_no_plan_source_clears_them(self):
+        # The page's plan question is a pick-one now and can't be emptied
+        # there; a post that sends no answer to it at all (an older page)
+        # still clears what the page showed.
         data = self.review_answers()
-        data["plan_source"] = []
+        data.pop("plan_source", None)
+        data.pop("plan_source_group", None)
         self.submit(data)
         self.assertEqual(self.denial.plan_source.count(), 0)
 

@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 from django import forms
 from django.template.loader import render_to_string
@@ -106,6 +106,30 @@ class CheckboxList(forms.CheckboxSelectMultiple):
         return context
 
 
+class RadioList(forms.RadioSelect):
+    """A pick-one field drawn like CheckboxList: a column of round boxes,
+    each with its label beside it (widgets/check_list.html)."""
+
+    template_name = CheckboxList.template_name
+    option_template_name = CheckboxList.option_template_name
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.group_label = ""
+        self.group_help = False
+
+    def name_from(self, field: forms.Field) -> None:
+        """Name the group after its field: the table layout's label has no for=."""
+        self.group_label = str(field.label or "")
+        self.group_help = bool(field.help_text)
+
+    def get_context(self, name, value, attrs):
+        context = super().get_context(name, value, attrs)
+        context["widget"]["group_label"] = self.group_label
+        context["widget"]["group_help"] = self.group_help
+        return context
+
+
 class CoreFirstCheckboxList(CheckboxList):
     """A CheckboxList over a long model list that shows the common choices
     first and folds the rest under a "More ..." disclosure.
@@ -161,6 +185,219 @@ class CoreFirstCheckboxList(CheckboxList):
         return context
 
 
+# The two-step plan picker's groups (PlanSourcePicker), each a first answer
+# with the PlanSource rows (fixtures/plan_source.yaml) it narrows to, matched
+# by name, never by primary key. A group of several rows asks a follow-up
+# question; a group of one row is that row. A row no group names gets a
+# group of its own, after these, so a new fixture row is still offered.
+PLAN_SOURCE_GROUPS: tuple[tuple[str, str, str, tuple[tuple[str, str], ...]], ...] = (
+    (
+        "job",
+        "Through a job: mine, or a spouse's or parent's (including COBRA and "
+        "retiree coverage)",
+        "What kind of employer?",
+        (
+            ("Employer -- Private", "A private company or nonprofit"),
+            (
+                "Employer -- State Government",
+                "A state government, including state universities",
+            ),
+            (
+                "Employer -- Other Government",
+                "A city, county, school district or other public employer",
+            ),
+            (
+                "Employer -- Federal Government",
+                "The federal government (FEHB)",
+            ),
+            ("Union", "A union plan or union trust fund"),
+            ("Other Group", "Another group, like a professional association"),
+        ),
+    ),
+    (
+        "medicare",
+        "Medicare",
+        "Which kind of Medicare?",
+        (
+            (
+                "Medicare Regular",
+                "Original Medicare: you use the red, white and blue Medicare card",
+            ),
+            (
+                "Medicare Advantage",
+                "Medicare Advantage (Part C): a plan from a private company, "
+                "with that company's card, in place of Original Medicare",
+            ),
+        ),
+    ),
+    (
+        "medicaid",
+        "Medicaid or CHIP (your state may call it something else, like Medi-Cal)",
+        "",
+        (("Medicaid", ""),),
+    ),
+    (
+        "marketplace",
+        "A plan I bought myself, on HealthCare.gov, a state marketplace or "
+        "from an insurer",
+        "",
+        (("State Marketplace / Affordable Care Act", ""),),
+    ),
+    ("va", "VA health care", "", (("Veterans Affairs", ""),)),
+    ("other", "Something else", "", (("Other", ""),)),
+    ("unknown", "I'm not sure", "", (("Don't know", ""),)),
+)
+
+
+class PlanSourcePicker(forms.RadioSelect):
+    """Where a plan comes from, asked in two steps (widgets/plan_source_picker.html).
+
+    First the broad answer (through a job, Medicare, Medicaid, ...); then, for
+    an answer that covers several PlanSource rows, a follow-up such as which
+    kind of employer. The follow-up is in the page from the start and the
+    stylesheet shows only the one under the ticked answer (:has), so it
+    needs no script; a browser without :has shows them all.
+
+    The first answer posts as ``<name>_group``; a follow-up's answer as
+    ``<name>``. A post with no ``<name>_group`` (the REST API, an older
+    page) is read as plain ``<name>`` values. ``multiple`` is for a
+    ModelMultipleChoiceField, which wants a list back.
+    """
+
+    template_name = "widgets/plan_source_picker.html"
+
+    def __init__(self, *args, multiple: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.allow_multiple_selected = multiple
+        self.group_label = ""
+        self.group_help = False
+
+    def name_from(self, field: forms.Field) -> None:
+        """Name the group after its field: the table layout's label has no for=."""
+        self.group_label = str(field.label or "")
+        self.group_help = bool(field.help_text)
+
+    def _rows(self) -> list[tuple[str, str]]:
+        """(pk, PlanSource name) for each choice, in the field's order. The
+        name's whitespace is tidied: some fixture rows end in spaces."""
+        rows = []
+        for value, label in self.choices:
+            if value == "":
+                continue
+            instance = getattr(value, "instance", None)
+            name = getattr(instance, "name", None) or str(label)
+            rows.append((str(value), " ".join(name.split())))
+        return rows
+
+    def groups(self) -> list[dict]:
+        """The groups with their rows, each row as {"pk", "name", "label"}.
+        A group none of whose rows exist is left out."""
+        by_name = {name: pk for pk, name in self._rows()}
+        placed: set[str] = set()
+        groups = []
+        for key, label, question, members in PLAN_SOURCE_GROUPS:
+            rows = [
+                {"pk": by_name[name], "name": name, "label": sub_label or name}
+                for name, sub_label in members
+                if name in by_name
+            ]
+            if not rows:
+                continue
+            placed.update(row["name"] for row in rows)
+            groups.append(
+                {"key": key, "label": label, "question": question, "rows": rows}
+            )
+        extra = [
+            {
+                "key": f"row-{pk}",
+                "label": name,
+                "question": "",
+                "rows": [{"pk": pk, "name": name, "label": name}],
+            }
+            for pk, name in self._rows()
+            if name not in placed
+        ]
+        # Before "I'm not sure", which reads best last.
+        at = next(
+            (i for i, group in enumerate(groups) if group["key"] == "unknown"),
+            len(groups),
+        )
+        return groups[:at] + extra + groups[at:]
+
+    def _group(self, key: str) -> Optional[dict]:
+        return next((g for g in self.groups() if g["key"] == key), None)
+
+    def missing_follow_up(self, data, name: str) -> str:
+        """The follow-up question left unanswered under the ticked first
+        answer, or "" when there is none."""
+        group = self._group(data.get(f"{name}_group") or "")
+        if group is None or len(group["rows"]) < 2:
+            return ""
+        picked = set(self._picked(data, name))
+        if picked & {row["pk"] for row in group["rows"]}:
+            return ""
+        return str(group["question"])
+
+    @staticmethod
+    def _picked(data, name: str) -> list[str]:
+        if hasattr(data, "getlist"):
+            return [str(v) for v in data.getlist(name)]
+        value = data.get(name)
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple)):
+            return [str(v) for v in value]
+        return [str(value)]
+
+    def value_from_datadict(self, data, files, name):
+        key = data.get(f"{name}_group")
+        if not key:
+            return super().value_from_datadict(data, files, name)
+        group = self._group(key)
+        chosen: list[str] = []
+        if group is not None:
+            pks = [row["pk"] for row in group["rows"]]
+            if len(pks) == 1:
+                chosen = pks
+            else:
+                chosen = [pk for pk in self._picked(data, name) if pk in pks][:1]
+        if self.allow_multiple_selected:
+            return chosen
+        return chosen[0] if chosen else None
+
+    def value_omitted_from_data(self, data, files, name):
+        return name not in data and f"{name}_group" not in data
+
+    def get_context(self, name, value, attrs):
+        context = super().get_context(name, value, attrs)
+        selected = [str(v) for v in context["widget"]["value"] if v not in ("", None)]
+        groups = self.groups()
+        # One answer is shown ticked: the first group holding a selected row
+        # (an older denial can hold more than one), and in it that row.
+        ticked_group = None
+        ticked_row = None
+        for group in groups:
+            for row in group["rows"]:
+                if row["pk"] in selected:
+                    ticked_group, ticked_row = group["key"], row["pk"]
+                    break
+            if ticked_group:
+                break
+        base_id = context["widget"]["attrs"].get("id") or f"id_{name}"
+        for group in groups:
+            group["id"] = f"{base_id}_group_{group['key']}"
+            group["checked"] = group["key"] == ticked_group
+            for index, row in enumerate(group["rows"]):
+                row["id"] = f"{base_id}_{group['key']}_{index}"
+                row["checked"] = row["pk"] == ticked_row
+        context["widget"]["groups"] = groups
+        context["widget"]["group_name"] = f"{name}_group"
+        context["widget"]["group_label"] = self.group_label
+        context["widget"]["group_help"] = self.group_help
+        context["widget"]["base_id"] = base_id
+        return context
+
+
 #: Widget types that are not text boxes and take the tick-box class.
 _TICKABLE = (forms.CheckboxInput, forms.RadioSelect, forms.CheckboxSelectMultiple)
 #: Widget types that get no class at all.
@@ -188,7 +425,7 @@ def style_widgets(fields) -> None:
             continue
         if widget.__class__.__module__.startswith("django_recaptcha"):
             continue
-        if isinstance(widget, CheckboxList):
+        if isinstance(widget, (CheckboxList, RadioList, PlanSourcePicker)):
             widget.name_from(field)
         wanted = CHECK_CLASS if isinstance(widget, _TICKABLE) else FIELD_CLASS
         existing = widget.attrs.get("class", "")
