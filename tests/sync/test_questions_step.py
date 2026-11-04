@@ -818,18 +818,18 @@ class DenialTypeQuestionTest(QuestionsStepTestBase):
     def test_a_name_clash_between_two_denial_types_keeps_the_questionnaire(self):
         """Two types declaring medical_reason must not discard the page."""
         self.denial.denial_type.set(DenialTypes.objects.filter(pk__in=[2, 4]))
-        self.denial.qa_context = json.dumps({"age": "41"})
+        self.denial.qa_context = json.dumps({"pre_service": "True"})
         self.denial.save(update_fields=["qa_context"])
 
         combined = self._rebuild().combined_form
 
         # Every field from both forms is present...
         self.assertIn("medical_reason", combined.fields)
-        self.assertIn("age", combined.fields)
+        self.assertIn("pre_service", combined.fields)
         # ...neither type put its canned appeal paragraph in the box...
         self.assertIn(combined.fields["medical_reason"].initial, (None, ""))
         # ...and the answers already given survived.
-        self.assertEqual(combined.fields["age"].initial, "41")
+        self.assertIs(combined.fields["pre_service"].initial, True)
 
 
 class NoDenialTypeBoilerplateInTheAnswerBoxTest(QuestionsStepTestBase):

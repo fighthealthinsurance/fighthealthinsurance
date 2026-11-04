@@ -199,3 +199,92 @@ class QuestionFieldTest(TestCase):
                         f"{pretty_name(field_name)!r} at the person",
                     )
                     self.assertNotEqual(field.label, pretty_name(field_name))
+
+
+# The free-text boxes a denial type's form may still ask. Each is about the
+# claim or the denial, or fills a template slot ({medical_reason}); the
+# patient's history (age, symptoms, BMI, diagnosis, how long in treatment)
+# is asked by the generated questions instead, so the page does not ask it
+# twice. Listed by name so a new free-text box is a decision, not a drift.
+_FREE_TEXT_ALLOWED = {
+    "medical_reason",
+    "why_need_out_of_network",
+    "prior_auth_id",
+    "alternate_insurance_details",
+}
+
+
+class StaticQuestionsLeaveHistoryToGeneratedQuestionsTest(TestCase):
+    def test_free_text_boxes_are_only_the_listed_ones(self):
+        for name, form_class in _question_form_classes():
+            form = _instantiate(form_class)
+            for field_name, field in form.fields.items():
+                if isinstance(field, (forms.BooleanField, forms.ChoiceField)):
+                    continue
+                with self.subTest(form=name, field=field_name):
+                    self.assertIn(
+                        field_name,
+                        _FREE_TEXT_ALLOWED,
+                        f"{name}.{field_name} is a free-text question; patient "
+                        f"history belongs to the generated questions",
+                    )
+
+    def test_an_answer_under_a_removed_field_name_is_ignored(self):
+        """Older denials stored answers under fields since removed; their
+        forms must still validate and build the appeal."""
+        form = question_forms.MedicalNecessaryQuestions(
+            {"age": "41", "medical_reason": "my surgeon says so"}
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertNotIn("41", form.medical_context())
+
+
+class PriorAuthQuestionsMainTest(TestCase):
+    def _main(self, **data):
+        form = question_forms.PriorAuthQuestions(data)
+        self.assertTrue(form.is_valid(), form.errors)
+        return form.main()
+
+    def test_prior_auth_obtained_without_a_number_is_still_said(self):
+        self.assertEqual(
+            self._main(prior_auth_obtained="on"),
+            ["Prior authorization was obtained before the service."],
+        )
+
+    def test_a_prior_auth_number_replaces_the_plain_obtained_sentence(self):
+        self.assertEqual(
+            self._main(prior_auth_obtained="on", prior_auth_id="PA-123"),
+            ["Prior auth was obtained (id PA-123)"],
+        )
+
+    def test_contacting_the_insurer_is_said_when_not_told_it_was_unneeded(self):
+        self.assertEqual(
+            self._main(contact_insurance_before="on"),
+            ["The insurance company was contacted before the service."],
+        )
+
+    def test_being_told_it_was_unneeded_covers_contacting_the_insurer(self):
+        self.assertEqual(
+            self._main(contact_insurance_before="on", told_prior_auth_not_needed="on"),
+            ["It was communicated that prior authorization was not necessary."],
+        )
+
+
+class InsuranceQuestionsFooterTest(TestCase):
+    def _footer(self, prof_pov=False, **data):
+        form = question_forms.InsuranceQuestions(data, prof_pov=prof_pov)
+        self.assertTrue(form.is_valid(), form.errors)
+        return form.footer()
+
+    def test_post_service_footer_is_a_single_blank_paragraph(self):
+        self.assertEqual(self._footer(), [""])
+
+    def test_non_urgent_pre_service_footer_names_thirty_days(self):
+        self.assertIn("30 days", self._footer(pre_service="on")[1])
+
+    def test_urgent_pre_service_footer_is_the_same_for_a_professional(self):
+        self.assertEqual(
+            self._footer(urgent="on", pre_service="on"),
+            self._footer(prof_pov=True, urgent="on", pre_service="on"),
+        )
