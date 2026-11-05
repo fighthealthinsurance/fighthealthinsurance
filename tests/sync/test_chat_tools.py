@@ -2570,3 +2570,51 @@ class TestAnchoredCallRemoval(TestCase):
         )
         result = remove_anchored_call(text, tool.detect(text))
         self.assertEqual(result, "\nAnything else?")
+
+
+class TestWorkRequirementAdvice(TestCase):
+    """The write-up's coaching must match the rule: caregiving is an exemption.
+
+    The system prompt and the checker both treat caring for a young child or
+    a disabled person as an exemption, not hours. Listing caregiving among
+    the ways to reach 80 hours told the model, in the same turn, the opposite.
+    """
+
+    def _message(self) -> str:
+        tool = MedicaidEligibilityTool(AsyncMock())
+        call = '**medicaid_eligibility {"state": "CA", "target_year": 2027}**'
+        match = tool.detect(call)
+        self.assertIsNotNone(match)
+        captured: dict = {}
+
+        async def fake_call_llm(model_backends, message, *args, **kwargs):
+            captured["message"] = message
+            return ("ok", "")
+
+        tool.call_llm_callback = fake_call_llm
+        with patch(
+            "fighthealthinsurance.medicaid_api.is_eligible",
+            return_value=(True, False, False, [], [], True),
+        ):
+            asyncio.run(
+                tool.execute(
+                    match,
+                    call,
+                    "",
+                    model_backends=["backend"],
+                    current_message_for_llm="Will I keep Medi-Cal in 2027?",
+                    history_for_llm=[],
+                )
+            )
+        return captured["message"]
+
+    def test_caregiving_is_not_offered_as_qualifying_hours(self):
+        self.assertNotIn("volunteering, or caregiving", self._message())
+
+    def test_caregiving_is_raised_as_an_exemption(self):
+        message = self._message()
+        self.assertIn("Caregiving is not qualifying hours", message)
+        self.assertIn(
+            "caring for a child 13 or younger or a disabled person is an exemption",
+            message,
+        )

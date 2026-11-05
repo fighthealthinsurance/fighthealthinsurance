@@ -31,7 +31,12 @@ from fighthealthinsurance.chat.tools.patterns import (
     contains_tool_call,
     count_tool_invocations,
 )
-from fighthealthinsurance.ml.ml_models import RemoteModelLike, repetition_penalty
+from fighthealthinsurance.ml.ml_models import (
+    RemoteModelLike,
+    chat_mentions_medicaid,
+    fit_history_to_token_budget,
+    repetition_penalty,
+)
 
 # Shared similarity/exemption helpers (stdlib-only module, importable from
 # both this layer and ml_models without a cycle). normalize_text,
@@ -676,6 +681,22 @@ def build_llm_calls(
         if call_backends is not None:
             call_backends[call] = model_backend
 
+    has_full_history = bool(full_history) and full_history != history
+    # With a longer history in hand, decide Medicaid from all of it and pass
+    # that to every call: a truncated call left to detect from its own window
+    # dropped the Medicaid tools whenever the only mention was older than the
+    # kept messages, stalling an eligibility check mid-interview -- and that
+    # is exactly the case where the full-history call is skipped as too big.
+    medicaid_kwargs = (
+        {
+            "is_medicaid_related": chat_mentions_medicaid(
+                current_message, previous_context_summary, full_history
+            )
+        }
+        if has_full_history
+        else {}
+    )
+
     for model_backend in model_backends:
         # Try with truncated history
         call = model_backend.generate_chat_response(
@@ -686,6 +707,7 @@ def build_llm_calls(
             is_logged_in=is_logged_in,
             allow_repeated_reply=allow_repeated_reply,
             raise_on_unavailable=True,
+            **medicaid_kwargs,
         )
         if call_log is not None:
             call = call_log.observe(call, model_backend, "truncated")
@@ -695,13 +717,27 @@ def build_llm_calls(
         call_scores[call] = (model_backend.quality() ** 2) // 5
 
         # Also try with full history if provided and model can handle it
-        if full_history and full_history != history:
-            full_history_tokens = estimate_history_tokens(full_history)
-            model_max_context = model_backend.get_max_context()
-            # Leave room for system prompt and response (~8k tokens)
-            available_context = model_max_context - 8000
+        if full_history and has_full_history:
+            # Measured against this turn's real system prompt and message
+            # (the Medicaid one alone outgrew the flat 8k reserve this used),
+            # so a full-history call is only made when it actually fits --
+            # one that doesn't would just be trimmed back inside the call.
+            available_context = model_backend.chat_history_token_budget(
+                current_message,
+                previous_context_summary=previous_context_summary,
+                history=full_history,
+                is_professional=is_professional,
+                is_logged_in=is_logged_in,
+            )
 
-            if full_history_tokens < available_context:
+            # The same predicate the call trims with, so "fits" can't round
+            # differently here and there.
+            fits = (
+                fit_history_to_token_budget(full_history, available_context)
+                is full_history
+            )
+
+            if fits:
                 full_history_call = model_backend.generate_chat_response(
                     current_message,
                     previous_context_summary=previous_context_summary,
@@ -710,6 +746,7 @@ def build_llm_calls(
                     is_logged_in=is_logged_in,
                     allow_repeated_reply=allow_repeated_reply,
                     raise_on_unavailable=True,
+                    **medicaid_kwargs,
                 )
                 if call_log is not None:
                     full_history_call = call_log.observe(
