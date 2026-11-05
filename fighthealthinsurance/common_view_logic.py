@@ -1594,7 +1594,59 @@ class FindNextStepsHelper:
         work_requirement_note = cls._medicaid_work_requirement_note(denial, state)
         if work_requirement_note is not None:
             outside_help_details.append(work_requirement_note)
+        other_insurance_note = cls._other_insurance_note(denial)
+        if other_insurance_note is not None:
+            outside_help_details.append(other_insurance_note)
         return outside_help_details
+
+    @staticmethod
+    def _other_insurance_note(denial: "Denial") -> Optional[Tuple[str, str]]:
+        """What to do with the other insurance the person told us about on
+        the review page, or None when they did not say they have any.
+
+        Escaped here: outside_help.html renders these rows unescaped.
+        """
+        if denial.other_insurance != OTHER_INSURANCE_YES:
+            return None
+        company = (denial.other_insurance_company or "").strip()
+        which = (
+            f"other insurance, from <strong>{html_escape(company)}</strong>"
+            if company
+            else "other insurance"
+        )
+        lines = [
+            f"You told us you also have {which}. That plan may pay some or "
+            "all of what this one denied, and asking it doesn't stop your "
+            "appeal here.",
+            "Plans sometimes deny a claim because they think the other plan "
+            "should pay first. Make sure each plan knows about the other; "
+            "this is called coordination of benefits.",
+        ]
+        other_is_medicaid = (
+            denial.other_plan_source is not None
+            and "medicaid" in denial.other_plan_source.name.lower()
+        )
+        denial_is_medicaid = denial.plan_source.filter(
+            name__icontains="medicaid"
+        ).exists()
+        if other_is_medicaid:
+            lines.append(
+                "Medicaid pays after your other insurance. Ask your provider "
+                "to bill Medicaid for what this plan denied. A provider who "
+                "takes Medicaid generally can't charge you more than Medicaid "
+                "allows for covered care."
+            )
+        elif denial_is_medicaid:
+            lines.append(
+                "Medicaid pays after your other insurance, so it can deny care "
+                "your other plan should pay for first. Send the claim to your "
+                "other plan."
+            )
+        return (
+            " ".join(lines),
+            "Send the bill or claim to your other insurance too, with a copy "
+            "of this denial.",
+        )
 
     @classmethod
     def _medicaid_work_requirement_note(
@@ -1881,6 +1933,9 @@ class FindNextStepsHelper:
         prof_pov: Optional[bool] = False,
         insurance_company_obj: Optional["InsuranceCompany"] = None,
         insurance_plan_obj: Optional["InsurancePlan"] = None,
+        other_insurance: Optional[str] = None,
+        other_plan_source: Optional["PlanSource"] = None,
+        other_insurance_company: Optional[str] = None,
         shown_filled: typing.Collection[str] = (),
     ) -> NextStepInfo:
         hashed_email = Denial.get_hashed_email(email)
@@ -1964,6 +2019,25 @@ class FindNextStepsHelper:
             changed_fields.add("employer_name")
         else:
             employer_name = None
+        # Other insurance: a blank answer (the question left alone) keeps
+        # what we have, and "No" clears what they told us about it before.
+        if other_insurance:
+            denial.other_insurance = other_insurance
+            changed_fields.add("other_insurance")
+        if other_insurance == OTHER_INSURANCE_NO:
+            denial.other_plan_source = None
+            denial.other_insurance_company = None
+            changed_fields.update({"other_plan_source", "other_insurance_company"})
+        elif other_insurance == OTHER_INSURANCE_YES:
+            if other_plan_source is not None:
+                denial.other_plan_source = other_plan_source
+                changed_fields.add("other_plan_source")
+            if other_insurance_company and len(other_insurance_company) < 300:
+                denial.other_insurance_company = other_insurance_company
+                changed_fields.add("other_insurance_company")
+            elif emptied("other_insurance_company", other_insurance_company):
+                denial.other_insurance_company = None
+                changed_fields.add("other_insurance_company")
         if (
             appeal_fax_number is not None
             and len(appeal_fax_number) > 5

@@ -34,6 +34,9 @@ from fighthealthinsurance.models import (
     DenialTypes,
     InsuranceCompany,
     InsurancePlan,
+    OTHER_INSURANCE_NO,
+    OTHER_INSURANCE_UNSURE,
+    OTHER_INSURANCE_YES,
     InterestedProfessional,
     PlanSource,
 )
@@ -729,17 +732,48 @@ class BasePostInferedForm(DenialRefForm):
         help_text="For state-specific plans like Medicaid, choose if available.",
         widget=forms.Select(attrs={"class": "insurance-plan-select"}),
     )
+    # Asked in two steps (form_utils.PlanSourcePicker): the broad answer,
+    # then which kind of employer or Medicare. Still a multiple-choice field,
+    # so the REST API and Denial.plan_source take it as they always have.
     plan_source = forms.ModelMultipleChoiceField(
         queryset=PlanSource.objects.all(),
         required=False,
         label="How do you get your insurance?",
-        help_text="Select all that apply.",
-        widget=CheckboxList,
+        help_text="If you have more than one plan, pick the one that sent this denial.",
+        widget=PlanSourcePicker(multiple=True),
     )
     employer_name = forms.CharField(
         required=False,
-        label="Employer name (if employer-provided insurance)",
+        label="Employer name",
+        help_text="The employer or union whose plan this is.",
         widget=forms.TextInput(attrs={"placeholder": "e.g., Acme Corporation"}),
+    )
+    other_insurance = forms.ChoiceField(
+        required=False,
+        label="Do you have any other health insurance?",
+        help_text=(
+            "Like a spouse's or parent's plan, Medicaid as well as another "
+            "plan, or Medicare with a retiree plan. Another plan may pay what "
+            "this one won't."
+        ),
+        choices=(
+            (OTHER_INSURANCE_YES, "Yes"),
+            (OTHER_INSURANCE_NO, "No"),
+            (OTHER_INSURANCE_UNSURE, "I'm not sure"),
+        ),
+        widget=RadioList,
+    )
+    other_plan_source = forms.ModelChoiceField(
+        queryset=PlanSource.objects.all(),
+        required=False,
+        label="How do you get your other insurance?",
+        widget=PlanSourcePicker,
+    )
+    other_insurance_company = forms.CharField(
+        required=False,
+        max_length=300,
+        label="Other insurance company",
+        widget=forms.TextInput(attrs={"placeholder": "e.g., Kaiser, Cigna, Medicaid"}),
     )
     denial_date = forms.DateField(
         required=False,
@@ -775,6 +809,26 @@ class BasePostInferedForm(DenialRefForm):
         ),
     )
 
+    def clean(self):
+        cleaned_data = super().clean() or self.cleaned_data
+        # A first answer that covers several kinds of plan ("Through a job",
+        # "Medicare") with no kind picked would save nothing, so ask for it.
+        for name in ("plan_source", "other_plan_source"):
+            widget = self.fields[name].widget
+            if not isinstance(widget, PlanSourcePicker):
+                continue
+            if name == "other_plan_source" and (
+                cleaned_data.get("other_insurance") != OTHER_INSURANCE_YES
+            ):
+                continue
+            question = widget.missing_follow_up(self.data, self.add_prefix(name))
+            if question:
+                self.add_error(
+                    name,
+                    f"{question} Pick one, or choose \u201cI'm not sure\u201d.",
+                )
+        return cleaned_data
+
 
 # The review page's fields that an empty answer clears, but only when the page
 # showed them filled (find_next_steps).
@@ -790,6 +844,7 @@ REVIEW_CLEARABLE_FIELDS = (
     "your_state",
     "denial_type",
     "plan_source",
+    "other_insurance_company",
 )
 
 

@@ -586,6 +586,12 @@ class Regulator(models.Model):
         return self.name
 
 
+#: The answers to "Do you have any other health insurance?" (Denial.other_insurance).
+OTHER_INSURANCE_YES = "yes"
+OTHER_INSURANCE_NO = "no"
+OTHER_INSURANCE_UNSURE = "unsure"
+
+
 class PlanSource(models.Model):
     """
     Identifies the source/origin of insurance plans (e.g., employer, marketplace, Medicaid).
@@ -2488,6 +2494,21 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     plan_type = models.ManyToManyField(PlanType, through=PlanTypesRelation)
     plan_source = models.ManyToManyField(PlanSource, through=PlanSourceRelation)
     employer_name = models.CharField(max_length=300, null=True, blank=True)
+    # Whether the person has health insurance besides the plan that denied
+    # this, as they answered on the review page: one of OTHER_INSURANCE_*,
+    # or "" when they did not say. Another plan may pay what this one won't.
+    other_insurance = models.CharField(
+        max_length=8, blank=True, default="", db_default=""
+    )
+    # Where that other insurance comes from, and the company, when they said.
+    other_plan_source = models.ForeignKey(
+        PlanSource,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    other_insurance_company = models.CharField(max_length=300, null=True, blank=True)
     regulator = models.ForeignKey(
         Regulator, null=True, on_delete=models.SET_NULL, blank=True
     )

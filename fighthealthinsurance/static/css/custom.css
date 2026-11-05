@@ -4543,3 +4543,41 @@ summary.fhi-nav-link::after {
 .fhi-progress + .fhi-page-title {
     margin-top: 0;
 }
+
+/* ---- The review page's plan questions (form_utils.PlanSourcePicker) ------
+   One answer per row, in one column, so a follow-up opens right under the
+   answer it narrows. A follow-up shows only under its ticked answer; with
+   no :has support every follow-up shows, which still works. */
+.fhi-plan-picker > .fhi-check-list {
+    grid-template-columns: minmax(0, 1fr);
+}
+.fhi-plan-picker-follow-up {
+    margin: var(--fhi-space-2) 0 var(--fhi-space-1);
+    padding: var(--fhi-space-2) 0 var(--fhi-space-1) var(--fhi-space-3);
+    border: 0;
+    border-left: 3px solid var(--fhi-field-line);
+    min-width: 0;
+}
+.fhi-plan-picker-follow-up > legend {
+    float: left;
+    width: 100%;
+    font-weight: 700;
+    font-size: inherit;
+    margin-bottom: var(--fhi-space-2);
+}
+.fhi-plan-picker-follow-up > legend + * { clear: both; }
+.fhi-plan-picker .fhi-check-row:not(:has(> input:checked)) > .fhi-plan-picker-follow-up {
+    display: none;
+}
+.fhi-form-table tr:has(.fhi-plan-picker) > th {
+    vertical-align: top;
+}
+/* The employer's name is asked under "Through a job", and the other plan's
+   details under "Yes, I have other insurance". A box with something in it
+   stays in sight whatever is ticked, so nothing is hidden filled. */
+.fhi-form-table:not(:has(input[name="plan_source_group"][value="job"]:checked))
+    tr:has(#id_employer_name:placeholder-shown),
+.fhi-form-table:not(:has(input[name="other_insurance"][value="yes"]:checked))
+    tr:has(#id_other_plan_source, #id_other_insurance_company:placeholder-shown) {
+    display: none;
+}
