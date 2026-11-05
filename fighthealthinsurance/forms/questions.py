@@ -389,13 +389,18 @@ class GenderAffirmingCareBreastAugmentationQuestions(GenderAffirmingCareQuestion
 
 
 class PreventiveCareQuestions(InsuranceQuestions):
-    """Questions for preventive care."""
+    """Questions for preventive care.
+
+    Preventive care is not only screening: it also covers immunizations,
+    preventive medications (PrEP, statins), contraception, counseling and
+    well visits, so nothing here assumes the service is a screening test.
+    """
 
     medical_reason = forms.CharField(
         max_length=300,
         required=False,
-        label="Reason for elevated risk requiring this screening.",
-        help_text="Briefly describe any factors that may increase the need for this preventive screening (e.g., family history, prior conditions, or other risk factors).",
+        label="Why does the patient need this preventive care (if you know)?",
+        help_text="E.g., risk factors such as family history or prior conditions, their age, or their doctor's recommendation.",
     )
     trans_gender = forms.BooleanField(
         required=False,
@@ -408,13 +413,18 @@ class PreventiveCareQuestions(InsuranceQuestions):
         response += (
             "This procedure may be preventive, make sure to include a link to "
             "https://www.healthcare.gov/coverage/preventive-care-benefits/ if "
-            "that's the case."
+            "that's the case. Preventive care is not only screening: ACA "
+            "preventive coverage also includes immunizations, preventive "
+            "medications, contraception and counseling, so do not describe "
+            "the service as a screening unless it is one. "
         )
         response = self._append_context(
             response, "trans_gender", "The patient is transgender"
         )
         response = self._append_context(
-            response, "medical_reason", "The patient may be at increased risk due to"
+            response,
+            "medical_reason",
+            "Why the patient needs this preventive care",
         )
         return response
 

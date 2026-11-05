@@ -288,3 +288,21 @@ class InsuranceQuestionsFooterTest(TestCase):
             self._footer(urgent="on", pre_service="on"),
             self._footer(prof_pov=True, urgent="on", pre_service="on"),
         )
+
+
+class PreventiveCareIsNotOnlyScreeningTest(TestCase):
+    """Vaccines, PrEP, contraception and well visits are preventive care too."""
+
+    def test_the_reason_question_does_not_assume_a_screening(self):
+        field = question_forms.PreventiveCareQuestions().fields["medical_reason"]
+
+        self.assertNotIn("screening", f"{field.label} {field.help_text}".lower())
+
+    def test_the_context_tells_the_letter_not_to_call_it_a_screening(self):
+        form = question_forms.PreventiveCareQuestions({"medical_reason": "PrEP"})
+        self.assertTrue(form.is_valid(), form.errors)
+
+        context = form.medical_context()
+
+        self.assertIn("not only screening", context)
+        self.assertIn("Why the patient needs this preventive care: PrEP.", context)
