@@ -418,6 +418,7 @@ and how to update it: [docs/geoip.md](docs/geoip.md).
 | [docs/geoip.md](docs/geoip.md) | The GeoIP database |
 | [docs/ray-actors.md](docs/ray-actors.md) | Ray actors: health endpoint, relaunching |
 | [docs/chat-pipeline.md](docs/chat-pipeline.md) | How the chat works, and its failure modes |
+| [docs/plan-document-corpus.md](docs/plan-document-corpus.md) | The public plan-document corpus: the bundle contract and importer, how a denial is matched to its plan documents, and the prompt section |
 | [docs/back-link-references.md](docs/back-link-references.md) | Why back links carry an encrypted reference |
 | [docs/metrics-endpoint-access.md](docs/metrics-endpoint-access.md) | Why `/metrics` is cluster-internal |
 | [docs/llm-usage-metrics.md](docs/llm-usage-metrics.md) | LLM requests and tokens by surface, task and network, and what is never stored |

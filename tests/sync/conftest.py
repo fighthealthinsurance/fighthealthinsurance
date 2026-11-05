@@ -1,9 +1,11 @@
-"""Sync tests never reach a live Temporal.
+"""Sync tests never reach a live Temporal, nor match plan documents.
 
 The save paths these tests drive (update_denial, record_intent, deliver)
 would connect to whatever TEMPORAL_* the invoking environment names, and tox
 passes the environment through. Pinned off here for every sync test; the
-temporal tox env is where that integration is exercised.
+temporal tox env is where that integration is exercised. The plan-document
+flag is pinned off the same way: on, extraction and appeal generation would
+call models over the corpus. A test that wants it uses override_settings.
 """
 
 import pytest
@@ -17,5 +19,6 @@ def _no_live_temporal():
         TEMPORAL_APPEAL_JOURNEY_ENABLED=False,
         TEMPORAL_INTAKE_JOURNEY_ENABLED=False,
         TEMPORAL_CHAT_POLICY_ENABLED=False,
+        PLAN_DOCUMENT_MATCHING_ENABLED=False,
     ):
         yield

@@ -986,8 +986,9 @@ PUBMED_REFERENCES_LABEL = (
 #
 #   * make_open_prompt bakes enrichment (pubmed, ml citations, rag, nice,
 #     uspstf, clinical trials, regulatory citations, ucr, pa, payer-policy,
-#     medication) into the prompt string. To shed those we re-render the
-#     prompt with the matching kwargs set to None / truncated. v3's
+#     medication, the matched public plan documents) into the prompt
+#     string. To shed those we re-render the prompt with the matching
+#     kwargs set to None / truncated. v3's
 #     make_sectioned_open_prompt takes the same kwargs and is re-rendered
 #     the same way for the calls written with it.
 #   * The same call dict also carries pubmed_context, ml_citations_context,
@@ -1033,10 +1034,15 @@ _PROMPT_TIER1_STRIP_GATED: frozenset[str] = frozenset(
 # is a single shared constant rather than two literals that could drift.
 _PLAN_CONTEXT_TIER2_CAP = 4000
 _PATIENT_CONTEXT_TIER2_CAP = 6000
+# The matched public plan documents (plan_document_matcher) are the
+# member's own plan terms, so like plan_context they are cut, not dropped.
+_PLAN_DOCUMENT_CONTEXT_TIER2_CAP = 3500
 
 # In-prompt patient-specific context truncated (not dropped) at tier 2+.
+# plan_context stays first: a test unpacks the first entry.
 _PROMPT_TIER2_TRUNCATIONS: tuple[tuple[str, int], ...] = (
     ("plan_context", _PLAN_CONTEXT_TIER2_CAP),
+    ("plan_document_context", _PLAN_DOCUMENT_CONTEXT_TIER2_CAP),
 )
 
 # Call-dict copies (the ``context_extra`` injection surface) sheddable at
@@ -2535,6 +2541,7 @@ class AppealGenerator(object):
         medication_context=None,
         regulatory_citation_context=None,
         plan_law_context=None,
+        plan_document_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -2705,6 +2712,13 @@ class AppealGenerator(object):
                 "binds the patient's plan. Always defer to the patient's own "
                 "plan documents for what is actually covered."
             )
+        if plan_document_context:
+            # Pre-framed (guard, documents, passages, closing marker) by
+            # plan_document_matcher.format_plan_document_context. After the
+            # payer block: its "defer to the patient's own plan documents"
+            # must not be read as pointing at these automatically matched
+            # excerpts.
+            base = f"{base}\n\n{plan_document_context}"
         if (
             claim_id is not None
             and claim_id != ""
@@ -2751,6 +2765,7 @@ class AppealGenerator(object):
         medication_context=None,
         regulatory_citation_context=None,
         plan_law_context=None,
+        plan_document_context=None,
     ) -> Optional[str]:
         """The v3 appeal prompt (ml/appeal_prompt_versions): the same inputs
         as ``make_open_prompt`` laid out as labelled sections, instructions
@@ -2966,6 +2981,10 @@ class AppealGenerator(object):
                 "binds the patient's plan. Always defer to the patient's own "
                 "plan documents for what is actually covered."
             )
+        if plan_document_context:
+            # Pre-framed by plan_document_matcher.format_plan_document_context;
+            # after the payer block for the reason given in make_open_prompt.
+            sections.append(str(plan_document_context))
 
         # --- The denial itself, last ----------------------------------------
         sections.append(f"DENIAL LETTER:\n{denial_text}")
@@ -3210,6 +3229,7 @@ class AppealGenerator(object):
         rag_context=None,
         nice_context=None,
         payer_policy_context=None,
+        plan_document_context: Optional[str] = None,
         specialized_templates: Optional[List[type[SpecializedDenialTemplate]]] = None,
         pa_context=None,
         uspstf_context=None,
@@ -3234,6 +3254,10 @@ class AppealGenerator(object):
             pubmed_context: Optional PubMed context to provide to AI models.
             ml_citations_context: Optional list of citation contexts for AI models.
             plan_context: Optional plan context to provide to AI models
+            plan_document_context: The public plan documents matched to the
+                denial, as plan_document_matcher renders them. None (the
+                default) reads the denial's stored match rows, so the chat
+                and speculative paths get them too; "" sends none.
             specialized_templates: Optional list of specialized denial-type
                 templates whose citation hints should be passed to the
                 highest-quality internal model only (one extra call).
@@ -3304,6 +3328,26 @@ class AppealGenerator(object):
                 )
                 payer_policy_context = ""
 
+        # The public plan documents matched to this denial, from the rows the
+        # extraction step or the appeal-time refresh stored. Read here, off
+        # the denial, so every caller of make_appeals gets them; a DB error
+        # costs the section, never the appeal.
+        if plan_document_context is None:
+            try:
+                from fighthealthinsurance import plan_document_matcher
+
+                plan_document_context = (
+                    plan_document_matcher.get_plan_document_context_for_denial(denial)
+                    if plan_document_matcher.enabled()
+                    else ""
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to build plan-document context; "
+                    "proceeding with appeal generation without it"
+                )
+                plan_document_context = ""
+
         # One decision for everything the history touches, read once here.
         # Reading it separately for each use let consent change in between,
         # so the raw history came out of the prompt while the guidance that
@@ -3349,6 +3393,7 @@ class AppealGenerator(object):
             medication_context=medication_context,
             regulatory_citation_context=regulatory_citation_context,
             plan_law_context=plan_law_context,
+            plan_document_context=plan_document_context,
         )
         open_prompt = self.make_open_prompt(**open_prompt_kwargs)
         open_medically_necessary_prompt = self.make_open_med_prompt(

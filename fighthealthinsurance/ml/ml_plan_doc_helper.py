@@ -429,17 +429,21 @@ Write only the search strings: no numbering, bullets, quotes or explanations."""
 
     @classmethod
     def relevant_passages(
-        cls, documents: Sequence[PlanDocumentText], search_terms: Sequence[str]
+        cls,
+        documents: Sequence[PlanDocumentText],
+        search_terms: Sequence[str],
+        budget_chars: Optional[int] = None,
     ) -> str:
-        """The passages that best cover ``search_terms``, within the window,
-        in reading order, each labelled with its document and page."""
+        """The passages that best cover ``search_terms``, within the window
+        (``budget_chars``, MAX_CONTEXT_LENGTH unless a caller has a smaller
+        one), in reading order, each labelled with its document and page."""
         terms = [term for term in search_terms if term and term.strip()]
         if not terms:
             return ""
         passages = select_passages(
             [doc.text for doc in documents],
             terms,
-            budget_chars=cls.MAX_CONTEXT_LENGTH,
+            budget_chars=budget_chars or cls.MAX_CONTEXT_LENGTH,
             max_passages=cls.MAX_PASSAGES,
             per_passage_overhead=cls.PASSAGE_LABEL_CHARS,
         )

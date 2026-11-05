@@ -199,6 +199,19 @@ def needle_pattern(needle: str) -> "re.Pattern[str]":
     return re.compile(r"(?<![A-Za-z0-9])" + body, re.IGNORECASE)
 
 
+def whole_phrase_pattern(phrase: str) -> "re.Pattern[str]":
+    """``needle_pattern`` closed at both ends: the phrase as whole words.
+
+    For a phrase that stands for a place or a name rather than a stem,
+    where "target" must not find "targeted therapy" and "san jose" must not
+    find "San Joseph". ``phrase`` must not be empty: an empty needle matches
+    at the start of any text.
+    """
+    return re.compile(
+        needle_pattern(phrase).pattern + r"(?![A-Za-z0-9])", re.IGNORECASE
+    )
+
+
 def query_needles(query: str) -> List[Needle]:
     """What a query looks for: its quoted phrases and, for a query of more
     than one word, the whole query as a phrase (both weighted higher), then

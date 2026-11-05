@@ -967,6 +967,258 @@ class LineOfBusiness(models.TextChoices):
     ALL = "all", "All Lines of Business"
 
 
+class PublicPlanDocument(models.Model):
+    """
+    A plan document WE fetched from a public source: an Evidence of
+    Coverage, a Summary of Benefits and Coverage, a member handbook, a
+    formulary. Rows come from ``import_plan_documents``, which loads the
+    bundles the pipeline in healthinsurance-llm-internal writes
+    (plan_document_bundle documents the contract), or from the admin one
+    document at a time.
+
+    Public data with no PHI, so the text and the optional original file are
+    stored in the clear, like ExtraLinkDocument's. Not to be confused with
+    PlanDocuments (files a person uploads with their appeal, encrypted) or
+    PolicyDocument (Explain My Policy uploads and consented shares).
+
+    The matching columns (state, region, line of business, employer, plan
+    id prefixes, keywords and the regex pair) are what plan_document_matcher
+    scores a denial against. ``text`` holds "[Page N]" blocks, the shape
+    MLPlanDocHelper's passage selection reads, so a quoted passage can name
+    its page.
+    """
+
+    DOCUMENT_TYPE_EVIDENCE_OF_COVERAGE = "evidence_of_coverage"
+    DOCUMENT_TYPE_SUMMARY_OF_BENEFITS = "summary_of_benefits"
+    DOCUMENT_TYPE_SUMMARY_PLAN_DESCRIPTION = "summary_plan_description"
+    DOCUMENT_TYPE_MEMBER_HANDBOOK = "member_handbook"
+    DOCUMENT_TYPE_CERTIFICATE_OF_COVERAGE = "certificate_of_coverage"
+    DOCUMENT_TYPE_FORMULARY = "formulary"
+    DOCUMENT_TYPE_MEDICAL_POLICY = "medical_policy"
+    DOCUMENT_TYPE_OTHER = "other"
+    DOCUMENT_TYPE_CHOICES = [
+        (DOCUMENT_TYPE_EVIDENCE_OF_COVERAGE, "Evidence of Coverage"),
+        (DOCUMENT_TYPE_SUMMARY_OF_BENEFITS, "Summary of Benefits and Coverage"),
+        (DOCUMENT_TYPE_SUMMARY_PLAN_DESCRIPTION, "Summary Plan Description"),
+        (DOCUMENT_TYPE_MEMBER_HANDBOOK, "Member handbook"),
+        (DOCUMENT_TYPE_CERTIFICATE_OF_COVERAGE, "Certificate of Coverage"),
+        (DOCUMENT_TYPE_FORMULARY, "Formulary"),
+        (DOCUMENT_TYPE_MEDICAL_POLICY, "Medical policy"),
+        (DOCUMENT_TYPE_OTHER, "Other plan document"),
+    ]
+
+    COVERAGE_KIND_MEDICAL = "medical"
+    COVERAGE_KIND_DENTAL = "dental"
+    COVERAGE_KIND_CHOICES = [
+        (COVERAGE_KIND_MEDICAL, "Medical"),
+        (COVERAGE_KIND_DENTAL, "Dental"),
+        ("vision", "Vision"),
+        ("pharmacy", "Pharmacy"),
+        ("behavioral", "Behavioral health"),
+        ("other", "Other"),
+    ]
+
+    #: The most text one document keeps, about a thousand pages
+    #: (ml_document_extraction.MAX_PDF_CHARS).
+    MAX_TEXT_CHARS = 3_000_000
+
+    id = models.AutoField(primary_key=True)
+    document_key = models.CharField(
+        max_length=128,
+        unique=True,
+        help_text=(
+            "The pipeline's stable id for this document (letters, digits, "
+            "'.', '_' and '-'); a re-import with the same key updates the row"
+        ),
+    )
+    insurance_company = models.ForeignKey(
+        InsuranceCompany,
+        on_delete=models.CASCADE,
+        related_name="public_plan_documents",
+        help_text="The carrier whose plan this document describes",
+    )
+    insurance_plan = models.ForeignKey(
+        InsurancePlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="public_plan_documents",
+        help_text="The specific plan, where one is known",
+    )
+    title = models.CharField(max_length=500)
+    document_type = models.CharField(max_length=40, choices=DOCUMENT_TYPE_CHOICES)
+    coverage_kind = models.CharField(
+        max_length=20, choices=COVERAGE_KIND_CHOICES, default=COVERAGE_KIND_MEDICAL
+    )
+    line_of_business = models.CharField(
+        max_length=32,
+        choices=LineOfBusiness.choices,
+        default=LineOfBusiness.ALL,
+        help_text="'All lines of business' when the document is not specific to one",
+    )
+    state = models.CharField(
+        max_length=2,
+        blank=True,
+        default="",
+        help_text="Two-letter state code; blank for a national document",
+    )
+    region = models.CharField(
+        max_length=120,
+        blank=True,
+        default="",
+        help_text="The carrier's region or service area (e.g. Northern California)",
+    )
+    employer_name = models.CharField(
+        max_length=300,
+        blank=True,
+        default="",
+        help_text="Set only for a document specific to one employer's plan",
+    )
+    plan_year = models.PositiveSmallIntegerField(null=True, blank=True)
+    plan_id_prefixes = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Upper-cased prefixes of the member or group ids this plan issues",
+    )
+    match_keywords = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Lower-cased phrases that place a letter with this document (a "
+            "region, a medical center, a plan name); matched as whole words"
+        ),
+    )
+    match_regex = RegexField(
+        max_length=800,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        blank=True,
+        default="",
+        help_text="Pattern that places a denial letter with this document",
+    )
+    negative_regex = RegexField(
+        max_length=800,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        blank=True,
+        default="",
+        help_text="Pattern that rules this document out for a letter",
+    )
+    source_url = models.URLField(max_length=2000, blank=True, default="")
+    fetched_at = models.DateTimeField(null=True, blank=True)
+    source_sha256 = models.CharField(
+        max_length=64, blank=True, default="", help_text="SHA-256 of the original file"
+    )
+    # "[Page N]" blocks joined by blank lines (MLPlanDocHelper.load_plan_documents
+    # builds the same shape for uploads).
+    text = models.TextField(blank=True, default="")
+    text_sha256 = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    page_count = models.PositiveIntegerField(default=0)
+    char_count = models.PositiveIntegerField(default=0)
+    stored_file = models.FileField(
+        upload_to="public_plan_documents/",
+        null=True,
+        blank=True,
+        storage=settings.COMBINED_STORAGE,
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Only active documents are matched to denials",
+    )
+    pipeline_version = models.CharField(max_length=64, blank=True, default="")
+    import_batch = models.CharField(max_length=64, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["insurance_company", "is_active"]),
+            models.Index(fields=["insurance_company", "state", "plan_year"]),
+        ]
+        ordering = ["insurance_company__name", "-plan_year", "title"]
+        verbose_name = "Public plan document"
+        verbose_name_plural = "Public plan documents"
+
+    def __str__(self) -> str:
+        return f"{self.insurance_company.name}: {self.citation_name()}"
+
+    def citation_name(self) -> str:
+        """How a passage from this document is cited: its title, with the
+        plan year when the title does not already carry it."""
+        if self.plan_year and str(self.plan_year) not in self.title:
+            return f"{self.title} ({self.plan_year})"
+        return self.title
+
+    @staticmethod
+    def text_hash(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class PlanDocumentMatch(models.Model):
+    """
+    One public plan document the matcher scored for one denial
+    (plan_document_matcher). Every candidate that survived the hard
+    excludes is kept, ranked, so staff can see why a document was or was
+    not chosen; ``selected`` marks the ones whose text goes to the appeal,
+    and the rank-1 selected row carries the passages and summary built for
+    it.
+
+    ``inputs_hash`` is what the selection was computed from (the letter,
+    the carrier, and the facts this carrier's corpus keys on); rows whose
+    hash no longer matches the denial are stale and never read.
+    ``relevance_key`` is the procedure and diagnosis the text was built
+    for; a change there rebuilds the text and keeps the selection.
+    """
+
+    METHOD_RULES = "rules"
+    METHOD_MODEL = "model"
+    METHOD_CHOICES = [
+        (METHOD_RULES, "Rules"),
+        (METHOD_MODEL, "Model tie-break"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    denial = models.ForeignKey(
+        "Denial", on_delete=models.CASCADE, related_name="plan_document_matches"
+    )
+    document = models.ForeignKey(
+        PublicPlanDocument, on_delete=models.CASCADE, related_name="denial_matches"
+    )
+    # The carrier the row was computed for; a correction on the review page
+    # changes the hash, so a row never speaks for another carrier.
+    company = models.ForeignKey(
+        InsuranceCompany, on_delete=models.CASCADE, related_name="+"
+    )
+    score = models.FloatField()
+    signals = models.JSONField(default=dict, blank=True)
+    rank = models.PositiveSmallIntegerField()
+    selected = models.BooleanField(default=False, db_index=True)
+    method = models.CharField(
+        max_length=8, choices=METHOD_CHOICES, default=METHOD_RULES
+    )
+    relevant_text = models.TextField(blank=True, default="")
+    summary = models.TextField(blank=True, default="")
+    inputs_hash = models.CharField(max_length=64, db_index=True)
+    relevance_key = models.CharField(max_length=16, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["denial", "document"],
+                name="plan_document_match_one_per_document",
+            )
+        ]
+        indexes = [models.Index(fields=["denial", "selected"])]
+        ordering = ["denial_id", "rank"]
+        verbose_name = "Plan document match"
+        verbose_name_plural = "Plan document matches"
+
+    def __str__(self) -> str:
+        chosen = "selected" if self.selected else "candidate"
+        return f"Denial {self.denial_id} / document {self.document_id}: {chosen} {self.score:.0f}"
+
+
 class PayerPriorAuthRequirement(models.Model):
     """
     Indexes a payer's published prior-authorization rules from carrier PA
@@ -4867,6 +5119,7 @@ STORED_FILE_MODELS: tuple[type[models.Model], ...] = (
     Appeal,
     AppealAttachment,
     PolicyDocument,
+    PublicPlanDocument,
 )
 
 

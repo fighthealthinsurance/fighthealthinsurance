@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from asgiref.sync import sync_to_async
 from channels.testing import WebsocketCommunicator
+from django.test import override_settings
 
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.common_view_logic import (
@@ -42,6 +43,7 @@ from fighthealthinsurance.common_view_logic import (
     EXTRACTION_TASK_DATE_OF_SERVICE,
     EXTRACTION_TASK_DENIAL_TYPE,
     EXTRACTION_TASK_INSURANCE_COMPANY,
+    EXTRACTION_TASK_PLAN_DOCUMENT_CORPUS,
     EXTRACTION_TASK_PLAN_ID,
     EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS,
     DenialCreatorHelper,
@@ -72,6 +74,9 @@ OTHER_STEPS = (
     "extract_set_fax_number",
     "extract_set_insurance_company",
     "match_insurance_plan_from_regex",
+    # Registered only while PLAN_DOCUMENT_MATCHING_ENABLED is on; stubbed
+    # here either way so a test that turns the flag on reaches no model.
+    "match_public_plan_documents",
     "extract_set_plan_id",
     "extract_set_claim_id",
     "extract_set_date_of_service",
@@ -907,6 +912,62 @@ async def test_a_case_that_does_not_resolve_uses_the_same_envelope():
     assert records[0]["type"] == "error"
     assert records[0]["outcome"] == EXTRACTION_RUN_FAILED
     assert records[0]["label"]
+
+
+# ---------------------------------------------------------------------------
+# The plan-document corpus step reports only while its flag is on.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_plan_document_corpus_step_reports_only_with_the_flag_on():
+    """With the flag on the step is registered and its frame is sent. The
+    stub answers ``None``, which the step runner reads as nothing found."""
+    denial = await _make_denial()
+    step = AsyncMock(return_value=None)
+    with _only_the_letter_reader(), patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator."
+        "get_procedure_and_diagnosis",
+        new=AsyncMock(return_value=(None, None)),
+    ), patch.object(
+        DenialCreatorHelper, "match_public_plan_documents", new=step
+    ), override_settings(
+        PLAN_DOCUMENT_MATCHING_ENABLED=True
+    ):
+        records = await _run(denial)
+
+    assert step.await_count == 1, "the corpus step did not run with the flag on"
+    assert (
+        _outcome_for(records, EXTRACTION_TASK_PLAN_DOCUMENT_CORPUS)
+        == EXTRACTION_OUTCOME_NOTHING_FOUND
+    ), records
+    # The step is best effort: the run-level frame is still the letter's.
+    assert _the_run_outcome(records) == EXTRACTION_RUN_READ_AND_FOUND_NOTHING
+
+
+@pytest.mark.asyncio
+async def test_the_plan_document_corpus_step_is_absent_with_the_flag_off():
+    """Off, the step is neither run nor expected: no frame for it at all, not
+    even the timed-out frame an expected step that never reported would get."""
+    denial = await _make_denial()
+    step = AsyncMock(return_value=None)
+    with _only_the_letter_reader(), patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator."
+        "get_procedure_and_diagnosis",
+        new=AsyncMock(return_value=(None, None)),
+    ), patch.object(
+        DenialCreatorHelper, "match_public_plan_documents", new=step
+    ), override_settings(
+        PLAN_DOCUMENT_MATCHING_ENABLED=False
+    ):
+        records = await _run(denial)
+
+    assert step.await_count == 0, "the corpus step ran with the flag off"
+    assert _outcome_for(records, EXTRACTION_TASK_PLAN_DOCUMENT_CORPUS) is None
+    assert not [
+        r for r in records if r.get("task") == EXTRACTION_TASK_PLAN_DOCUMENT_CORPUS
+    ], records
+    assert _the_run_outcome(records) == EXTRACTION_RUN_READ_AND_FOUND_NOTHING
 
 
 # ---------------------------------------------------------------------------
