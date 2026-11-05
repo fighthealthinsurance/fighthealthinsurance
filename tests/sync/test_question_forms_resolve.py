@@ -284,9 +284,12 @@ class InsuranceQuestionsFooterTest(TestCase):
         self.assertIn("30 days", self._footer(pre_service="on")[1])
 
     def test_urgent_pre_service_footer_is_the_same_for_a_professional(self):
+        footer = self._footer(urgent="on", pre_service="on")
+
+        self.assertIn("four days", footer[1])
+        self.assertIn("concurrent request of external review", footer[1])
         self.assertEqual(
-            self._footer(urgent="on", pre_service="on"),
-            self._footer(prof_pov=True, urgent="on", pre_service="on"),
+            footer, self._footer(prof_pov=True, urgent="on", pre_service="on")
         )
 
 
@@ -305,4 +308,18 @@ class PreventiveCareIsNotOnlyScreeningTest(TestCase):
         context = form.medical_context()
 
         self.assertIn("not only screening", context)
+        self.assertIn("unless it is one", context)
         self.assertIn("Why the patient needs this preventive care: PrEP.", context)
+
+
+class FormularyAlternativesTest(TestCase):
+    def test_tried_alternatives_does_not_claim_they_did_not_work(self):
+        """The box covers alternatives that worked but could not be
+        tolerated, so the letter must not say only that they failed."""
+        form = question_forms.FormularyChangeQuestions({"tried_alternatives": "on"})
+        self.assertTrue(form.is_valid(), form.errors)
+
+        main_text = " ".join(form.main())
+
+        self.assertIn("not effective or not tolerated", main_text)
+        self.assertNotIn("did not work", main_text)

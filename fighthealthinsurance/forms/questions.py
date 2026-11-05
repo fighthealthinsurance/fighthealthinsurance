@@ -485,8 +485,8 @@ class FormularyChangeQuestions(InsuranceQuestions):
     )
     tried_alternatives = forms.BooleanField(
         required=False,
-        label="Have you tried the alternative medication(s) the insurer suggests?",
-        help_text="Check if you've previously tried and failed on the preferred/alternative medications.",
+        label="Did the alternative medication(s) the insurer suggests not work for you, or cause problems?",
+        help_text="Check if you tried the preferred/alternative medications and they didn't work, or caused side effects or other problems you couldn't continue with.",
     )
     mid_year_change = forms.BooleanField(
         required=False,
@@ -510,7 +510,7 @@ class FormularyChangeQuestions(InsuranceQuestions):
         response = self._append_context(
             response,
             "tried_alternatives",
-            "The patient has tried alternative medications",
+            "The patient tried the alternative medications and they were not effective or not tolerated",
         )
         response = self._append_context(
             response,
@@ -542,7 +542,7 @@ class FormularyChangeQuestions(InsuranceQuestions):
         if self.cleaned_data.get("tried_alternatives"):
             r.append(
                 "I have previously tried the alternative medication(s) you suggest, "
-                "which did not work for me."
+                "which were not effective or not tolerated."
             )
 
         if self.cleaned_data.get("mid_year_change"):
