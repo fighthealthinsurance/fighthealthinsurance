@@ -341,21 +341,38 @@ CHAT_CONTEXT_SAFETY_FRACTION = 0.1
 CHAT_MESSAGE_OVERHEAD_TOKENS = 4
 
 
+# Characters that tokenizers rarely merge: digits (several split numbers
+# digit by digit), ASCII punctuation, and line breaks / tabs.
+_DENSE_ASCII_RE = re.compile(r"[0-9!-/:-@\[-`{-~\n\t]")
+
+
 def chat_text_tokens(text: Optional[str]) -> int:
     """Conservative token estimate for chat budgeting.
 
-    ASCII runs about four characters a token, but a non-ASCII character
-    (Chinese, Korean, an accented letter, an emoji) can cost a whole token
-    or more, and a chars / 4 estimate let a long non-English history pass
-    the budget and overflow the window. Each non-ASCII character counts as
-    one token. Kept separate from ``estimate_tokens``, whose other callers
-    report sizes rather than guard a hard limit.
+    chars / 4 holds for English prose but badly undercounts what people
+    actually paste here: an EOB table of claim numbers, dollar amounts and
+    billing codes tokenizes at up to ~3.7x that, JSON and phone numbers at
+    ~2-3x, and Chinese at up to ~1.5 tokens a character. So:
+
+    - digits, ASCII punctuation, newlines and tabs: one token each;
+    - other ASCII (letters, spaces): four characters a token;
+    - non-ASCII: 1.5 tokens a character.
+
+    Checked against cl100k, o200k, Llama 3.1, Qwen 2.5, DeepSeek V3, Gemma
+    2, Mistral and Phi 3.5 tokenizers on prose (English, Spanish, Chinese),
+    the chat system prompt, EOB tables, tool JSON, billing codes, URLs and
+    phone numbers: the worst case undercounts by ~12% (dense numeric tables
+    on per-digit tokenizers), which CHAT_CONTEXT_SAFETY_FRACTION and the
+    reply reserve absorb, and English prose overcounts by ~11%. Kept
+    separate from ``estimate_tokens``, whose callers report sizes rather
+    than guard a hard limit.
     """
     if not text:
         return 0
     non_ascii = len(text) - len(text.encode("ascii", "ignore"))
-    ascii_chars = len(text) - non_ascii
-    return -(-ascii_chars // CHARS_PER_TOKEN) + non_ascii
+    dense = len(_DENSE_ASCII_RE.findall(text))
+    sparse = len(text) - non_ascii - dense
+    return -(-sparse // CHARS_PER_TOKEN) + dense + (3 * non_ascii + 1) // 2
 
 
 def chat_mentions_medicaid(

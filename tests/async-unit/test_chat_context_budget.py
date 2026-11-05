@@ -187,8 +187,22 @@ def test_no_budget_leaves_no_history():
     assert fit_history_to_token_budget(_history(2, 100), -50) == []
 
 
-def test_non_ascii_text_counts_a_token_per_character():
-    assert chat_text_tokens("医疗补助" * 1000) == 4000
+def test_non_ascii_text_counts_one_and_a_half_tokens_a_character():
+    assert chat_text_tokens("医疗补助" * 1000) == 6000
+
+
+def test_prose_letters_count_four_characters_a_token():
+    assert chat_text_tokens("abcd" * 1000) == 1000
+
+
+def test_numeric_text_counts_a_token_per_digit_and_symbol():
+    # An EOB amount: digits and punctuation tokenize ~1:1, not 4:1.
+    assert chat_text_tokens("$1,234.56") == 9
+
+
+def test_eob_table_is_not_undercounted_like_chars_over_four():
+    row = "48213  99213  11/04/2026  $1,234.56  $87.10  CO-50\n"
+    assert chat_text_tokens(row * 100) > 2.5 * estimate_tokens(row * 100)
 
 
 def test_non_ascii_history_is_trimmed_where_chars_over_four_would_pass_it():
@@ -309,28 +323,19 @@ async def test_retry_history_keeps_the_newest_message():
 
 
 def _boundary_history(model, extra_tokens: int):
-    """40 short messages padded to exactly the patient budget + extra."""
+    """40 letter-only messages padded to exactly the patient budget + extra."""
     budget = model.chat_history_token_budget(
         "Am I eligible for Medicaid?",
         history=_history(1, 10),
         is_professional=False,
         is_logged_in=True,
     )
-    full_history = _history(20, 8)  # "question N " + 8 chars, ASCII
-    used = sum(
-        chat_text_tokens(m["content"]) + CHAT_MESSAGE_OVERHEAD_TOKENS
-        for m in full_history
-    )
-    # Pad to a multiple of 4 characters so the token count is exact.
-    first = full_history[0]["content"]
-    first += "x" * (-len(first) % 4)
-    pad_tokens = (
-        budget
-        - used
-        + extra_tokens
-        - (chat_text_tokens(first) - chat_text_tokens(full_history[0]["content"]))
-    )
-    full_history[0]["content"] = first + "x" * (pad_tokens * 4)
+    # Letters only, 8 per message (2 tokens), so the arithmetic is exact.
+    full_history = _history(20, 0)
+    for msg in full_history:
+        msg["content"] = "x" * 8
+    used = len(full_history) * (2 + CHAT_MESSAGE_OVERHEAD_TOKENS)
+    full_history[0]["content"] += "x" * ((budget - used + extra_tokens) * 4)
     return full_history
 
 
