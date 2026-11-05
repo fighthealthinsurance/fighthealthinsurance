@@ -106,6 +106,10 @@ class RecordingChatModel:
     def get_max_context(self) -> int:
         return 32768
 
+    def chat_history_token_budget(self, current_message, **kwargs) -> int:
+        # Mirrors RemoteModelLike: the window less a flat prompt + reply share.
+        return 32768 - 16000
+
     async def generate_chat_response(
         self,
         current_message_for_llm,

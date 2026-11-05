@@ -697,11 +697,19 @@ def build_llm_calls(
         # Also try with full history if provided and model can handle it
         if full_history and full_history != history:
             full_history_tokens = estimate_history_tokens(full_history)
-            model_max_context = model_backend.get_max_context()
-            # Leave room for system prompt and response (~8k tokens)
-            available_context = model_max_context - 8000
+            # Measured against this turn's real system prompt and message
+            # (the Medicaid one alone outgrew the flat 8k reserve this used),
+            # so a full-history call is only made when it actually fits --
+            # one that doesn't would just be trimmed back inside the call.
+            available_context = model_backend.chat_history_token_budget(
+                current_message,
+                previous_context_summary=previous_context_summary,
+                history=full_history,
+                is_professional=is_professional,
+                is_logged_in=is_logged_in,
+            )
 
-            if full_history_tokens < available_context:
+            if full_history_tokens <= available_context:
                 full_history_call = model_backend.generate_chat_response(
                     current_message,
                     previous_context_summary=previous_context_summary,
