@@ -249,7 +249,7 @@ class PriorAuthQuestionsMainTest(TestCase):
     def test_prior_auth_obtained_without_a_number_is_still_said(self):
         self.assertEqual(
             self._main(prior_auth_obtained="on"),
-            ["Prior authorization was obtained before the service."],
+            ["Prior authorization was obtained."],
         )
 
     def test_a_prior_auth_number_replaces_the_plain_obtained_sentence(self):

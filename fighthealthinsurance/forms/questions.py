@@ -276,7 +276,7 @@ class PriorAuthQuestions(InsuranceQuestions):
                 f"Prior auth was obtained (id {self.cleaned_data['prior_auth_id']})"
             )
         elif self.cleaned_data.get("prior_auth_obtained"):
-            r.append("Prior authorization was obtained before the service.")
+            r.append("Prior authorization was obtained.")
         return r
 
 
