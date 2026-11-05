@@ -102,7 +102,7 @@ from fighthealthinsurance.utils import (
     ensure_message_alternation,
     is_real_appeal,
 )
-from fighthealthinsurance.context_utils import CHARS_PER_TOKEN, estimate_tokens
+from fighthealthinsurance.context_utils import CHARS_PER_TOKEN
 
 # Every backend setting in this module is read with get_env_variable. This
 # names where such a setting can come from, for the missing-setting errors.
@@ -333,9 +333,54 @@ MEDICAID_ELIGIBILITY_OFFER_RULE = (
 # flat 8k reserve this replaced was smaller than the Medicaid system prompt
 # alone, so a long Medicaid chat could be sent to a model it didn't fit.
 CHAT_REPLY_RESERVE_TOKENS = 4096
-# estimate_tokens (chars / 4) undercounts JSON, numbers and non-English text,
-# so this share of the window is kept spare on top of the reply reserve.
+# chat_text_tokens is still an estimate (JSON and numbers tokenize worse than
+# prose), so this share of the window is kept spare on top of the reply
+# reserve.
 CHAT_CONTEXT_SAFETY_FRACTION = 0.1
+# Chat templates wrap every message in role markers and separators.
+CHAT_MESSAGE_OVERHEAD_TOKENS = 4
+
+
+def chat_text_tokens(text: Optional[str]) -> int:
+    """Conservative token estimate for chat budgeting.
+
+    ASCII runs about four characters a token, but a non-ASCII character
+    (Chinese, Korean, an accented letter, an emoji) can cost a whole token
+    or more, and a chars / 4 estimate let a long non-English history pass
+    the budget and overflow the window. Each non-ASCII character counts as
+    one token. Kept separate from ``estimate_tokens``, whose other callers
+    report sizes rather than guard a hard limit.
+    """
+    if not text:
+        return 0
+    non_ascii = len(text) - len(text.encode("ascii", "ignore"))
+    ascii_chars = len(text) - non_ascii
+    return -(-ascii_chars // CHARS_PER_TOKEN) + non_ascii
+
+
+def chat_mentions_medicaid(
+    current_message: str,
+    previous_context_summary: Optional[str],
+    history: Optional[List[dict[str, str]]],
+) -> bool:
+    """Whether Medicaid/Medicare comes up anywhere in this chat turn.
+
+    Checks the message, the summary and the WHOLE history: the Medicaid tool
+    blocks are attached if and only if Medicaid shows up anywhere in the
+    chat. Module-level so callers choosing between full and truncated
+    history can decide once, for every backend, from the full history.
+    """
+    text_to_check = current_message.lower()
+    if previous_context_summary:
+        text_to_check += " " + previous_context_summary.lower()
+    if history:
+        for msg in history:
+            content = msg.get("content", "")
+            if content:
+                text_to_check += " " + content.lower()
+    return any(
+        keyword in text_to_check for keyword in RemoteModelLike.MEDICAID_KEYWORDS
+    )
 
 
 def chat_context_preamble(previous_context_summary: Optional[str]) -> str:
@@ -362,7 +407,11 @@ def history_token_budget(max_context: int, *texts: Optional[str]) -> int:
     message). May be zero or negative when those alone fill the window.
     """
     usable = int(max_context * (1 - CHAT_CONTEXT_SAFETY_FRACTION))
-    return usable - CHAT_REPLY_RESERVE_TOKENS - sum(estimate_tokens(t) for t in texts)
+    return usable - CHAT_REPLY_RESERVE_TOKENS - sum(chat_text_tokens(t) for t in texts)
+
+
+def _message_tokens(message: dict[str, str]) -> int:
+    return chat_text_tokens(message.get("content")) + CHAT_MESSAGE_OVERHEAD_TOKENS
 
 
 def fit_history_to_token_budget(
@@ -377,13 +426,13 @@ def fit_history_to_token_budget(
     """
     if not history:
         return history
-    max_chars = max(budget, 0) * CHARS_PER_TOKEN
-    total = sum(len(m.get("content") or "") for m in history)
-    if total <= max_chars:
+    sizes = [_message_tokens(m) for m in history]
+    total = sum(sizes)
+    if total <= budget:
         return history
     start = 0
-    while start < len(history) and total > max_chars:
-        total -= len(history[start].get("content") or "")
+    while start < len(history) and total > budget:
+        total -= sizes[start]
         start += 1
     while start < len(history) and history[start].get("role") in (
         "assistant",
@@ -1888,32 +1937,13 @@ class RemoteModelLike(DenialBase):
         previous_context_summary: Optional[str],
         history: Optional[List[dict[str, str]]],
     ) -> bool:
+        """Detect if the conversation is related to Medicaid/Medicare topics.
+
+        See ``chat_mentions_medicaid``.
         """
-        Detect if the conversation is related to Medicaid/Medicare topics.
-
-        Checks the current message, context summary, and recent history for
-        Medicaid-related keywords to determine if Medicaid tools should be included.
-        """
-        # Combine text to search
-        text_to_check = current_message.lower()
-
-        if previous_context_summary:
-            text_to_check += " " + previous_context_summary.lower()
-
-        # The whole history, not a recent window: the Medicaid tool blocks
-        # are attached if and only if Medicaid shows up anywhere in the chat.
-        if history:
-            for msg in history:
-                content = msg.get("content", "")
-                if content:
-                    text_to_check += " " + content.lower()
-
-        # Check for any Medicaid keywords
-        for keyword in self.MEDICAID_KEYWORDS:
-            if keyword in text_to_check:
-                return True
-
-        return False
+        return chat_mentions_medicaid(
+            current_message, previous_context_summary, history
+        )
 
     @property
     def slow(self):
@@ -2260,9 +2290,9 @@ PARAMETERS (all optional; leave out anything you don't know, never guess):
 - living_situation: "home" | "friends" | "assisted_living" | "rehab_temp" | "nursing_home_perm"
 - applying_reason: "standard" | "ltc_nursing_home" | "ltc_home_care"
 - target_year: the year to check besides today's rules (default 2026)
-- Work requirement: 80 qualifying hours a month of work, job training, school or volunteering (caregiving is an exemption, not hours). Most states start January 1, 2027; let the tool decide whether it applies. work_req_exempt_2026: true if you know they're exempt (pregnant, disabled/medically frail, on Medicare...). Hours, as ONE of: avg_monthly_qualifying_hours_last_3mo (per MONTH), avg_weekly_qualifying_hours_last_3mo (per WEEK, never a monthly number), total_qualifying_hours_last_3mo, or qualifying_hours_weekly_last_12 (a list of 12 weekly numbers).
+- Work requirement: 80 qualifying hours a month of work, job training, school or volunteering. Caregiving is never qualifying hours; caring for a child 13 or younger or a disabled person is an exemption, other caregiving is neither. Most states start January 1, 2027; let the tool decide whether it applies. work_req_exempt_2026: true if you know they're exempt (pregnant, disabled/medically frail, on Medicare, caring for a child 13 or younger or a disabled person...). Hours, as ONE of: avg_monthly_qualifying_hours_last_3mo (per MONTH), avg_weekly_qualifying_hours_last_3mo (per WEEK, never a monthly number), total_qualifying_hours_last_3mo, or qualifying_hours_weekly_last_12 (a list of 12 weekly numbers).
 
-VALUES (you convert the user's words): booleans as JSON true/false ("I'm single" -> "married": false); plain numbers with no $, commas or units ("about twelve hundred a month" -> 1200). If they can't answer, send "unknown" (e.g. "assets_total": "unknown") so it stops asking; never invent a value or silently drop the question. Send target_year only when they ask about a year ("2028", "next year", "when the work requirements start" -> a 4-digit year), then re-send it on every later call; for several years, run once per year and say which is which.
+VALUES (you convert the user's words): booleans as JSON true/false ("I'm single" -> "married": false); plain numbers with no $, commas or units ("about twelve hundred a month" -> 1200). If they can't answer, send "unknown" (e.g. "assets_total": "unknown") so it stops asking; never invent a value or silently drop the question. Send target_year only when they ask about a year ("2028", "next year", "when the work requirements start" -> a 4-digit year), then re-send it on every later call. Only the first medicaid_eligibility call in a reply runs, so for several years make one call per reply, call again for the next year once its result is back, and say which is which.
 
 RESULTS: it says probably eligible under today's rules only, under today's rules and the target year too, or no eligibility found. Use the year(s) it says it scored, never a different one. If the work requirement is the barrier, suggest ways to reach 80 hours (maybe school or volunteering) and remind them to keep good records, with empathy that this is unfair. Then point them to https://www.fighthealthinsurance.com/faq/medicaid/ and use **medicaid_info** for where to apply and who to call.
 """
@@ -2496,7 +2526,7 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
                 result_extra = f"Your previous answer -- {result} -- was missing the panda emoji 🐼 and the context information. Please try again.\n\n"
             # Per attempt: retry feedback can quote a whole draft back.
             attempt_history = fit_history_to_token_budget(
-                history, history_budget - estimate_tokens(result_extra)
+                history, history_budget - chat_text_tokens(result_extra)
             )
             if history and attempt_history is not history:
                 logger.info(

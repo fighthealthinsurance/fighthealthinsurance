@@ -118,6 +118,7 @@ class RecordingChatModel:
         temperature: float = 0.7,
         is_professional=True,
         is_logged_in=True,
+        is_medicaid_related=None,
         allow_repeated_reply: bool = False,
         raise_on_unavailable: bool = False,
     ):

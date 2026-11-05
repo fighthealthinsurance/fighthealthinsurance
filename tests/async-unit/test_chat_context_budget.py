@@ -11,7 +11,10 @@ with room, the whole history. These pin:
   can drift from medicaid_api);
 - history is budgeted against the system prompt actually sent: trimmed from
   the oldest end inside a call when it doesn't fit, and the full-history
-  call skipped when the real prompt leaves no room for it.
+  call skipped when the real prompt leaves no room for it;
+- the estimate doesn't undercount what overflows a window in practice:
+  non-English text, many short messages, and retry feedback;
+- skipping the full-history call doesn't drop the Medicaid tools.
 """
 
 import re
@@ -25,8 +28,10 @@ from fighthealthinsurance.medicaid_api import (
     DEFAULT_TARGET_YEAR,
 )
 from fighthealthinsurance.ml.ml_models import (
+    CHAT_MESSAGE_OVERHEAD_TOKENS,
     CHAT_REPLY_RESERVE_TOKENS,
     RemoteOpenLike,
+    chat_text_tokens,
     fit_history_to_token_budget,
     history_token_budget,
 )
@@ -139,6 +144,21 @@ def test_eligibility_prompt_infers_the_state_from_a_program_name():
     assert "A program name means its state" in _parameters_section()
 
 
+def test_eligibility_prompt_limits_the_caregiver_exemption_to_its_categories():
+    # A caregiver outside these categories must not be marked exempt: the
+    # checker takes work_req_exempt_2026 at face value.
+    assert (
+        "caring for a child 13 or younger or a disabled person is an exemption"
+        in _parameters_section()
+    )
+
+
+def test_eligibility_prompt_asks_for_one_check_per_reply():
+    # MedicaidEligibilityTool runs only the first call in a reply and strips
+    # the rest, so "run once per year" in one reply lost every later year.
+    assert "make one call per reply" in _eligibility_block()
+
+
 def test_eligibility_prompt_states_the_checkers_default_year():
     assert f"(default {DEFAULT_TARGET_YEAR})" in _parameters_section()
 
@@ -167,6 +187,28 @@ def test_no_budget_leaves_no_history():
     assert fit_history_to_token_budget(_history(2, 100), -50) == []
 
 
+def test_non_ascii_text_counts_a_token_per_character():
+    assert chat_text_tokens("医疗补助" * 1000) == 4000
+
+
+def test_non_ascii_history_is_trimmed_where_chars_over_four_would_pass_it():
+    # 10 messages of 1,000 Chinese characters: ~2,500 tokens by chars / 4,
+    # ~10,000 for real.
+    history = _history(5, 0)
+    for msg in history:
+        msg["content"] = "医" * 1000
+    fitted = fit_history_to_token_budget(history, 5000)
+    assert fitted is not None and len(fitted) < len(history)
+
+
+def test_many_short_messages_pay_their_per_message_overhead():
+    history = _history(50, 0)  # 100 messages of ~11 characters
+    content_only = sum(chat_text_tokens(m["content"]) for m in history)
+    budget = content_only + CHAT_MESSAGE_OVERHEAD_TOKENS * 10
+    fitted = fit_history_to_token_budget(history, budget)
+    assert fitted is not None and len(fitted) < len(history)
+
+
 def test_history_budget_pays_for_the_prompt_and_the_reply():
     system_prompt = "s" * 4000  # 1,000 tokens
     budget = history_token_budget(100_000, system_prompt)
@@ -185,8 +227,8 @@ def test_medicaid_turns_get_a_smaller_history_budget():
 
 @pytest.mark.asyncio
 async def test_chat_call_trims_history_that_overflows_the_window():
-    model = RecordingChat(max_len=16_000)
-    # 20 kept messages of ~1,000 tokens each: far past a 16k window once the
+    model = RecordingChat(max_len=24_000)
+    # 20 kept messages of ~1,000 tokens each: far past a 24k window once the
     # Medicaid system prompt is in.
     history = _history(10, 4000)
     await model.generate_chat_response(
@@ -194,16 +236,17 @@ async def test_chat_call_trims_history_that_overflows_the_window():
     )
     call = model.infer_calls[0]
     used = sum(
-        estimate_tokens(text)
-        for text in [*call["system_prompts"], call["prompt"]]
-        + [m["content"] for m in call["history"]]
+        chat_text_tokens(text) for text in [*call["system_prompts"], call["prompt"]]
+    ) + sum(
+        chat_text_tokens(m["content"]) + CHAT_MESSAGE_OVERHEAD_TOKENS
+        for m in call["history"]
     )
-    assert used <= 16_000 - CHAT_REPLY_RESERVE_TOKENS
+    assert used <= 24_000 - CHAT_REPLY_RESERVE_TOKENS
 
 
 @pytest.mark.asyncio
 async def test_chat_call_trimming_keeps_the_newest_messages():
-    model = RecordingChat(max_len=16_000)
+    model = RecordingChat(max_len=24_000)
     history = _history(10, 4000)
     await model.generate_chat_response(
         "Am I eligible for Medicaid in CA?", history=history, is_professional=False
@@ -221,18 +264,110 @@ async def test_chat_call_sends_history_that_fits_untouched():
     assert model.infer_calls[0]["history"] is history
 
 
-def test_full_history_call_agrees_with_the_in_call_trim_at_the_boundary():
-    # The decision and the trim use one predicate: history a few characters
-    # over the budget (which a floor-divided token estimate calls a fit) is
-    # not sent as a "full" call that the call itself would then trim.
-    model = RecordingChat(max_len=200_000)
+class PandaLateChat(RecordingChat):
+    """First reply has no 🐼 and is judged bad, so the call retries once."""
+
+    FIRST_REPLY = "A long first draft without the summary. " * 200
+
+    async def _infer(self, system_prompts, prompt, **kwargs):
+        await super()._infer(system_prompts, prompt, **kwargs)
+        if len(self.infer_calls) == 1:
+            return (self.FIRST_REPLY, None)
+        return ("Better.🐼 Medicaid chat.", None)
+
+    def bad_result(self, result, infer_type):
+        return result == self.FIRST_REPLY
+
+
+@pytest.mark.asyncio
+async def test_retry_feedback_is_paid_for_out_of_the_history_budget():
+    # The retry quotes the ~2k-token draft back, so history that fit the
+    # first attempt exactly must be trimmed for the second.
+    model = PandaLateChat(max_len=64_000)
+    message = "Am I eligible for Medicaid in CA?"
+    budget = model.chat_history_token_budget(message, is_professional=False)
+    history = _history(5, 0)
+    per_message = budget // len(history) - CHAT_MESSAGE_OVERHEAD_TOKENS
+    for msg in history:
+        msg["content"] = "h" * (per_message * 4)
+    await model.generate_chat_response(message, history=history, is_professional=False)
+    first, retry = model.infer_calls[0]["history"], model.infer_calls[1]["history"]
+    assert first is history and len(retry) < len(history)
+
+
+@pytest.mark.asyncio
+async def test_retry_history_keeps_the_newest_message():
+    model = PandaLateChat(max_len=64_000)
+    message = "Am I eligible for Medicaid in CA?"
+    budget = model.chat_history_token_budget(message, is_professional=False)
+    history = _history(5, 0)
+    per_message = budget // len(history) - CHAT_MESSAGE_OVERHEAD_TOKENS
+    for msg in history:
+        msg["content"] = "h" * (per_message * 4)
+    await model.generate_chat_response(message, history=history, is_professional=False)
+    assert model.infer_calls[1]["history"][-1] is history[-1]
+
+
+def _boundary_history(model, extra_tokens: int):
+    """40 short messages padded to exactly the patient budget + extra."""
     budget = model.chat_history_token_budget(
-        "Am I eligible for Medicaid?", history=_history(1, 10), is_logged_in=True
+        "Am I eligible for Medicaid?",
+        history=_history(1, 10),
+        is_professional=False,
+        is_logged_in=True,
     )
-    full_history = _history(40, 10)
-    used = sum(len(m["content"]) for m in full_history)
-    full_history[0]["content"] += "x" * (budget * 4 - used + 1)
-    assert len(_built_calls(model, full_history)) == 1
+    full_history = _history(20, 8)  # "question N " + 8 chars, ASCII
+    used = sum(
+        chat_text_tokens(m["content"]) + CHAT_MESSAGE_OVERHEAD_TOKENS
+        for m in full_history
+    )
+    # Pad to a multiple of 4 characters so the token count is exact.
+    first = full_history[0]["content"]
+    first += "x" * (-len(first) % 4)
+    pad_tokens = (
+        budget
+        - used
+        + extra_tokens
+        - (chat_text_tokens(first) - chat_text_tokens(full_history[0]["content"]))
+    )
+    full_history[0]["content"] = first + "x" * (pad_tokens * 4)
+    return full_history
+
+
+def test_full_history_exactly_at_the_budget_gets_a_full_call():
+    model = RecordingChat(max_len=200_000)
+    assert len(_built_calls(model, _boundary_history(model, 0))) == 2
+
+
+def test_full_history_one_token_over_the_budget_gets_no_full_call():
+    # The decision and the in-call trim use one predicate, so history just
+    # over is never sent as a "full" call the call itself would then trim.
+    model = RecordingChat(max_len=200_000)
+    assert len(_built_calls(model, _boundary_history(model, 1))) == 1
+
+
+@pytest.mark.asyncio
+async def test_skipped_full_history_keeps_the_medicaid_tools_on_the_truncated_call():
+    # The only Medicaid mention is older than the kept window, and the full
+    # history is too big to send: the truncated call must still get the
+    # Medicaid prompt, or an eligibility check stalls mid-interview.
+    model = RecordingChat(max_len=4096 * 20)
+    full_history = [
+        {"role": "user", "content": "Am I eligible for Medicaid?"},
+        {"role": "assistant", "content": "Let's check. What state are you in?"},
+    ] + _history(35, 4000)
+    calls, _scores = build_llm_calls(
+        model_backends=[model],
+        current_message="CA",
+        previous_context_summary=None,
+        history=full_history[-20:],
+        is_professional=False,
+        is_logged_in=True,
+        full_history=full_history,
+    )
+    assert len(calls) == 1
+    await calls[0]
+    assert "**medicaid_eligibility" in model.infer_calls[0]["system_prompts"][0]
 
 
 def _built_calls(model, full_history):

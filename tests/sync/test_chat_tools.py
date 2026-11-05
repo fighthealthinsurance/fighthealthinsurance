@@ -2612,4 +2612,9 @@ class TestWorkRequirementAdvice(TestCase):
         self.assertNotIn("volunteering, or caregiving", self._message())
 
     def test_caregiving_is_raised_as_an_exemption(self):
-        self.assertIn("Caregiving is not qualifying hours", self._message())
+        message = self._message()
+        self.assertIn("Caregiving is not qualifying hours", message)
+        self.assertIn(
+            "caring for a child 13 or younger or a disabled person is an exemption",
+            message,
+        )
