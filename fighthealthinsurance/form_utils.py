@@ -271,6 +271,11 @@ class PlanSourcePicker(forms.RadioSelect):
         self.allow_multiple_selected = multiple
         self.group_label = ""
         self.group_help = False
+        # The first answer a post ticked, so a page drawn again after an
+        # error keeps it ticked even when no kind under it was picked and
+        # the follow-up the error asks about stays in sight. Each form gets
+        # its own copy of the widget, so this is per form.
+        self.posted_group = ""
 
     def name_from(self, field: forms.Field) -> None:
         """Name the group after its field: the table layout's label has no for=."""
@@ -351,6 +356,7 @@ class PlanSourcePicker(forms.RadioSelect):
 
     def value_from_datadict(self, data, files, name):
         key = data.get(f"{name}_group")
+        self.posted_group = key or ""
         if not key:
             return super().value_from_datadict(data, files, name)
         group = self._group(key)
@@ -383,6 +389,10 @@ class PlanSourcePicker(forms.RadioSelect):
                     break
             if ticked_group:
                 break
+        if ticked_group is None and any(
+            group["key"] == self.posted_group for group in groups
+        ):
+            ticked_group = self.posted_group
         base_id = context["widget"]["attrs"].get("id") or f"id_{name}"
         for group in groups:
             group["id"] = f"{base_id}_group_{group['key']}"

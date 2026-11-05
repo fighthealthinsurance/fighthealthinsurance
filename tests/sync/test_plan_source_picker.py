@@ -137,6 +137,17 @@ class PlanSourcePickerReadsThePostTest(TestCase):
         form = post(plan_source_group="job")
         self.assertIn("What kind of employer?", str(form.errors["plan_source"]))
 
+    def test_the_page_drawn_again_keeps_the_answer_whose_kind_is_asked(self):
+        # Otherwise the follow-up the error asks about is hidden, and a
+        # second Continue would drop the answer without a word.
+        form = post(plan_source_group="medicare")
+        self.assertFalse(form.is_valid())
+        picker = page(form).find(id="id_plan_source")
+        self.assertEqual(
+            [box["id"] for box in picker.find_all("input", checked=True)],
+            ["id_plan_source_group_medicare"],
+        )
+
     def test_a_post_without_the_first_answer_is_read_as_before(self):
         # The REST API and older pages send plan_source values directly.
         two = [source("Medicare Advantage"), source("Medicaid")]
