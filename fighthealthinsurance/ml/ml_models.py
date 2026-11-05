@@ -2056,7 +2056,7 @@ class RemoteModelLike(DenialBase):
 
         Split out of ``generate_chat_response`` so the context budget can be
         sized against the prompt that will actually be sent
-        (``chat_prompt_reserve_tokens``): the Medicaid tool blocks roughly
+        (``chat_history_token_budget``): the Medicaid tool blocks roughly
         double it, and a flat guess let real chats overrun the window.
         """
         # Determine the target audience based on whether user is professional or patient
@@ -2253,7 +2253,7 @@ HOW:
 - Whenever you start a check or give an estimate, say plainly that it is EXPERIMENTAL, can be wrong or out of date, and is only a rough estimate, NOT an official determination: only their state Medicaid agency decides.
 
 PARAMETERS (all optional; leave out anything you don't know, never guess):
-- state: name or 2-letter code
+- state: name or 2-letter code. A program name means its state (Medi-Cal is California, STAR is Texas): send that state, don't ask first
 - age, household_size, children_in_household: int; married, pregnant: bool
 - monthly_income: MAGI-ish monthly income (gross for long-term care or aged/blind/disabled); assets_total (leave out primary home equity), home_equity: numbers; home_owner: bool
 - receiving_ssdi (or disabled), on_medicare, als, esrd, veteran_or_spouse_of_veteran: bool; ssdi_length: MONTHS on SSDI; years_worked: years they or their spouse paid Medicare taxes

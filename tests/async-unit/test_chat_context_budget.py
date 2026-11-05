@@ -132,6 +132,13 @@ def test_eligibility_prompt_documents_every_parameter_the_checker_reads():
     assert missing == set()
 
 
+def test_eligibility_prompt_infers_the_state_from_a_program_name():
+    # "Am I eligible for Medi-Cal?" should go straight to the tool with
+    # California, not to "Which state are you in?" -- medicaid_api maps the
+    # program name too, so sending it is safe.
+    assert "A program name means its state" in _parameters_section()
+
+
 def test_eligibility_prompt_states_the_checkers_default_year():
     assert f"(default {DEFAULT_TARGET_YEAR})" in _parameters_section()
 
@@ -212,6 +219,20 @@ async def test_chat_call_sends_history_that_fits_untouched():
         "Am I eligible for Medicaid?", history=history, is_professional=False
     )
     assert model.infer_calls[0]["history"] is history
+
+
+def test_full_history_call_agrees_with_the_in_call_trim_at_the_boundary():
+    # The decision and the trim use one predicate: history a few characters
+    # over the budget (which a floor-divided token estimate calls a fit) is
+    # not sent as a "full" call that the call itself would then trim.
+    model = RecordingChat(max_len=200_000)
+    budget = model.chat_history_token_budget(
+        "Am I eligible for Medicaid?", history=_history(1, 10), is_logged_in=True
+    )
+    full_history = _history(40, 10)
+    used = sum(len(m["content"]) for m in full_history)
+    full_history[0]["content"] += "x" * (budget * 4 - used + 1)
+    assert len(_built_calls(model, full_history)) == 1
 
 
 def _built_calls(model, full_history):

@@ -31,7 +31,11 @@ from fighthealthinsurance.chat.tools.patterns import (
     contains_tool_call,
     count_tool_invocations,
 )
-from fighthealthinsurance.ml.ml_models import RemoteModelLike, repetition_penalty
+from fighthealthinsurance.ml.ml_models import (
+    RemoteModelLike,
+    fit_history_to_token_budget,
+    repetition_penalty,
+)
 
 # Shared similarity/exemption helpers (stdlib-only module, importable from
 # both this layer and ml_models without a cycle). normalize_text,
@@ -696,7 +700,6 @@ def build_llm_calls(
 
         # Also try with full history if provided and model can handle it
         if full_history and full_history != history:
-            full_history_tokens = estimate_history_tokens(full_history)
             # Measured against this turn's real system prompt and message
             # (the Medicaid one alone outgrew the flat 8k reserve this used),
             # so a full-history call is only made when it actually fits --
@@ -709,7 +712,14 @@ def build_llm_calls(
                 is_logged_in=is_logged_in,
             )
 
-            if full_history_tokens <= available_context:
+            # The same predicate the call trims with, so "fits" can't round
+            # differently here and there.
+            fits = (
+                fit_history_to_token_budget(full_history, available_context)
+                is full_history
+            )
+
+            if fits:
                 full_history_call = model_backend.generate_chat_response(
                     current_message,
                     previous_context_summary=previous_context_summary,

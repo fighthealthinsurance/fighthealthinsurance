@@ -528,9 +528,12 @@ class MedicaidEligibilityTool(BaseTool):
                 (
                     f"If the {target_year} work "
                     "requirement is the barrier, suggest ways to reach 80 "
-                    "qualifying hours a month (work, school, volunteering, or "
-                    "caregiving) and remind them to keep good records -- with "
-                    "empathy, since this is stressful and unfair. "
+                    "qualifying hours a month (work, job training, school, or "
+                    "volunteering) and remind them to keep good records -- "
+                    "with empathy, since this is stressful and unfair. "
+                    "Caregiving is not qualifying hours: caring for a child 13 "
+                    "or younger or a disabled person is an exemption, so ask "
+                    "about it rather than counting care hours. "
                 )
                 if work_req_applies
                 else ""
