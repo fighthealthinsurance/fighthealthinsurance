@@ -64,10 +64,12 @@ def correct_size(content: Any) -> None:
     try:
         position = content.tell()
         content.seek(0, os.SEEK_END)
-        actual = content.tell()
-        content.seek(position)
     except Exception:
         return
+    # Past this point the content has moved, so a failure to put it back
+    # must stop the save: a backend reading from the end would store nothing.
+    actual = content.tell()
+    content.seek(position)
     try:
         if getattr(content, "size", None) != actual:
             content.size = actual

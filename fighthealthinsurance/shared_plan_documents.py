@@ -790,14 +790,14 @@ MIN_DOCUMENT_CHARS = 200
 
 def is_document(status: str, cleaned_text: Optional[str], filename: str) -> bool:
     """Whether a shared file's reading found a document: read and cleaned,
-    with at least MIN_DOCUMENT_CHARS of text, or a PDF with no text to
+    with at least MIN_DOCUMENT_CHARS characters that are not spaces, or a PDF with no text to
     read, as a scan is. A PDF passed the closer look on the way in
     (validate_shared_document), so it is a real file staff can open."""
     if status == PolicyDocument.PROCESSING_UNREADABLE:
         return filename.lower().endswith(".pdf")
     return (
         status == PolicyDocument.PROCESSING_READY
-        and len((cleaned_text or "").strip()) >= MIN_DOCUMENT_CHARS
+        and len("".join((cleaned_text or "").split())) >= MIN_DOCUMENT_CHARS
     )
 
 

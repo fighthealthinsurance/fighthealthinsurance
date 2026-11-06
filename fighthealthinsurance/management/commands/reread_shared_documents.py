@@ -41,23 +41,23 @@ class Command(BaseCommand):
                 PolicyDocument.PROCESSING_UNREADABLE,
             ),
         ).only("pk", "processing_status", "processed_at", "cleaned_text")
+        # One row at a time, keeping only what the change needs: a reading
+        # can run to millions of characters.
         damaged = [
-            row
-            for row in rows
+            (row.pk, row.processing_status, row.processed_at)
+            for row in rows.iterator(chunk_size=50)
             if row.processing_status == PolicyDocument.PROCESSING_UNREADABLE
-            or looks_encrypted((row.cleaned_text or "").encode())
+            or looks_encrypted((row.cleaned_text or "")[:64].encode())
         ]
         self.stdout.write(f"{len(damaged)} shared file(s) to read again")
         if not options["apply"] or not damaged:
             return
         updated = 0
-        for row in damaged:
+        for pk, status, processed_at in damaged:
             # Only a row still as it was listed: one read again since keeps
             # its new reading.
             updated += PolicyDocument.objects.filter(
-                pk=row.pk,
-                processing_status=row.processing_status,
-                processed_at=row.processed_at,
+                pk=pk, processing_status=status, processed_at=processed_at
             ).update(
                 processing_status=PolicyDocument.PROCESSING_RECEIVED,
                 processed_at=None,

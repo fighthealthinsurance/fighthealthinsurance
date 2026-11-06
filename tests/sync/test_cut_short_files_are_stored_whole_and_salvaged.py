@@ -59,6 +59,19 @@ class StoredWholeTest(SimpleTestCase):
         correct_size(content)
         self.assertEqual(content.size, len(content.getvalue()))
 
+    def test_content_that_cannot_be_put_back_stops_the_save(self):
+        class Stuck(io.BytesIO):
+            def seek(self, offset, whence=0):
+                if whence == 0 and offset != 0:
+                    raise OSError("stuck")
+                return super().seek(offset, whence)
+
+        content = Stuck(DOCUMENT)
+        content.size = 1
+        content.read(5)
+        with self.assertRaises(OSError):
+            correct_size(content)
+
     def test_measuring_leaves_the_content_where_it_was(self):
         content = io.BytesIO(DOCUMENT)
         content.size = 1

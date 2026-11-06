@@ -313,6 +313,10 @@ class OnlyReadDocumentsCountTest(_PlansTestCase):
         self.share(files=["test"], text="hello")
         self.assertEqual(self.plans(), 0)
 
+    def test_spaces_do_not_make_a_line_a_document(self):
+        self.share(files=["test"], text="hello" + " " * MIN_DOCUMENT_CHARS)
+        self.assertEqual(self.plans(), 0)
+
     def test_a_document_just_long_enough_is_a_plan(self):
         self.share(files=["sbc"], text="x" * MIN_DOCUMENT_CHARS)
         self.assertEqual(self.plans(), 1)
