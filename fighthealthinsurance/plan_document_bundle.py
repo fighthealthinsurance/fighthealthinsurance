@@ -1,16 +1,19 @@
 """The plan-document bundle: what the pipeline hands FHI, and how it lands.
 
 A bundle is what the plan-document pipeline in healthinsurance-llm-internal
-exports (keep its exporter in step with this module: the record fields and
-their limits are the contract). ``import_plan_documents`` reads one from a
-file or stdin; the admin's add form runs one record's worth through the
+exports (``python -m dataset_tools.plan_document_export``; keep it in step
+with this module: the record fields and their limits are the contract).
+``import_plan_documents`` reads one from a JSON or JSON Lines file, from
+stdin, or from a zip archive (:class:`BundleArchive`: ``bundle.json``, the
+originals under ``files/`` and a ``SHA256SUMS``), read in place; the admin's add form runs one record's worth through the
 same code for a document added by hand. Each record becomes, or updates,
 one :class:`PublicPlanDocument`, keyed by ``document_key``.
 
 A record carries the document's metadata and its text in one of three ways:
 ``pages`` (a list of page texts, the pipeline's usual shape), ``text``
 (already page-marked, or wrapped as one page), or ``file`` (a PDF, Word or
-text file under the importer's ``--files-root``, parsed here with the same
+text file under the importer's ``--files-root``, or a ``files/`` member of
+the archive, parsed here with the same
 readers the appeal flow uses). The text is stored as "[Page N]" blocks, the
 shape MLPlanDocHelper's passage selection reads.
 
@@ -20,11 +23,15 @@ a document key, never the text.
 
 import datetime
 import hashlib
+import io
 import json
 import os
 import re
+import stat
+import zipfile
+import zlib
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import IO, Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 from django.core.exceptions import ValidationError
 from django.core.validators import URLValidator
@@ -54,6 +61,18 @@ MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_DOCUMENTS = 5_000
 MAX_TEXT_CHARS = min(PublicPlanDocument.MAX_TEXT_CHARS, MAX_PDF_CHARS)
 MAX_PAGES = 2_000
+
+#: A zip bundle (BundleArchive). The archive itself is capped at
+#: MAX_BUNDLE_BYTES like any bundle; these bound what is inside it.
+ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06")  # a member first; an empty archive
+ARCHIVE_BUNDLE_NAMES = ("bundle.json", "bundle.jsonl")
+ARCHIVE_FILES_DIR = "files/"
+ARCHIVE_SUMS_NAME = "SHA256SUMS"
+MAX_ARCHIVE_MEMBERS = MAX_DOCUMENTS + 8
+#: The declared uncompressed total: an expansion bound.
+MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
+MAX_SUMS_BYTES = 1024 * 1024
+_READ_CHUNK = 1 << 20
 
 KEY_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,128}")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -112,6 +131,10 @@ _LINES_OF_BUSINESS = set(LineOfBusiness.values)
 
 class BundleError(Exception):
     """The bundle as a whole cannot be read."""
+
+
+class BundleDecodeError(BundleError):
+    """The bundle's text is not valid JSON."""
 
 
 class RecordError(Exception):
@@ -192,6 +215,26 @@ def parse_jsonl(lines: Iterable[str]) -> List[Dict[str, Any]]:
     return records
 
 
+def decode_bundle(text: str, fmt: str) -> List[Dict[str, Any]]:
+    """The records of a bundle's text, ``fmt`` "json" or "jsonl". Raises
+    BundleError, quoting nothing of the text."""
+    if fmt == "jsonl":
+        return parse_jsonl(text.splitlines())
+    try:
+        data = json.loads(text, object_pairs_hook=no_repeated_fields)
+    except json.JSONDecodeError as exc:
+        raise BundleDecodeError(
+            f"not valid JSON: {exc.msg} (line {exc.lineno}, column {exc.colno})"
+        ) from None
+    except RecursionError:
+        raise BundleDecodeError("not valid JSON: it nests too deeply") from None
+    except ValueError:
+        raise BundleDecodeError(
+            "not valid JSON: it has a number too long to read"
+        ) from None
+    return parse_bundle(data)
+
+
 # ---- Text --------------------------------------------------------------------------
 
 
@@ -226,6 +269,12 @@ def page_marked_text_from_bytes(data: bytes, filename: str) -> Tuple[str, int]:
     return text, len(pages)
 
 
+def _clean(text: str) -> str:
+    """CRLF and lone CR as LF (so "[Page N]" lines are seen), NUL removed
+    (the database refuses it)."""
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
+
+
 def _text_from_pages(pages: Any) -> Tuple[str, int]:
     if not isinstance(pages, list) or not pages:
         raise RecordError("pages: a non-empty list of page texts")
@@ -234,12 +283,12 @@ def _text_from_pages(pages: Any) -> Tuple[str, int]:
     numbered: List[Tuple[int, str]] = []
     for position, page in enumerate(pages, start=1):
         if isinstance(page, str):
-            numbered.append((position, page))
+            numbered.append((position, _clean(page)))
         elif isinstance(page, dict) and isinstance(page.get("text"), str):
             number = page.get("page", position)
             if not isinstance(number, int) or isinstance(number, bool) or number < 1:
                 raise RecordError(f"pages: page {position} has no valid page number")
-            numbered.append((number, page["text"]))
+            numbered.append((number, _clean(page["text"])))
         else:
             raise RecordError(f"pages: page {position} is not text")
     text = page_blocks(numbered)
@@ -251,19 +300,27 @@ def _text_from_pages(pages: Any) -> Tuple[str, int]:
 def _text_from_text(text: Any) -> Tuple[str, int]:
     if not isinstance(text, str) or not text.strip():
         raise RecordError("text: a non-empty string")
+    text = _clean(text)
+    if not text.strip():
+        raise RecordError("text: a non-empty string")
     markers = _PAGE_MARKER_RE.findall(text)
     if markers:
         return text.strip(), len(markers)
     return f"[Page 1]\n{text.strip()}", 1
 
 
-def _read_file(relative: Any, files_root: Optional[str]) -> Tuple[bytes, str]:
+FilesRoot = Union[str, "BundleArchive", None]
+
+
+def _read_file(relative: Any, files_root: FilesRoot) -> Tuple[bytes, str]:
     if not isinstance(relative, str) or not relative.strip():
         raise RecordError("file: a relative path")
     if files_root is None:
         raise RecordError("file: the import needs --files-root to read files")
     if "\x00" in relative or os.path.isabs(relative):
         raise RecordError("file: the path must be relative to the files root")
+    if isinstance(files_root, BundleArchive):
+        return files_root.read_file(relative)
     try:
         root = os.path.realpath(files_root)
         path = os.path.realpath(os.path.join(root, relative))
@@ -277,6 +334,275 @@ def _read_file(relative: Any, files_root: Optional[str]) -> Tuple[bytes, str]:
             return fh.read(), os.path.basename(path)
     except (OSError, ValueError) as exc:
         raise RecordError(f"file: cannot be read ({type(exc).__name__})") from None
+
+
+# ---- Zip bundles -------------------------------------------------------------------
+
+#: Every member of an archive is one of these, by its exact name.
+_ARCHIVE_FILE_NAME_RE = re.compile(
+    r"files/[A-Za-z0-9._-]{1,128}(?:"
+    + "|".join(re.escape(e) for e in FILE_EXTENSIONS)
+    + r")",
+    re.IGNORECASE,
+)
+_PRINTABLE_ASCII_RE = re.compile(r"[\x20-\x7e]{1,512}")
+#: General-purpose flag bits zipfile cannot read safely: encrypted (0x1),
+#: compressed patched data (0x20), strong encryption (0x40).
+_REFUSED_FLAG_BITS = 0x61
+_ALLOWED_COMPRESSION = (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+_SUMS_LINE_RE = re.compile(r"([0-9a-fA-F]{64}) [ *](.+)")
+#: What a member read can raise on a damaged or unsupported archive.
+_MEMBER_ERRORS = (
+    zipfile.BadZipFile,
+    zlib.error,
+    EOFError,
+    NotImplementedError,
+    RuntimeError,
+    OSError,
+    ValueError,
+)
+
+
+def looks_like_zip(head: bytes) -> bool:
+    """True when ``head`` (a source's first bytes) starts like a zip."""
+    return head[:4] in ZIP_MAGICS
+
+
+def _shown(name: str) -> str:
+    """A member name fit for a message: repr, so a control character in a
+    refused name never reaches the terminal as itself."""
+    return repr(name)
+
+
+class BundleArchive:
+    """A zip bundle, read in place: never extracted to disk.
+
+    The archive holds exactly one bundle file at its root (``bundle.json``,
+    the exporter's, or ``bundle.jsonl``), optional originals as flat
+    ``files/<document_key><ext>`` members, optional ``files/`` directory
+    entries and an optional coreutils ``SHA256SUMS``. Anything else refuses
+    the archive. Every check on names, flags, compression and declared
+    sizes runs from the central directory before any member is read, and
+    every member is read in chunks against its own cap, so a forged size
+    cannot make a read inflate more than the cap. A record's ``file`` is a
+    member's name (``files/kaiser-norcal-eoc-2025-hmo.pdf``): the archive
+    stands in for ``--files-root``.
+    """
+
+    def __init__(self, archive: zipfile.ZipFile) -> None:
+        self._zip = archive
+        self.bundle_name = ""
+        self.has_sums = False
+        self._files: Dict[str, zipfile.ZipInfo] = {}
+        try:
+            self._validate()
+        except BaseException:
+            archive.close()
+            raise
+
+    @classmethod
+    def open_path(cls, path: str) -> "BundleArchive":
+        try:
+            archive = zipfile.ZipFile(path)
+        except (zipfile.BadZipFile, OSError, ValueError, EOFError):
+            raise BundleError("not a zip archive") from None
+        return cls(archive)
+
+    @classmethod
+    def open_bytes(cls, data: bytes) -> "BundleArchive":
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(data))
+        except (zipfile.BadZipFile, ValueError, EOFError):
+            raise BundleError("not a zip archive") from None
+        return cls(archive)
+
+    def close(self) -> None:
+        self._zip.close()
+
+    def __enter__(self) -> "BundleArchive":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
+
+    @property
+    def file_count(self) -> int:
+        """The number of originals under ``files/``."""
+        return len(self._files)
+
+    # -- what is in it ------------------------------------------------------------
+
+    def _validate(self) -> None:
+        infos = self._zip.infolist()
+        if len(infos) > MAX_ARCHIVE_MEMBERS:
+            raise BundleError(f"an archive holds at most {MAX_ARCHIVE_MEMBERS} members")
+        seen: set = set()
+        refused: List[str] = []
+        bundles: List[zipfile.ZipInfo] = []
+        total = 0
+
+        def refuse(info: zipfile.ZipInfo, why: str) -> None:
+            refused.append(f"{_shown(info.filename)} ({why})")
+
+        for info in infos:
+            name = info.filename
+            if name in seen:
+                refuse(info, "given twice")
+                continue
+            seen.add(name)
+            if not _PRINTABLE_ASCII_RE.fullmatch(name):
+                refuse(info, "not a plain ASCII name")
+                continue
+            if info.flag_bits & _REFUSED_FLAG_BITS:
+                refuse(info, "encrypted")
+                continue
+            if stat.S_ISLNK(info.external_attr >> 16):
+                refuse(info, "a symbolic link")
+                continue
+            if info.compress_type not in _ALLOWED_COMPRESSION:
+                refuse(info, "an unsupported compression method")
+                continue
+            total += info.file_size
+            if name.endswith("/"):
+                if name != ARCHIVE_FILES_DIR or info.file_size:
+                    refuse(info, "a directory other than files/")
+                continue
+            if name in ARCHIVE_BUNDLE_NAMES:
+                if info.file_size > MAX_BUNDLE_BYTES:
+                    refuse(info, f"larger than {MAX_BUNDLE_BYTES} bytes")
+                bundles.append(info)
+            elif name == ARCHIVE_SUMS_NAME:
+                if info.file_size > MAX_SUMS_BYTES:
+                    refuse(info, f"larger than {MAX_SUMS_BYTES} bytes")
+                self.has_sums = True
+            elif _ARCHIVE_FILE_NAME_RE.fullmatch(name):
+                if info.file_size > MAX_FILE_BYTES:
+                    refuse(info, f"larger than {MAX_FILE_BYTES} bytes")
+                self._files[name] = info
+            else:
+                refuse(info, "not part of a bundle archive")
+        if refused:
+            shown = ", ".join(refused[:5])
+            more = f" and {len(refused) - 5} more" if len(refused) > 5 else ""
+            raise BundleError(f"archive member(s) refused: {shown}{more}")
+        if total > MAX_ARCHIVE_BYTES:
+            raise BundleError(
+                f"the archive's members add up to more than {MAX_ARCHIVE_BYTES} bytes"
+            )
+        if len(bundles) != 1:
+            raise BundleError(
+                "the archive needs exactly one bundle file at its root "
+                f"({' or '.join(ARCHIVE_BUNDLE_NAMES)})"
+            )
+        self.bundle_name = bundles[0].filename
+
+    def _read_member(self, info: zipfile.ZipInfo, limit: int) -> bytes:
+        """The member's bytes, read in chunks and refused past ``limit``.
+        Raises BundleError naming the member when it cannot be read."""
+        chunks: List[bytes] = []
+        size = 0
+        try:
+            with self._zip.open(info) as fh:
+                while True:
+                    chunk = fh.read(_READ_CHUNK)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > limit:
+                        raise BundleError(
+                            f"archive member {_shown(info.filename)} is larger "
+                            f"than {limit} bytes"
+                        )
+                    chunks.append(chunk)
+        except _MEMBER_ERRORS as exc:
+            raise BundleError(
+                f"archive member {_shown(info.filename)} cannot be read "
+                f"({type(exc).__name__})"
+            ) from None
+        return b"".join(chunks)
+
+    # -- reading ------------------------------------------------------------------
+
+    def bundle_text(self) -> Tuple[str, str]:
+        """The bundle file's text and its format ("json" or "jsonl")."""
+        info = self._zip.getinfo(self.bundle_name)
+        data = self._read_member(info, MAX_BUNDLE_BYTES)
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise BundleError(f"{self.bundle_name} is not UTF-8 text") from None
+        return text, ("jsonl" if self.bundle_name.endswith(".jsonl") else "json")
+
+    def records(self) -> List[Dict[str, Any]]:
+        text, fmt = self.bundle_text()
+        try:
+            return decode_bundle(text, fmt)
+        except BundleError as exc:
+            raise BundleError(f"{self.bundle_name}: {exc}") from None
+
+    def read_file(self, relative: str) -> Tuple[bytes, str]:
+        """A record's ``file``: the bytes of the ``files/`` member of that
+        exact name. No path is resolved, so nothing can leave the archive."""
+        info = self._files.get(relative)
+        if info is None:
+            raise RecordError("file: no such member under files/ in the archive")
+        try:
+            data = self._read_member(info, MAX_FILE_BYTES)
+        except BundleError:
+            raise RecordError("file: the archive member cannot be read") from None
+        return data, os.path.basename(relative)
+
+    def verify_checksums(self) -> bool:
+        """Check every member against ``SHA256SUMS``; False when the archive
+        carries none. Every member but the sums file and directory entries
+        must be listed and match, and every listed path must be a member."""
+        if not self.has_sums:
+            return False
+        raw = self._read_member(self._zip.getinfo(ARCHIVE_SUMS_NAME), MAX_SUMS_BYTES)
+        try:
+            lines = raw.decode("ascii").splitlines()
+        except UnicodeDecodeError:
+            raise BundleError(f"{ARCHIVE_SUMS_NAME} is not ASCII text") from None
+        listed: Dict[str, str] = {}
+        for number, line in enumerate(lines, start=1):
+            if not line.strip():
+                continue
+            match = _SUMS_LINE_RE.fullmatch(line)
+            if not match:
+                raise BundleError(
+                    f"{ARCHIVE_SUMS_NAME} line {number} is not '<sha256>  <path>'"
+                )
+            digest, name = match.group(1).lower(), match.group(2)
+            if name in listed:
+                raise BundleError(f"{ARCHIVE_SUMS_NAME} lists {_shown(name)} twice")
+            listed[name] = digest
+        members = {
+            info.filename: info
+            for info in self._zip.infolist()
+            if info.filename != ARCHIVE_SUMS_NAME and not info.filename.endswith("/")
+        }
+        unlisted = sorted(set(members) - set(listed))
+        if unlisted:
+            raise BundleError(
+                f"{ARCHIVE_SUMS_NAME} does not list "
+                + ", ".join(_shown(n) for n in unlisted[:5])
+            )
+        missing = sorted(set(listed) - set(members))
+        if missing:
+            raise BundleError(
+                f"{ARCHIVE_SUMS_NAME} lists what the archive does not hold: "
+                + ", ".join(_shown(n) for n in missing[:5])
+            )
+        for name, info in sorted(members.items()):
+            limit = MAX_BUNDLE_BYTES if name in ARCHIVE_BUNDLE_NAMES else MAX_FILE_BYTES
+            if (
+                hashlib.sha256(self._read_member(info, limit)).hexdigest()
+                != listed[name]
+            ):
+                raise BundleError(
+                    f"{_shown(name)} does not match its {ARCHIVE_SUMS_NAME} line"
+                )
+        return True
 
 
 # ---- One record -------------------------------------------------------------------
@@ -383,7 +709,7 @@ def _resolve_plan(
 def prepare_document_fields(
     record: Dict[str, Any],
     *,
-    files_root: Optional[str] = None,
+    files_root: FilesRoot = None,
     store_file: bool = False,
     import_batch: str = "",
 ) -> PreparedDocument:
@@ -623,7 +949,7 @@ def _remove_files(names: Sequence[str]) -> None:
 def import_bundle(
     records: Sequence[Dict[str, Any]],
     *,
-    files_root: Optional[str] = None,
+    files_root: FilesRoot = None,
     store_file: bool = False,
     import_batch: str = "",
     deactivate_missing: bool = False,

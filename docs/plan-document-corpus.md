@@ -23,9 +23,10 @@ Code: `fighthealthinsurance/plan_document_bundle.py` (the bundle contract and
 the importer), `fighthealthinsurance/management/commands/import_plan_documents.py`
 (the command), `fighthealthinsurance/plan_document_matcher.py` (matching, the
 passages, the prompt section). The pipeline that writes bundles lives in the
-private `healthinsurance-llm-internal` repo; its exporter has to stay in step
-with `plan_document_bundle.py`, whose record fields and limits are the
-contract.
+private `healthinsurance-llm-internal` repo
+(`python -m dataset_tools.plan_document_export`, which writes a zip); its
+exporter mirrors `plan_document_bundle.py`, whose record fields and limits are
+the contract, and checks the mirror against an FHI checkout in a test.
 
 ## What the corpus is, and is not
 
@@ -76,8 +77,9 @@ always among the stored rows, whatever their rank.
 ## The bundle contract
 
 A bundle is a JSON array of records, an object
-`{"bundle_version": 1, "documents": [...]}`, or JSON Lines with one record per
-line. Problems with the bundle as a whole are refused before anything is
+`{"bundle_version": 1, "documents": [...]}` (other top-level keys, such as the
+exporter's provenance, are ignored), or JSON Lines with one record per line;
+any of these may also arrive inside a zip archive (Zip bundles, below). Problems with the bundle as a whole are refused before anything is
 written: more than `MAX_BUNDLE_BYTES` (256 MiB) of UTF-8 text, more than
 `MAX_DOCUMENTS` (5,000) records, a JSON object that gives a field twice, a
 record that is not an object, or a `bundle_version` other than 1.
@@ -113,9 +115,9 @@ constants in `plan_document_bundle.py`.
 | `source_url` | string, at most `MAX_URL` (2000) | no | A valid `http://` or `https://` URL (Django's `URLValidator`) |
 | `fetched_at` | ISO 8601 datetime string | no | A naive time is taken as UTC |
 | `source_sha256` | 64 hex characters | no | SHA-256 of the original file. Computed from the bytes when a `file` record leaves it out |
-| `pages` | non-empty list of strings, or of `{"page": N, "text": "..."}` objects | exactly one of `pages`, `text` and `file` | At most `MAX_PAGES` (2,000). Plain strings are numbered from 1; an object's `page` must be a whole number of 1 or more. Blank pages are dropped, and a record whose pages are all blank is refused |
+| `pages` | non-empty list of strings, or of `{"page": N, "text": "..."}` objects | exactly one of `pages`, `text` and `file` | At most `MAX_PAGES` (2,000). Plain strings are numbered by their position from 1, so send one entry per physical page with a blank page as `""` (dropping it would renumber every later page); CRLF is read as LF and NUL is removed; an object's `page` must be a whole number of 1 or more. Blank pages are dropped, and a record whose pages are all blank is refused |
 | `text` | non-empty string | one of the three | Kept as is when it has lines that read exactly `[Page N]`; otherwise wrapped as page 1 |
-| `file` | relative path ending in `.pdf`, `.docx` or `.txt` | one of the three | Read under `--files-root`; an absolute path, or one that leaves the root, is refused. At most `MAX_FILE_BYTES` (50 MiB). Parsed with `ml_document_extraction.extract_text_from_bytes`, the readers the appeal flow uses, into page blocks. A file that yields no text (a scanned PDF) is refused |
+| `file` | relative path ending in `.pdf`, `.docx` or `.txt` | one of the three | Read under `--files-root`, or, in a zip, the exact name of a `files/` member (`files/kaiser-norcal-sbc-2025-hmo.pdf`); an absolute path, or one that leaves the root, is refused. At most `MAX_FILE_BYTES` (50 MiB). Parsed with `ml_document_extraction.extract_text_from_bytes`, the readers the appeal flow uses, into page blocks. A file that yields no text (a scanned PDF) is refused |
 | `is_active` | boolean | no, default `true` | |
 | `pipeline_version` | string, at most `MAX_VERSION` (64) | no | |
 | `notes` | string | no | Free text; anything but a string is stored as blank |
@@ -125,6 +127,37 @@ blank lines (the shape `MLPlanDocHelper`'s passage selection reads, so a
 quoted passage can name its page), and may hold at most `MAX_TEXT_CHARS`
 (3,000,000 characters). The row's `text_sha256`, `page_count` and
 `char_count` are computed from it, and `import_batch` is the run's label.
+
+### Zip bundles
+
+`import_plan_documents` reads a zip in place (`BundleArchive`); nothing is
+extracted to disk. A source is a zip when it is named `.zip`, when its first
+bytes are a zip's, or with `--format zip`. The archive holds:
+
+| Member | Meaning |
+|---|---|
+| `bundle.json` | The bundle object, with the exporter's provenance keys beside `documents`: `generated_at`, `generator`, `source_commit`, `extractor` (the PDF reader and its version), `pipeline_version`. Or `bundle.jsonl`, for a hand-built archive, which carries no provenance. Exactly one of the two, at the root |
+| `files/<document_key><ext>` | Optional originals, flat, with a `.pdf`, `.docx` or `.txt` extension; a record names one in its `file` field |
+| `files/` | An optional directory entry |
+| `SHA256SUMS` | Optional (the exporter always writes it): coreutils `sha256sum` lines over every other member. When present, every member must be listed and match, and every listed path must be a member, before anything is written |
+
+Anything else refuses the whole archive, naming the members: another name or
+directory, a name that is not plain printable ASCII, a member given twice,
+an encrypted or symbolic-link member, or a compression method other than
+stored or deflated. The checks run on the central directory before any member
+is read. The caps:
+
+- the archive itself (a file, or stdin) is capped at `MAX_BUNDLE_BYTES`
+  (256 MiB), like any bundle;
+- `bundle.json` at the same cap;
+- each original at `MAX_FILE_BYTES` (50 MiB);
+- `SHA256SUMS` at 1 MiB;
+- the members' declared total at `MAX_ARCHIVE_BYTES` (1 GiB).
+
+Every member is read in chunks against its own cap, so a member whose declared
+size is forged cannot inflate past it. An archive never takes `--files-root`.
+A record naming a member the archive lacks, or one that cannot be read, is
+skipped like any bad record.
 
 ### A worked example: three Kaiser Permanente records
 
@@ -195,18 +228,49 @@ and keywords.
 
 ## Producing bundles in llm-internal
 
+The bundle is written in llm-internal from the git-ignored `plan_documents/`
+tree (one directory per plan, the tree `plan_document_reviews` reads) and the
+committed sources files under `dataset_tools/data/plan_document_sources/`
+(every record field but the text, plus `file`, the document's path in the
+tree):
+
+```bash
+python -m dataset_tools.plan_document_export plan_documents/ \
+    --sources dataset_tools/data/plan_document_sources/kaiser-norcal.json --check
+python -m dataset_tools.plan_document_export plan_documents/ \
+    --sources dataset_tools/data/plan_document_sources/kaiser-norcal.json \
+    --out plan_document_bundles/plan-docs-2026-11-06.zip
+```
+
+The exporter mirrors this module's limits, so a bundle it writes is one the
+import accepts, and it writes `pages` with one entry per physical page.
+Inline pages are the default because FHI parses a `file` record itself, in a
+child process capped at 30 seconds per PDF (`MAX_PDF_SECONDS`), and skips the
+record when that runs out. `--include-files` copies the originals FHI reads the
+same way (`.pdf`, `.docx`, a `.txt` without `[Page N]` lines) into `files/`
+as `file` records, for a `--store-file` run; HTML documents and page-marked
+`.txt` files stay inline. Pick one text mode per corpus: switching re-reads
+the text with the other reader, which changes `text_sha256`, deletes the
+documents' match rows and re-matches the carrier's denials. For the same
+reason export with PyMuPDF installed (FHI's reader; the exporter records which
+reader it used as `extractor`).
+
+`python -m dataset_tools.plan_document_discovery` finds candidate documents
+to add to the tree; see llm-internal's README.
+
 **Stable keys.** `document_key` is the document's identity for every later
 import: one key per document and plan year (`kaiser-norcal-eoc-2025-hmo`),
 never derived from a URL or a file hash that changes when the file is fetched
 again. A changed key creates a second row and leaves the old one active
 unless the run passes `--deactivate-missing`.
 
-**Text inline for piped imports.** A bundle piped into a pod with
-`kubectl exec -i` carries nothing but itself, so its records use `pages` (the
-pipeline's usual shape) or `text`. A `file` record is for a run where the
-files were copied in beside the bundle and `--files-root` names their
-directory; a bundle with `file` records and no `--files-root` is refused
-before anything is written, naming the records.
+**Where the text travels.** A loose JSON bundle piped into a pod with
+`kubectl exec -i` carries nothing but itself, so its records use `pages` or
+`text`. A piped zip may carry originals under `files/`. A `file` record in a
+loose bundle is for a run where the files were copied in beside the bundle
+and `--files-root` names their directory; a loose bundle with `file` records
+and no `--files-root` is refused before anything is written, naming the
+records.
 
 **Region, and the other region's names.** The region lives on the document
 (`region`) and in its keywords: the region's name and the cities and medical
@@ -268,6 +332,13 @@ python manage.py import_plan_documents --source bundle.json --dry-run
 # For real, with a label for the rows this run writes
 python manage.py import_plan_documents --source bundle.json --batch kaiser-2025-01
 
+# The exporter's zip, checked first, then for real
+python manage.py import_plan_documents --source plan-docs-2026-11-06.zip --dry-run
+python manage.py import_plan_documents --source plan-docs-2026-11-06.zip
+
+# A zip carrying its originals, piped into a pod, the originals kept
+kubectl exec -i <pod> -- python manage.py import_plan_documents --source - --store-file < plan-docs-files.zip
+
 # Into a pod from stdin: the bundle never lands on the pod's disk
 kubectl exec -i <pod> -- python manage.py import_plan_documents --source - --dry-run < bundle.json
 kubectl exec -i <pod> -- python manage.py import_plan_documents --source - < bundle.json
@@ -281,15 +352,17 @@ kubectl exec <pod> -- python manage.py import_plan_documents \
 | Option | Meaning |
 |---|---|
 | `--source PATH`, `-s PATH` | The bundle file, or `-` (the default) for stdin |
-| `--format auto\|json\|jsonl` | `auto` (the default) reads a `.jsonl` source, or text that does not start with `[` or `{`, as JSON Lines, and anything else as JSON |
-| `--files-root DIR` | The directory the records' relative `file` paths are read under. Required when any record names a `file` |
-| `--store-file` | Keep the original of each `file` record on storage, named `<document_key><extension>` (the storage adds a token of its own to the name). A re-import with the same bytes and extension leaves the kept file alone; different bytes replace it, the old file going once the run commits |
+| `--format auto\|json\|jsonl\|zip` | `auto` (the default) reads a `.zip` source, or bytes that start like a zip, as an archive; a `.jsonl` source, or text that does not start with `[` or `{`, as JSON Lines; and anything else as JSON |
+| `--files-root DIR` | The directory a loose bundle's relative `file` paths are read under. Required when any record of a loose bundle names a `file`; refused with an archive, which carries its own files |
+| `--store-file` | Keep the original of each `file` record (read under `--files-root` or from the archive) on storage, named `<document_key><extension>` (the storage adds a token of its own to the name). A re-import with the same bytes and extension leaves the kept file alone; different bytes replace it, the old file going once the run commits |
 | `--batch LABEL` | Stored as `import_batch` on every row the run writes; default a UTC timestamp such as `20250115T080000Z` |
 | `--deactivate-missing` | Retire the named carriers' active documents the bundle does not list |
 | `--dry-run` | Do everything inside the transaction, then roll it back |
 | `--strict` | Refuse the whole bundle, writing nothing, on the first bad record or the first warning |
 
-The command prints `Loaded N record(s) from '<source>'`, one
+The command prints `Loaded N record(s) from '<source>'` (for an archive
+followed by `(archive: K file member(s), checksums verified)` or
+`no SHA256SUMS`), one
 `Skipped record <index> (<key>): <reason>` line on stderr per refused record
 (the reason names the field, never the text), one
 `Record <index> (<key>): <warning>` line per warning (an unresolved
@@ -299,8 +372,9 @@ deactivated=.. dry_run=..` (`deactivated=n/a` without `--deactivate-missing`).
 The summary is styled as a success, as a warning when anything was skipped or
 warned about, and as an error when records were skipped and nothing was
 written or unchanged; the exit status is 0 in all three cases, so read the
-counts. A bundle that cannot be read, a `file` record without `--files-root`,
-and a `--strict` refusal are `CommandError`s with a non-zero exit. Nothing the
+counts. A bundle that cannot be read, an archive refused for its members or
+its checksums, a loose bundle's `file` record without `--files-root`,
+`--files-root` with an archive, and a `--strict` refusal are `CommandError`s with a non-zero exit. Nothing the
 command prints contains a document's text or pages.
 
 Per record, the outcome is `created`, `updated` (some field other than
@@ -691,7 +765,8 @@ read until the flag comes back; the importer and the admin keep working.
 - **A chat tool over the corpus.** No MCP or chat tool searches the corpus,
   and there is no full-text or trigram search over `text`.
 - **Token auth for a push endpoint.** The REST API is session-authenticated
-  only, so the pipeline cannot push a bundle; it is piped in.
+  only, so the pipeline cannot push a bundle; it is piped in, as JSON or as a
+  zip.
 - **The refresh in the chat research path.** The chat and the speculative
   precompute read the rows the wizard's extraction and appeal steps leave
   behind, and do not run `arefresh_match` themselves.

@@ -9,9 +9,14 @@ sentinel planted in the pages proves it.
 
 import datetime
 import hashlib
+import io
 import json
 import os
+import stat
+import struct
 import tempfile
+import warnings
+import zipfile
 from io import StringIO
 from unittest.mock import patch
 
@@ -31,6 +36,7 @@ from fighthealthinsurance.models import (
     PublicPlanDocument,
     _stored_file_in_use,
 )
+from fighthealthinsurance import plan_document_bundle
 from fighthealthinsurance.plan_document_bundle import MAX_TEXT_CHARS
 from tests.pdf_fixtures import make_pdf_bytes
 
@@ -198,6 +204,12 @@ class _ImportTestCase(TestCase):
     def the_document(self, key=EOC_KEY):
         return PublicPlanDocument.objects.get(document_key=key)
 
+    def two_records(self):
+        return [
+            self.record(),
+            self.record(document_key=SBC_KEY, document_type="summary_of_benefits"),
+        ]
+
 
 class NewUpdatedUnchangedTest(_ImportTestCase):
     def test_imports_a_new_record_from_pages_as_page_marked_text(self):
@@ -335,7 +347,9 @@ class NewUpdatedUnchangedTest(_ImportTestCase):
 
     def test_updates_an_existing_record_by_document_key_without_duplicating(self):
         self.run_import([self.record()])
-        out, _ = self.run_import([self.record(title="Kaiser NorCal 2025 HMO EOC, revised")])
+        out, _ = self.run_import(
+            [self.record(title="Kaiser NorCal 2025 HMO EOC, revised")]
+        )
         self.assertEqual(
             list(PublicPlanDocument.objects.values_list("title", flat=True)),
             ["Kaiser NorCal 2025 HMO EOC, revised"],
@@ -457,7 +471,9 @@ class FileRecordsTest(_ImportTestCase):
         root, data = self.pdf_under_root()
         with open(os.path.join(self.tmp, "outside.pdf"), "wb") as fh:
             fh.write(data)
-        out, err = self.run_import([self.file_record("../outside.pdf")], files_root=root)
+        out, err = self.run_import(
+            [self.file_record("../outside.pdf")], files_root=root
+        )
         self.assertIn(
             f"Skipped record 0 ({SBC_KEY}): file: the path leaves the files root", err
         )
@@ -609,7 +625,9 @@ class PlanResolutionTest(_ImportTestCase):
 
     def test_resolves_the_national_plan_when_the_state_has_none(self):
         national = self.plan(state="")
-        _, err = self.run_import([self.record(plan_name="medicare advantage", state="CA")])
+        _, err = self.run_import(
+            [self.record(plan_name="medicare advantage", state="CA")]
+        )
         self.assertEqual(self.the_document().insurance_plan, national)
         self.assertEqual(err, "")
 
@@ -679,7 +697,11 @@ class CarrierResolutionTest(_ImportTestCase):
 
     def test_insurance_company_id_wins_over_insurer(self):
         self.run_import(
-            [self.record(insurance_company_id=self.aetna.id, insurer="Kaiser Permanente")]
+            [
+                self.record(
+                    insurance_company_id=self.aetna.id, insurer="Kaiser Permanente"
+                )
+            ]
         )
         self.assertEqual(self.the_document().insurance_company, self.aetna)
 
@@ -824,12 +846,6 @@ class RefusedRecordsTest(_ImportTestCase):
 
 
 class InputFormatsTest(_ImportTestCase):
-    def two_records(self):
-        return [
-            self.record(),
-            self.record(document_key=SBC_KEY, document_type="summary_of_benefits"),
-        ]
-
     def json_lines(self):
         return "\n".join(json.dumps(r) for r in self.two_records()) + "\n"
 
@@ -890,3 +906,383 @@ class OutputNeverShowsTextTest(_ImportTestCase):
         self.assertNotIn(SENTINEL, out)
         self.assertNotIn(SENTINEL, err)
         self.assertEqual([m for m in messages if SENTINEL in m], [])
+
+
+# -- zip bundles ---------------------------------------------------------------
+
+
+#: The top-level keys plan_document_export writes beside "documents".
+EXPORTER_KEYS = {
+    "bundle_version": 1,
+    "generated_at": "2026-11-06T00:00:00+00:00",
+    "generator": "healthinsurance-llm-internal dataset_tools.plan_document_export",
+    "source_commit": "0" * 40,
+    "extractor": "pymupdf 1.28.2",
+    "pipeline_version": "plan-docs-1",
+}
+ARCHIVE_PDF = "files/kaiser-norcal-sbc-2025-hmo.pdf"
+
+
+def zip_member(name, data=b"", **attrs):
+    """A ZipInfo the way the exporter writes one: a fixed date, deflated."""
+    info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+    info.compress_type = attrs.pop("compress_type", zipfile.ZIP_DEFLATED)
+    info.external_attr = attrs.pop("external_attr", 0o644 << 16)
+    return info, data
+
+
+def sums_for(members):
+    return "".join(
+        f"{hashlib.sha256(data).hexdigest()}  {name}\n"
+        for name, data in members
+        if not name.endswith("/")
+    ).encode()
+
+
+def build_zip(members):
+    """Archive bytes holding ``members`` [(ZipInfo, bytes)], in order."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf, warnings.catch_warnings():
+        # Two members of one name are a case these tests write on purpose.
+        warnings.simplefilter("ignore", UserWarning)
+        for info, data in members:
+            zf.writestr(info, data)
+    return buf.getvalue()
+
+
+class ArchiveSourcesTest(_ImportTestCase):
+    """--source plan-docs.zip: the exporter's archive, read in place."""
+
+    def bundle_bytes(self, records, **top):
+        return json.dumps(dict(EXPORTER_KEYS, documents=records, **top)).encode()
+
+    def zip_bytes(
+        self,
+        records,
+        files=None,
+        *,
+        sums=True,
+        extra=(),
+        bundle_name="bundle.json",
+        bundle=None,
+    ):
+        members = [
+            (bundle_name, bundle if bundle is not None else self.bundle_bytes(records))
+        ]
+        members += sorted((files or {}).items())
+        members += list(extra)
+        if sums:
+            members.append(("SHA256SUMS", sums_for(members)))
+        return build_zip([zip_member(name, data) for name, data in members])
+
+    def write_zip(self, records, name="plan-docs.zip", **kwargs):
+        path = os.path.join(self.tmp, name)
+        with open(path, "wb") as fh:
+            fh.write(self.zip_bytes(records, **kwargs))
+        return path
+
+    def write_raw(self, data, name="plan-docs.zip"):
+        path = os.path.join(self.tmp, name)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path
+
+    def run_zip_from_stdin(self, data, **options):
+        return self.run_source("-", stdin=io.BytesIO(data), **options)
+
+    def archive_file_record(self, **overrides):
+        return self.file_record(relative=ARCHIVE_PDF, **overrides)
+
+    def assert_refused(self, path_or_data, *needles, **options):
+        if isinstance(path_or_data, bytes):
+            path_or_data = self.write_raw(path_or_data)
+        with self.assertRaises(CommandError) as caught:
+            self.run_source(path_or_data, **options)
+        for needle in needles:
+            self.assertIn(needle, str(caught.exception))
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+        return str(caught.exception)
+
+    # -- reading ---------------------------------------------------------------
+
+    def test_a_zip_with_inline_pages_imports_by_its_extension(self):
+        record = self.record(pages=["First page.", "", "Third page."])
+        out, _ = self.run_source(self.write_zip([record], sums=False))
+        self.assertIn("Loaded 1 record(s) from", out)
+        self.assertIn("(archive: 0 file member(s), no SHA256SUMS)", out)
+        self.assertIn("created=1", out)
+        text = self.the_document().text
+        self.assertIn("[Page 1]\nFirst page.", text)
+        self.assertIn("[Page 3]\nThird page.", text)
+        self.assertNotIn("[Page 2]", text)
+
+    def test_checksums_are_reported_as_verified(self):
+        out, _ = self.run_source(self.write_zip([self.record()]))
+        self.assertIn("checksums verified", out)
+
+    def test_provenance_keys_at_the_top_level_are_ignored(self):
+        out, _ = self.run_source(self.write_zip([self.record()]))
+        self.assertIn("created=1", out)
+        # The same object as a plain JSON bundle.
+        path = self.write_text(
+            json.dumps(dict(EXPORTER_KEYS, documents=[self.record(title="Renamed")])),
+            "bundle.json",
+        )
+        out, _ = self.run_source(path)
+        self.assertIn("updated=1", out)
+
+    def test_a_zip_on_stdin_is_detected_by_its_magic(self):
+        out, _ = self.run_zip_from_stdin(self.zip_bytes([self.record()]))
+        self.assertIn("Loaded 1 record(s) from '-' (archive:", out)
+        self.assertIn("created=1", out)
+
+    def test_format_zip_reads_an_archive_without_the_extension(self):
+        path = self.write_zip([self.record()], name="plan-docs.bin")
+        out, _ = self.run_source(path, format="zip")
+        self.assertIn("created=1", out)
+
+    def test_a_zip_without_the_extension_is_detected_by_its_magic(self):
+        out, _ = self.run_source(self.write_zip([self.record()], name="plan-docs.bin"))
+        self.assertIn("created=1", out)
+
+    def test_a_jsonl_bundle_member_is_accepted(self):
+        lines = "\n".join(json.dumps(r) for r in self.two_records()).encode()
+        path = self.write_zip([], bundle_name="bundle.jsonl", bundle=lines)
+        out, _ = self.run_source(path)
+        self.assertIn("created=2", out)
+
+    def test_file_records_read_their_files_from_the_archive(self):
+        data = make_pdf_bytes(PDF_PAGES)
+        out, _ = self.run_source(
+            self.write_zip([self.archive_file_record()], files={ARCHIVE_PDF: data})
+        )
+        self.assertIn("(archive: 1 file member(s), checksums verified)", out)
+        doc = self.the_document(SBC_KEY)
+        self.assertEqual(doc.page_count, 2)
+        self.assertIn(f"[Page 2]\n{PDF_PAGES[1]}", doc.text)
+        self.assertEqual(doc.source_sha256, hashlib.sha256(data).hexdigest())
+
+    def test_store_file_keeps_the_original_from_the_archive(self):
+        backend = self.temporary_storage()
+        data = make_pdf_bytes(PDF_PAGES)
+        self.run_zip_from_stdin(
+            self.zip_bytes([self.archive_file_record()], files={ARCHIVE_PDF: data}),
+            store_file=True,
+        )
+        doc = self.the_document(SBC_KEY)
+        with backend.open(doc.stored_file.name, "rb") as fh:
+            self.assertEqual(fh.read(), data)
+
+    def test_a_files_directory_entry_is_accepted(self):
+        out, _ = self.run_source(
+            self.write_zip([self.record()], extra=[("files/", b"")])
+        )
+        self.assertIn("created=1", out)
+
+    def test_deactivate_missing_works_from_a_zip(self):
+        self.run_import(self.two_records())
+        out, _ = self.run_source(
+            self.write_zip([self.record()]), deactivate_missing=True
+        )
+        self.assertIn("deactivated=1", out)
+        self.assertFalse(self.the_document(SBC_KEY).is_active)
+
+    def test_a_dry_run_of_a_zip_writes_no_row_and_no_file(self):
+        backend = self.temporary_storage()
+        out, _ = self.run_source(
+            self.write_zip(
+                [self.archive_file_record()],
+                files={ARCHIVE_PDF: make_pdf_bytes(PDF_PAGES)},
+            ),
+            dry_run=True,
+            store_file=True,
+        )
+        self.assertIn("dry_run=True", out)
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+        self.assertEqual(self.stored_files(backend), [])
+
+    # -- refusals: per record -------------------------------------------------
+
+    def test_a_file_record_naming_a_missing_member_is_skipped(self):
+        out, err = self.run_source(self.write_zip([self.archive_file_record()]))
+        self.assertIn(
+            f"Skipped record 0 ({SBC_KEY}): file: no such member under files/ in the archive",
+            err,
+        )
+        self.assertIn("skipped=1", out)
+
+    def test_a_file_record_must_name_a_member_under_files(self):
+        data = make_pdf_bytes(PDF_PAGES)
+        for relative in ("bundle.json", "SHA256SUMS", "kaiser-norcal-sbc-2025-hmo.pdf"):
+            with self.subTest(relative=relative):
+                _, err = self.run_source(
+                    self.write_zip(
+                        [self.file_record(relative=relative)], files={ARCHIVE_PDF: data}
+                    )
+                )
+                self.assertIn("file: no such member under files/ in the archive", err)
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+    def test_a_corrupt_member_without_sums_skips_its_record(self):
+        data = self.corrupt_pdf_zip(sums=False)
+        out, err = self.run_source(self.write_raw(data))
+        self.assertIn("file: the archive member cannot be read", err)
+        self.assertIn("skipped=1", out)
+
+    def corrupt_pdf_zip(self, *, sums):
+        pdf = make_pdf_bytes(PDF_PAGES)
+        raw = bytearray(
+            self.zip_bytes(
+                [self.archive_file_record()], files={ARCHIVE_PDF: pdf}, sums=sums
+            )
+        )
+        # Flip bytes inside the PDF member's deflated data.
+        start = raw.find(ARCHIVE_PDF.encode()) + len(ARCHIVE_PDF) + 10
+        for offset in range(start, start + 40):
+            raw[offset] ^= 0xFF
+        return bytes(raw)
+
+    # -- refusals: the whole archive -------------------------------------------
+
+    def test_a_corrupt_member_with_sums_refuses_the_archive(self):
+        self.assert_refused(self.corrupt_pdf_zip(sums=True), ARCHIVE_PDF)
+
+    def test_files_root_with_an_archive_is_refused(self):
+        self.assert_refused(
+            self.write_zip([self.record()]), "--files-root", files_root=self.tmp
+        )
+
+    def test_a_member_outside_the_contract_refuses_the_archive(self):
+        for name in (
+            "notes.txt",
+            "files/x.exe",
+            "/abs.pdf",
+            "files/../x.pdf",
+            "files\\x.pdf",
+            "files/sub/x.pdf",
+            "files/é.pdf",
+            "files/a\nb.pdf",
+            "notes/",
+            "files/x.pdf/",
+            "files/" + "a" * 600 + ".pdf",
+        ):
+            with self.subTest(name=name):
+                message = self.assert_refused(
+                    self.zip_bytes([self.record()], extra=[(name, b"x")], sums=False),
+                    "archive member(s) refused",
+                )
+                self.assertNotIn("\n", message)
+
+    def test_an_archive_with_no_or_two_bundle_files_is_refused(self):
+        empty = io.BytesIO()
+        zipfile.ZipFile(empty, "w").close()
+        self.assertEqual(empty.getvalue()[:4], b"PK\x05\x06")
+        self.assert_refused(empty.getvalue(), "exactly one bundle file")
+        both = self.zip_bytes(
+            [self.record()], extra=[("bundle.jsonl", b"{}")], sums=False
+        )
+        self.assert_refused(both, "exactly one bundle file")
+
+    def test_duplicate_member_names_refuse_the_archive(self):
+        data = self.zip_bytes(
+            [self.record()], extra=[("bundle.json", b"[]")], sums=False
+        )
+        self.assert_refused(data, "given twice")
+
+    def test_an_encrypted_member_is_refused(self):
+        # writestr resets flag_bits, so set the encryption bit in the bytes:
+        # the local header's flag word at +6, the central directory's at +8.
+        raw = bytearray(self.zip_bytes([self.record()], sums=False))
+        struct.pack_into("<H", raw, raw.find(b"PK\x03\x04") + 6, 1)
+        struct.pack_into("<H", raw, raw.find(b"PK\x01\x02") + 8, 1)
+        self.assert_refused(bytes(raw), "'bundle.json' (encrypted)")
+
+    def test_a_symlink_member_is_refused(self):
+        members = [
+            zip_member("bundle.json", self.bundle_bytes([self.record()])),
+            zip_member(
+                ARCHIVE_PDF, b"/etc/passwd", external_attr=(stat.S_IFLNK | 0o777) << 16
+            ),
+        ]
+        self.assert_refused(build_zip(members), "a symbolic link")
+
+    def test_a_member_with_another_compression_method_is_refused(self):
+        members = [
+            zip_member("bundle.json", self.bundle_bytes([self.record()])),
+            zip_member(ARCHIVE_PDF, b"%PDF-", compress_type=zipfile.ZIP_BZIP2),
+        ]
+        self.assert_refused(build_zip(members), "unsupported compression")
+
+    def test_member_size_caps_apply_before_any_member_is_read(self):
+        data = self.zip_bytes(
+            [self.archive_file_record()], files={ARCHIVE_PDF: b"x" * 64}
+        )
+        opened = patch.object(zipfile.ZipFile, "open", side_effect=AssertionError)
+        with patch.object(plan_document_bundle, "MAX_FILE_BYTES", 10), opened as open_:
+            self.assert_refused(data, ARCHIVE_PDF, "larger than 10 bytes")
+        open_.assert_not_called()
+        with patch.object(plan_document_bundle, "MAX_ARCHIVE_BYTES", 10):
+            self.assert_refused(data, "add up to more than 10 bytes")
+
+    def test_too_many_members_refuses_the_archive(self):
+        with patch.object(plan_document_bundle, "MAX_ARCHIVE_MEMBERS", 1):
+            self.assert_refused(self.zip_bytes([self.record()]), "at most 1 members")
+
+    def test_a_checksum_mismatch_refuses_the_archive(self):
+        bad_sums = ("0" * 64 + "  bundle.json\n").encode()
+        members = [
+            zip_member("bundle.json", self.bundle_bytes([self.record()])),
+            zip_member("SHA256SUMS", bad_sums),
+        ]
+        self.assert_refused(build_zip(members), "'bundle.json' does not match")
+
+    def test_a_member_missing_from_sha256sums_is_refused(self):
+        bundle = self.bundle_bytes([self.archive_file_record()])
+        pdf = make_pdf_bytes(PDF_PAGES)
+        members = [
+            zip_member("bundle.json", bundle),
+            zip_member(ARCHIVE_PDF, pdf),
+            zip_member("SHA256SUMS", sums_for([("bundle.json", bundle)])),
+        ]
+        self.assert_refused(build_zip(members), "does not list", ARCHIVE_PDF)
+
+    def test_a_listed_path_that_is_not_a_member_is_refused(self):
+        bundle = self.bundle_bytes([self.record()])
+        sums = sums_for([("bundle.json", bundle), (ARCHIVE_PDF, b"gone")])
+        members = [zip_member("bundle.json", bundle), zip_member("SHA256SUMS", sums)]
+        self.assert_refused(build_zip(members), "does not hold", ARCHIVE_PDF)
+
+    def test_bytes_that_start_like_a_zip_but_are_not_one_are_a_command_error(self):
+        self.assert_refused(b"PK\x03\x04garbage", "not a zip archive")
+
+    def test_a_bundle_member_that_is_not_json_is_a_command_error(self):
+        path = self.write_zip([], bundle=b"{not json")
+        self.assert_refused(path, "bundle.json", "not valid JSON")
+
+    def test_format_json_on_zip_bytes_is_a_command_error(self):
+        with self.assertRaises(CommandError):
+            self.run_source(self.write_zip([self.record()]), format="json")
+
+    def test_output_never_contains_document_text_from_a_zip(self):
+        out, err = self.run_source(
+            self.write_zip([self.record(pages=[f"Benefits {SENTINEL} page."])])
+        )
+        self.assertNotIn(SENTINEL, out + err)
+
+
+class TextCleanupTest(_ImportTestCase):
+    def test_crlf_page_marked_text_keeps_its_pages(self):
+        self.run_import(
+            [
+                self.record_without(
+                    "pages", text="[Page 1]\r\nOne.\r\n\r\n[Page 2]\r\nTwo."
+                )
+            ]
+        )
+        doc = self.the_document()
+        self.assertEqual(doc.page_count, 2)
+        self.assertIn("[Page 2]\nTwo.", doc.text)
+
+    def test_a_nul_in_pages_is_dropped(self):
+        self.run_import([self.record(pages=["Bene\x00fits."])])
+        self.assertIn("Benefits.", self.the_document().text)

@@ -1,14 +1,21 @@
 """Load a plan-document bundle into PublicPlanDocument (plan_document_bundle).
 
 The bundle comes from the plan-document pipeline in
-healthinsurance-llm-internal. Read it from a file, or from stdin with
-``--source -`` so it can be piped into a pod without landing on disk::
+healthinsurance-llm-internal (``python -m dataset_tools.plan_document_export``
+writes a zip). Read it from a file, or from stdin with ``--source -`` so it
+can be piped into a pod without landing on disk::
 
+    python manage.py import_plan_documents --source plan-docs.zip --dry-run
     python manage.py import_plan_documents --source bundle.json --dry-run
-    kubectl exec -i <pod> -- python manage.py import_plan_documents --source - < bundle.json
+    kubectl exec -i <pod> -- python manage.py import_plan_documents --source - < plan-docs.zip
 
-A record that names a ``file`` needs ``--files-root`` (so a piped bundle
-carries its text inline, as ``pages`` or ``text``). Records are checked one
+A zip (by its ``.zip`` name, its first bytes, or ``--format zip``) is read in
+place: its ``bundle.json`` (or ``bundle.jsonl``) holds the records, its
+``files/`` members are what their ``file`` fields name, and its
+``SHA256SUMS``, when present, is checked before anything is written; it
+takes no ``--files-root``. In a loose JSON bundle a record that names a
+``file`` needs ``--files-root`` (so a piped JSON bundle carries its text
+inline, as ``pages`` or ``text``). Records are checked one
 by one: a refused record is skipped and counted, and the run exits 0 with
 the summary styled as a warning; ``--strict`` refuses the whole bundle on
 the first bad record instead. A bundle that cannot be read at all (not
@@ -20,27 +27,30 @@ Output names keys, fields and counts. It never prints a document's text.
 """
 
 import datetime
-import json
 import sys
 from pathlib import Path
-from typing import Any, List, Union
+from typing import Any, List, Optional, Tuple, Union
 
 from django.core.management.base import BaseCommand, CommandError
 
 from fighthealthinsurance.plan_document_bundle import (
     MAX_BUNDLE_BYTES,
+    BundleArchive,
+    BundleDecodeError,
     BundleError,
+    decode_bundle,
     import_bundle,
-    no_repeated_fields,
-    parse_bundle,
-    parse_jsonl,
+    looks_like_zip,
 )
 
 READ_CHUNK = 1 << 20  # 1 MiB
 
 
 class Command(BaseCommand):
-    help = "Load a plan-document bundle (JSON or JSONL; a file or '-' for stdin)."
+    help = (
+        "Load a plan-document bundle (a zip, JSON or JSON Lines; a file or '-' "
+        "for stdin)."
+    )
     # Lets tests hand the command a stdin of their own.
     stealth_options = ("stdin",)
 
@@ -49,18 +59,27 @@ class Command(BaseCommand):
             "--source",
             "-s",
             default="-",
-            help="Path to the bundle, or '-' (the default) to read it from stdin.",
+            help=(
+                "Path to the bundle (.zip, .json or .jsonl), or '-' (the default) "
+                "to read it from stdin."
+            ),
         )
         parser.add_argument(
             "--format",
-            choices=("auto", "json", "jsonl"),
+            choices=("auto", "json", "jsonl", "zip"),
             default="auto",
-            help="auto reads a leading '[' or '{' as JSON and anything else as JSON Lines.",
+            help=(
+                "auto reads a .zip name or zip bytes as an archive, a leading '[' "
+                "or '{' as JSON and anything else as JSON Lines."
+            ),
         )
         parser.add_argument(
             "--files-root",
             default=None,
-            help="Directory the records' relative 'file' paths are read under.",
+            help=(
+                "Directory the records' relative 'file' paths are read under "
+                "(not with an archive, which carries its own files)."
+            ),
         )
         parser.add_argument(
             "--store-file",
@@ -108,56 +127,99 @@ class Command(BaseCommand):
             return b"".join(chunks)
         return "".join(chunks)
 
-    def _load(self, source: str, fmt: str, stdin: Any) -> List[dict]:
+    def _load(
+        self, source: str, fmt: str, stdin: Any
+    ) -> Tuple[List[dict], Optional[BundleArchive]]:
+        """The bundle's records, and the archive they came from when the
+        source is a zip (open: the caller closes it)."""
+        archive: Optional[BundleArchive] = None
         try:
-            if source == "-":
-                raw = self._read(getattr(stdin, "buffer", stdin))
-            else:
-                path = Path(source)
-                if not path.is_file():
-                    raise CommandError(f"No bundle file at {source}")
-                with path.open("rb") as fh:
-                    raw = self._read(fh)
-            text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
-        except UnicodeDecodeError:
-            raise CommandError("The bundle is not UTF-8 text") from None
-        if fmt == "auto":
-            if source.lower().endswith(".jsonl"):
-                fmt = "jsonl"
-            else:
-                head = text.lstrip()[:1]
-                fmt = "json" if head in ("[", "{") else "jsonl"
-        try:
-            if fmt == "jsonl":
-                return parse_jsonl(text.splitlines())
             try:
-                data = json.loads(text, object_pairs_hook=no_repeated_fields)
-            except json.JSONDecodeError as exc:
-                raise CommandError(
-                    f"The bundle is not valid JSON: {exc.msg} "
-                    f"(line {exc.lineno}, column {exc.colno})"
-                ) from None
-            except RecursionError:
-                raise CommandError(
-                    "The bundle is not valid JSON: it nests too deeply"
-                ) from None
-            except ValueError:
-                raise CommandError(
-                    "The bundle is not valid JSON: it has a number too long to read"
-                ) from None
-            return parse_bundle(data)
+                if source == "-":
+                    raw = self._read(getattr(stdin, "buffer", stdin))
+                    if fmt == "zip" or (fmt == "auto" and isinstance(raw, bytes)):
+                        if not isinstance(raw, bytes):
+                            raise CommandError(
+                                "A zip bundle on stdin needs a binary stream"
+                            )
+                        if fmt == "zip" or looks_like_zip(raw):
+                            archive = BundleArchive.open_bytes(raw)
+                else:
+                    path = Path(source)
+                    if not path.is_file():
+                        raise CommandError(f"No bundle file at {source}")
+                    if path.stat().st_size > MAX_BUNDLE_BYTES:
+                        raise CommandError(
+                            f"The bundle is larger than {MAX_BUNDLE_BYTES} bytes"
+                        )
+                    with path.open("rb") as fh:
+                        head = fh.read(4)
+                    if fmt == "zip" or (
+                        fmt == "auto"
+                        and (source.lower().endswith(".zip") or looks_like_zip(head))
+                    ):
+                        archive = BundleArchive.open_path(str(path))
+                    else:
+                        with path.open("rb") as fh:
+                            raw = self._read(fh)
+                if archive is not None:
+                    return archive.records(), archive
+                text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            except UnicodeDecodeError:
+                raise CommandError("The bundle is not UTF-8 text") from None
+            if fmt == "auto":
+                if source.lower().endswith(".jsonl"):
+                    fmt = "jsonl"
+                else:
+                    head_char = text.lstrip()[:1]
+                    fmt = "json" if head_char in ("[", "{") else "jsonl"
+            try:
+                return decode_bundle(text, fmt), None
+            except BundleDecodeError as exc:
+                raise CommandError(f"The bundle is {exc}") from None
         except BundleError as exc:
+            if archive is not None:
+                archive.close()
             raise CommandError(f"Bundle refused: {exc}") from None
+        except BaseException:
+            if archive is not None:
+                archive.close()
+            raise
 
     def handle(self, *args: Any, **options: Any) -> None:
-        records = self._load(
+        records, archive = self._load(
             options["source"], options["format"], options.get("stdin") or sys.stdin
         )
+        try:
+            self._import(records, archive, options)
+        finally:
+            if archive is not None:
+                archive.close()
+
+    def _import(
+        self, records: List[dict], archive: Optional[BundleArchive], options: Any
+    ) -> None:
+        if archive is not None and options["files_root"] is not None:
+            raise CommandError(
+                "An archive carries its own files: --files-root is not used with one"
+            )
+        checksums = ""
+        if archive is not None:
+            try:
+                verified = archive.verify_checksums()
+            except BundleError as exc:
+                raise CommandError(f"Bundle refused: {exc}") from None
+            checksums = (
+                f" (archive: {archive.file_count} file member(s), "
+                f"{'checksums verified' if verified else 'no SHA256SUMS'})"
+            )
         batch = options["batch"] or datetime.datetime.now(
             datetime.timezone.utc
         ).strftime("%Y%m%dT%H%M%SZ")
-        self.stdout.write(f"Loaded {len(records)} record(s) from {options['source']!r}")
-        if options["files_root"] is None:
+        self.stdout.write(
+            f"Loaded {len(records)} record(s) from {options['source']!r}{checksums}"
+        )
+        if options["files_root"] is None and archive is None:
             # A missing flag is the operator's mistake, not a bad record: a
             # piped bundle carries its text inline (pages or text).
             with_files = [
@@ -174,7 +236,7 @@ class Command(BaseCommand):
         try:
             result = import_bundle(
                 records,
-                files_root=options["files_root"],
+                files_root=archive if archive is not None else options["files_root"],
                 store_file=options["store_file"],
                 import_batch=batch,
                 deactivate_missing=options["deactivate_missing"],
