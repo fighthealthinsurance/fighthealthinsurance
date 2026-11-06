@@ -13,6 +13,7 @@ from fighthealthinsurance.denial_history_consent import (
 from fighthealthinsurance.cms_coverage_api import (
     NCD_CITATION_MARKER,
     get_cms_coverage_citations,
+    is_retired_ncd_title,
 )
 from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
 from fighthealthinsurance.extralink_context_helper import (
@@ -52,8 +53,12 @@ def _cached_cms_citations(value: Any) -> Optional[List[str]]:
         return None
     if not value:
         return []
-    if all(isinstance(c, str) and NCD_CITATION_MARKER in c for c in value):
+    if all(
+        isinstance(c, str) and NCD_CITATION_MARKER in c and not is_retired_ncd_title(c)
+        for c in value
+    ):
         return list(value)
+    # A retired NCD, cached before they were left out: look it up again.
     return None
 
 

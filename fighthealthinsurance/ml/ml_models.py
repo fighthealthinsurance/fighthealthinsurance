@@ -1500,6 +1500,8 @@ class ApiKeyRing:
         self._placeholder: Optional[str] = raw[0] if raw else None
         # Each spent key's monotonic deadline, after which it is sent again.
         self._spent_until: dict[str, float] = {}
+        # The spent keys refused for credit or quota, not a rate limit.
+        self._out_of_credit: set[str] = set()
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
@@ -1554,16 +1556,37 @@ class ApiKeyRing:
         with self._lock:
             return all(self._spent_until.get(k, 0.0) > now for k in self._keys)
 
-    def mark_spent(self, key: Optional[str], seconds: float) -> Optional[str]:
+    def mark_spent(
+        self, key: Optional[str], seconds: float, out_of_credit: bool = False
+    ) -> Optional[str]:
         """Note that ``key`` was refused for a rate limit or quota, so it is
-        passed over for ``seconds``. Returns the key to send next, or None
-        when there is no other, so the caller files the refusal as before."""
+        passed over for ``seconds``; ``out_of_credit`` when the refusal was
+        for credit or quota, not a rate limit. Returns the key to send next,
+        or None when there is no other, so the caller files the refusal as
+        before."""
         if key is None or key not in self._keys or len(self._keys) < 2:
             return None
         with self._lock:
             self._spent_until[key] = time.monotonic() + max(0.0, seconds)
+            if out_of_credit:
+                self._out_of_credit.add(key)
+            else:
+                self._out_of_credit.discard(key)
             nxt = self._current_locked()
         return None if nxt == key else nxt
+
+    def all_out_of_credit(self) -> bool:
+        """Whether every key is in a cooldown for a credit or quota refusal
+        (False without keys): only then is the provider itself out of credit.
+        A key resting after a rate limit will be served again shortly."""
+        if not self._keys:
+            return False
+        now = time.monotonic()
+        with self._lock:
+            return all(
+                k in self._out_of_credit and self._spent_until.get(k, 0.0) > now
+                for k in self._keys
+            )
 
     def note_served(self, key: Optional[str]) -> None:
         """``key`` answered 2xx: whatever cooldown it was under is over."""
@@ -1571,6 +1594,7 @@ class ApiKeyRing:
             return
         with self._lock:
             self._spent_until.pop(key, None)
+            self._out_of_credit.discard(key)
 
 
 # Per-task inference time budgets (seconds). The full-appeal budget stays at
@@ -3222,7 +3246,11 @@ class RemoteOpenLike(RemoteModel):
             if not _key_refusal(resp.status_code, body):
                 return resp
             why, seconds = self._key_cooldown(resp.status_code, body, resp)
-            nxt = self._key_ring.mark_spent(key, seconds)
+            nxt = self._key_ring.mark_spent(
+                key,
+                seconds,
+                out_of_credit=spend.quota_refusal(resp.status_code, body),
+            )
             if nxt is None or nxt in tried:
                 return resp
             logger.warning(
@@ -3252,7 +3280,9 @@ class RemoteOpenLike(RemoteModel):
             return None
         tried.add(key)
         why, seconds = self._key_cooldown(e.status, body, e)
-        nxt = self._key_ring.mark_spent(key, seconds)
+        nxt = self._key_ring.mark_spent(
+            key, seconds, out_of_credit=spend.quota_refusal(e.status, body)
+        )
         if nxt is None or nxt in tried:
             return None
         logger.warning(
@@ -4689,6 +4719,15 @@ class RemoteOpenLike(RemoteModel):
                 api_base, model, f"HTTP {status}: {provider_body_for_log(body)}"
             )
             return "missing_model"
+        if (
+            len(self._key_ring) >= 2
+            and spend.quota_refusal(status, body)
+            and not self._key_ring.all_out_of_credit()
+        ):
+            # One key out of credit while another only rests after a rate
+            # limit: the provider is not out of credit, so it is not paused
+            # for the day. The refused key's own cooldown keeps it unsent.
+            return "refused"
         if self._note_spend_refusal(status, body):
             return "credit"
         if probe or not external:

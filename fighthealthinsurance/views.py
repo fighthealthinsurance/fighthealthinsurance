@@ -2508,19 +2508,36 @@ class OCRView(View):
 
     def _ocr(self, uploader):
         def ocr_upload(x):
+            # Image.open reads only the header, so the size is known before
+            # anything is decoded; an image past the pixel cap is skipped
+            # rather than decoded here or by the fallback below. Checked
+            # outside the fallback's try: Pillow refuses a huge image with
+            # DecompressionBombError, which must not hand it to EasyOCR.
+            try:
+                img = Image.open(x)
+            except Image.DecompressionBombError:
+                logger.warning("Skipped an OCR upload over the pixel cap")
+                return ""
+            except Exception:
+                img = None
+            if img is not None and (
+                img.width * img.height > upload_limits.MAX_OCR_IMAGE_PIXELS
+            ):
+                logger.warning("Skipped an OCR upload over the pixel cap")
+                return ""
             try:
                 import pytesseract
 
-                # Image.open reads only the header, so the size is known
-                # before anything is decoded; an image past the pixel cap is
-                # skipped rather than decoded here or by the fallback below.
-                img = Image.open(x)
-                if img.width * img.height > upload_limits.MAX_OCR_IMAGE_PIXELS:
-                    logger.warning("Skipped an OCR upload over the pixel cap")
-                    return ""
+                if img is None:
+                    raise ValueError("not an image Pillow can read")
                 return pytesseract.image_to_string(
                     img, timeout=upload_limits.OCR_SECONDS_PER_IMAGE
                 )
+            except RuntimeError:
+                # pytesseract's timeout: EasyOCR has none, so don't hand it
+                # the image that ran out of time.
+                logger.warning("OCR timed out on an upload")
+                return ""
             except Exception:
                 easy_ocr_reader = getattr(self, "_easy_ocr_reader", None)
                 if easy_ocr_reader is None:

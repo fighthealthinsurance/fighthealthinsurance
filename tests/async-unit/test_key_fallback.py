@@ -329,6 +329,22 @@ class TestSharedTransport:
         assert spend.paused(RemoteAnthropic.SPEND_PROVIDER, "*")
 
     @pytest.mark.asyncio
+    async def test_a_rate_limited_primary_and_an_empty_fallback_do_not_pause_the_provider(
+        self, monkeypatch, make_fake_model_post
+    ):
+        """The primary only rests after a 429; the provider still has
+        credit, so it is not paused for the day over the fallback's."""
+        backend = _anthropic()
+        posts = _SequencedPost(
+            make_fake_model_post(429, "rate limited"),
+            make_fake_model_post(400, CREDIT_BODY),
+        )
+        assert await _answered(monkeypatch, backend, posts) is None
+        assert posts.bearer_tokens == ["first-key", "second-key"]
+        assert not spend.paused(RemoteAnthropic.SPEND_PROVIDER, "*")
+        assert backend._key_ring.spent("second-key")
+
+    @pytest.mark.asyncio
     async def test_one_key_is_not_sent_twice(self, monkeypatch, make_fake_model_post):
         backend = _anthropic({"ANTHROPIC_API_KEY": "first-key"})
         posts = _SequencedPost(make_fake_model_post(429, "rate limited"))
@@ -473,6 +489,23 @@ class TestAzureClaudeTransport:
         ):
             result = await backend._infer(system_prompts=["sys"], prompt="Hi")
         assert result is not None and result[0] == LONG_REPLY
+        assert posts.api_keys == ["first-key", "second-key"]
+        assert not spend.paused(RemoteAzureClaude.SPEND_PROVIDER, "*")
+
+    @pytest.mark.asyncio
+    async def test_a_rate_limited_primary_and_an_empty_fallback_do_not_pause_the_provider(
+        self, make_fake_model_post
+    ):
+        posts = _SequencedPost(
+            make_fake_model_post(429, "rate limited"),
+            make_fake_model_post(400, CREDIT_BODY),
+        )
+        backend = _azure_claude()
+        with patch.object(
+            aiohttp, "ClientSession", return_value=_SequencedSession(posts)
+        ):
+            result = await backend._infer(system_prompts=["sys"], prompt="Hi")
+        assert result is None
         assert posts.api_keys == ["first-key", "second-key"]
         assert not spend.paused(RemoteAzureClaude.SPEND_PROVIDER, "*")
 

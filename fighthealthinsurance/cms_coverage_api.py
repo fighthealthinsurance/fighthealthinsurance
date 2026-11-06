@@ -141,6 +141,8 @@ def _singular(token: str) -> str:
         return token[:-3] + "y"
     if token.endswith(("is", "us", "ss", "as", "os")):
         return token
+    if token.endswith("aches"):  # "headaches", "backaches"
+        return token[:-1]
     if token.endswith(("sses", "xes", "ches", "shes")):
         return token[:-2]
     if token.endswith("s"):
@@ -292,6 +294,16 @@ def _title_matches(query_tokens: List[str], title: str):
     return (-query_share, -title_share, -matched, len(title))
 
 
+# CMS keeps retired NCDs in the report, titled "... - RETIRED" or
+# "(RETIRED)". They no longer bind anyone, so they are never cited.
+_RETIRED_RE = re.compile(r"\bretired\b", re.IGNORECASE)
+
+
+def is_retired_ncd_title(title: str) -> bool:
+    """Whether an NCD title marks the NCD as retired."""
+    return bool(_RETIRED_RE.search(title or ""))
+
+
 def _filter_by_keyword(
     records: List[NCDDocument], keyword: str, max_results: int
 ) -> List[NCDDocument]:
@@ -316,6 +328,8 @@ def _filter_by_keyword(
         return []
     scored: List[tuple] = []
     for r in records:
+        if is_retired_ncd_title(r.title):
+            continue
         key = _title_matches(query_tokens, r.title)
         if key is not None:
             scored.append((key, r))
