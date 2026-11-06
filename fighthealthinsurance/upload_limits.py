@@ -85,9 +85,13 @@ def safe_filename(name: str) -> str:
     import re
 
     base = os.path.basename(str(name or "").replace("\\", "/"))
-    cleaned = re.sub(r"[^\w .\-]", "_", base).strip(" .") or "file"
-    stem, ext = os.path.splitext(cleaned)
-    ext = ext.lower()[:10]
+    # The extension from the name as given, so ".pdf" keeps it.
+    given = policy_document_extension(base)
+    stem = base[: len(base) - len(given)] if given else base
+    ext = re.sub(r"[^\w.]", "", given)[:10]
+    if ext == ".":
+        ext = ""
+    stem = re.sub(r"[^\w .\-]", "_", stem).strip(" .") or "file"
     return f"{stem[: max(1, MAX_FILENAME_CHARS - len(ext))]}{ext}"
 
 

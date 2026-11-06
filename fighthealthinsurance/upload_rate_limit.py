@@ -35,6 +35,9 @@ LIMIT_MESSAGE = (
     "You've uploaded a lot of files in a short time. "
     "Please wait a while and try again."
 )
+#: For one upload that is over the hour's limit by itself, where waiting
+#: never helps.
+BATCH_MESSAGE = "That's more files than we take at once. Please send fewer at a time."
 
 
 def files_per_hour() -> int:
@@ -62,6 +65,11 @@ def _who(request: HttpRequest, email: Optional[str]) -> list[tuple[bytes, str]]:
     if user is not None and user.is_authenticated:
         who.append((_ACCOUNT_LABEL, str(user.pk)))
     return who
+
+
+def refusal_message(files: int) -> str:
+    """What to tell a visitor refused for an upload of ``files`` files."""
+    return BATCH_MESSAGE if files > files_per_hour() else LIMIT_MESSAGE
 
 
 def _periods(now: datetime.datetime) -> list[tuple[str, int]]:
@@ -118,14 +126,16 @@ def uploaded_files(request: HttpRequest, *names: str) -> int:
     return sum(len([f for f in request.FILES.getlist(name) if f]) for name in names)
 
 
-def refused_form(form_class: Any, field: str, initial: Mapping[str, Any]) -> Any:
-    """A form for the page to show again with LIMIT_MESSAGE on ``field``,
-    filled from ``initial``. Unbound, so none of the upload's checks run
-    for a refused upload."""
+def refused_form(
+    form_class: Any, field: str, initial: Mapping[str, Any], files: int = 0
+) -> Any:
+    """A form for the page to show again with refusal_message(``files``) on
+    ``field``, filled from ``initial``. Unbound, so none of the upload's
+    checks run for a refused upload."""
     from django.forms.utils import ErrorDict
 
     form = form_class(initial=dict(initial))
     form.cleaned_data = {}
     form._errors = ErrorDict()
-    form.add_error(field, LIMIT_MESSAGE)
+    form.add_error(field, refusal_message(files))
     return form

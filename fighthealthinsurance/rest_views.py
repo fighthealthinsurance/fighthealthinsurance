@@ -1720,9 +1720,10 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
             )
         from fighthealthinsurance import upload_rate_limit
 
-        if not upload_rate_limit.take(request, len(request.FILES.getlist("file"))):
+        uploads = len(request.FILES.getlist("file"))
+        if not upload_rate_limit.take(request, uploads):
             return Response(
-                {"error": upload_rate_limit.LIMIT_MESSAGE},
+                {"error": upload_rate_limit.refusal_message(uploads)},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
         serializer = serializers.AppealAttachmentUploadSerializer(data=request.data)

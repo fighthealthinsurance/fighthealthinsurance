@@ -190,6 +190,21 @@ class EveryPageRefusesPastTheLimitTestCase(TestCase):
         self.assertEqual(response.status_code, 429)
 
 
+class RefusedOCRUploadsStillCountTestCase(TestCase):
+    def test_an_ocr_upload_refused_for_its_size_still_counts(self):
+        image = SimpleUploadedFile("page.png", b"\x89PNG" + b"0" * 300)
+        with patch(
+            "fighthealthinsurance.views.OCRView.refusal", return_value="Too big"
+        ):
+            response = Client().post(
+                reverse("server_side_ocr"),
+                {"privacy": "on", "tos": "on", "personalonly": "on", "uploader": image},
+                **HEADERS,
+            )
+        self.assertContains(response, "Too big")
+        self.assertTrue(UploadCount.objects.filter(count__gt=0).exists())
+
+
 class PolicyDocumentsHaveAFloorTestCase(TestCase):
     def test_explain_my_policy_turns_away_a_line_of_text(self):
         form = UnderstandPolicyForm(
@@ -279,6 +294,21 @@ class FileNamesAreMadeSafeTestCase(TestCase):
         name = upload_limits.safe_filename('<img src=x onerror="a()">.pdf')
         self.assertNotIn("<", name)
         self.assertTrue(name.endswith(".pdf"))
+
+    def test_a_name_that_is_only_an_extension_keeps_it(self):
+        self.assertEqual(upload_limits.safe_filename(".pdf"), "file.pdf")
+
+    def test_a_trailing_dot_is_dropped(self):
+        self.assertEqual(upload_limits.safe_filename("letter."), "letter")
+
+    def test_one_upload_over_the_hour_is_told_to_send_fewer(self):
+        with override_settings(FHI_UPLOAD_FILES_PER_HOUR=20):
+            self.assertEqual(
+                upload_rate_limit.refusal_message(21), upload_rate_limit.BATCH_MESSAGE
+            )
+            self.assertEqual(
+                upload_rate_limit.refusal_message(5), upload_rate_limit.LIMIT_MESSAGE
+            )
 
     def test_a_long_name_is_cut_with_its_extension_kept(self):
         name = upload_limits.safe_filename("a" * 500 + ".PDF")

@@ -247,6 +247,7 @@ class FollowUpView(generic.FormView):
                 self.form_class,
                 "followup_documents",
                 {**request.POST.dict(), **self.get_initial()},
+                files=files,
             )
             return self.render_to_response(self.get_context_data(form=form))
         return super().post(request, *args, **kwargs)
@@ -2476,11 +2477,17 @@ class OCRView(View):
             uploader = files["uploader"]
             # Before any file is read: the count and each file's size, which
             # Django measured as the files arrived, then the visitor's limit.
+            # Counted before the size and count checks answer, so an upload
+            # refused for them still uses up its place; their reason is the
+            # one shown, being the more specific.
             refused = self.refusal(uploader)
+            counted = upload_rate_limit.take(request, len(uploader))
             if refused is not None:
                 return render_ocr_error(request, refused, form)
-            if not upload_rate_limit.take(request, len(uploader)):
-                return render_ocr_error(request, upload_rate_limit.LIMIT_MESSAGE, form)
+            if not counted:
+                return render_ocr_error(
+                    request, upload_rate_limit.refusal_message(len(uploader)), form
+                )
             doc_txt = self._ocr(uploader)
             return render(
                 request,
@@ -3697,7 +3704,7 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
         files = upload_rate_limit.uploaded_files(request, "plan_documents")
         if not upload_rate_limit.take(request, files, request.POST.get("email")):
             form = upload_rate_limit.refused_form(
-                self.form_class, "plan_documents", request.POST
+                self.form_class, "plan_documents", request.POST, files=files
             )
             return self.render_to_response(self.get_context_data(form=form))
         return super().post(request, *args, **kwargs)
@@ -4490,7 +4497,7 @@ class UnderstandPolicyView(FormView):
         files = upload_rate_limit.uploaded_files(request, "policy_document")
         if not upload_rate_limit.take(request, files, request.POST.get("email")):
             form = upload_rate_limit.refused_form(
-                self.form_class, "policy_document", request.POST
+                self.form_class, "policy_document", request.POST, files=files
             )
             return self.render_to_response(self.get_context_data(form=form))
         return super().post(request, *args, **kwargs)
@@ -4669,7 +4676,7 @@ class SharePlanDocumentsView(FormView):
             return self._refuse(shared_plan_documents.TRY_AGAIN)
         files = request.FILES.getlist("plan_documents")
         if not upload_rate_limit.take(request, len(files), request.POST.get("email")):
-            return self._refuse(upload_rate_limit.LIMIT_MESSAGE)
+            return self._refuse(upload_rate_limit.refusal_message(len(files)))
         problem = shared_plan_documents.daily_limit_problem(request, files)
         if problem:
             return self._refuse(problem)
