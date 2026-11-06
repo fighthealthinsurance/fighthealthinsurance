@@ -181,7 +181,10 @@ class CombinedStorage(Storage):
         last_error: Optional[BaseException] = None
         error_list: List[BaseException] = []
         correct_size(content)
-        expected = getattr(content, "size", None)
+        try:
+            expected = content.size
+        except Exception:
+            expected = None
         seconds = save_timeout_seconds(content)
         wrong_size = False
         written: List[Storage] = []
@@ -189,6 +192,7 @@ class CombinedStorage(Storage):
             name = unique_name(name, max_length)
         for backend in self.backends:
             stored: Optional[str] = None
+            saved = False
             target_name = name if l is None else l
             # Whether this name is already taken on the backend BEFORE we
             # write. A timed-out save never returns the name it chose, and
@@ -214,6 +218,7 @@ class CombinedStorage(Storage):
                         stored = backend.save(
                             name=l, content=content, max_length=max_length
                         )
+                    saved = True
             except Exception as e:
                 logger.warning(f"Error saving {error_text(e)} to {backend}")
                 error_list.append(e)
@@ -243,10 +248,11 @@ class CombinedStorage(Storage):
             if l is not None and stored is not None and stored != l:
                 self._remove_renamed_copy(backend, l, stored)
                 continue
-            if l is None:
+            if l is None or not saved:
                 continue
-            if created_here:
-                written.append(backend)
+            # Storage.save never overwrites, so the name it returned is a copy
+            # this save made, whatever ``created_here`` found beforehand.
+            written.append(backend)
             if self._wrong_size(backend, l, expected):
                 short = OSError(
                     f"{backend} stored {file_tag(l)} at a size other than the {expected} bytes it was given"

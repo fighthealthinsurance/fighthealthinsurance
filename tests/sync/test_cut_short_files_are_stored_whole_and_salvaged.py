@@ -75,6 +75,40 @@ class SizeCheckedAfterSavingTest(SimpleTestCase):
         self.assertEqual(disk.files, {})
         self.assertEqual(bucket.files, {})
 
+    def test_a_copy_saved_under_another_name_is_removed_too(self):
+        class Renaming(MeasuredBucket):
+            """Says every name is taken, and saves under another one."""
+
+            def exists(self, name):
+                return True
+
+            def get_available_name(self, name, max_length=None):
+                return name
+
+            def _save(self, name, content):
+                return super()._save("other-" + name, content)
+
+        disk, bucket = Renaming(), MeasuredBucket(drop=10)
+        disk.files["kept.pdf"] = b"someone else's file"
+        with self.assertRaises(OSError):
+            CombinedStorage(disk, bucket).save("eoc.pdf", ContentFile(DOCUMENT))
+        self.assertEqual(disk.files, {"kept.pdf": b"someone else's file"})
+        self.assertEqual(bucket.files, {})
+
+    def test_content_without_a_size_still_saves(self):
+        class NoSize(ContentFile):
+            @property
+            def size(self):
+                raise io.UnsupportedOperation("no size")
+
+            @size.setter
+            def size(self, value):
+                pass
+
+        bucket = MeasuredBucket()
+        name = CombinedStorage(bucket).save("eoc.pdf", NoSize(DOCUMENT))
+        self.assertEqual(bucket.files[name], DOCUMENT)
+
     def test_whole_copies_save_as_before(self):
         disk, bucket = MeasuredBucket(), MeasuredBucket()
         name = CombinedStorage(disk, bucket).save("eoc.pdf", ContentFile(DOCUMENT))
