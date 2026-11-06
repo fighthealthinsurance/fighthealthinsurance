@@ -25,6 +25,7 @@ from fighthealthinsurance.ml.citation_verification import (
     verify_citations,
 )
 from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.ml.web_search_context import web_search_citations
 from fighthealthinsurance.models import (
     CMSCoverageCache,
     Denial,
@@ -605,6 +606,14 @@ class MLCitationsHelper:
         cms_task = asyncio.create_task(
             cls.generate_cms_coverage_citations(denial=denial)
         )
+        # OpenRouter's web search, when it is configured and the person
+        # allowed outside models, also alongside the backends. Its own time
+        # box ends before this run's, so awaiting it below never makes the
+        # run longer than ``timeout``; with nothing to search or nothing
+        # judged relevant it gives [] (see ml/web_search_context.py).
+        web_task = asyncio.create_task(
+            web_search_citations(denial, budget_seconds=max(0.0, timeout - 5))
+        )
 
         try:
             model_timeout = timeout - 10
@@ -669,13 +678,21 @@ class MLCitationsHelper:
             logger.debug(f"CMS coverage task failed ({type(e).__name__})")
             cms_citations = []
 
-        if cms_citations:
-            # Append CMS citations after ML citations, dedup by exact string.
-            seen = {c for c in ml_result if isinstance(c, str)}
-            for c in cms_citations:
-                if c not in seen:
-                    ml_result.append(c)
-                    seen.add(c)
+        try:
+            web_citations = await web_task
+        except Exception as e:
+            logger.debug(f"Web search task failed ({type(e).__name__})")
+            web_citations = []
+
+        # Append CMS citations, then the web search's, after ML citations,
+        # dedup by exact string. Both come from their sources rather than a
+        # model's pen, so they skip the identifier check above, as CMS's
+        # always have.
+        seen = {c for c in ml_result if isinstance(c, str)}
+        for c in [*cms_citations, *web_citations]:
+            if c not in seen:
+                ml_result.append(c)
+                seen.add(c)
         return ml_result
 
     @classmethod

@@ -36,6 +36,13 @@ _AMBIENT_BACKEND_ENV_VARS = (
     "LUNA_ROUTE_KEY",
     "NEW_HEALTH_BACKEND_HOST",
     "NEW_HEALTH_BACKEND_PORT",
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODELS",
+    "OPENROUTER_REQUIRE_ZDR",
+    "OPENROUTER_WEB_SEARCH_ENABLED",
+    "OPENROUTER_WEB_SEARCH_ENGINE",
+    "OPENROUTER_WEB_SEARCH_MAX_RESULTS",
+    "OPENROUTER_WEB_SEARCH_MODEL",
     "PERPLEXITY_API",
     # The fallback keys (api_keys_from_env): a stray one would change which
     # key a unit-suite backend sends after a refusal.
@@ -45,6 +52,7 @@ _AMBIENT_BACKEND_ENV_VARS = (
     "SECONDARY_DEEPINFRA_API",
     "SECONDARY_NEW_HEALTH_BACKEND_HOST",
     "SECONDARY_NEW_HEALTH_BACKEND_PORT",
+    "SECONDARY_OPENROUTER_API_KEY",
     "SECONDARY_PERPLEXITY_API",
     # Not a router backend, but the same hazard: a developer's TypeSafe key in
     # the environment must never let a unit test score a letter for real.

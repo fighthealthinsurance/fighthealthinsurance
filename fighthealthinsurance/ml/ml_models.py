@@ -579,6 +579,69 @@ class _TimeoutNote(str):
     its window."""
 
 
+# The most of a web page's excerpt a WebCitation keeps.
+WEB_CITATION_EXCERPT_CHARS = 1200
+
+
+class WebCitation(str):
+    """A web search result, as a citation string ("Title. URL") that also
+    carries its parts: ``page_title``, ``url`` and ``excerpt``, the page text the
+    search engine returned with it (OpenRouter's ``url_citation.content``,
+    possibly empty). A str, so every caller that reads citations as text
+    reads it as it reads any other; the web search context
+    (ml/web_search_context.py) reads the parts to judge it."""
+
+    page_title: str
+    url: str
+    excerpt: str
+
+    def __new__(cls, title: str, url: str, excerpt: str = "") -> "WebCitation":
+        title = " ".join(str(title or "").split())
+        url = str(url or "").strip()
+        text = f"{title}. {url}" if title else url
+        obj = super().__new__(cls, text)
+        obj.page_title = title
+        obj.url = url
+        obj.excerpt = " ".join(str(excerpt or "").split())[:WEB_CITATION_EXCERPT_CHARS]
+        return obj
+
+
+def url_citations_from_annotations(annotations: Any) -> List[WebCitation]:
+    """The ``url_citation`` annotations of a chat completion message
+    (OpenRouter's web search results), one per URL, in order. Anything else
+    in the list, or a citation with no http(s) URL, is skipped: the URL is
+    the part that makes it checkable."""
+    found: List[WebCitation] = []
+    seen: set[str] = set()
+    if not isinstance(annotations, list):
+        return found
+    for annotation in annotations:
+        if not isinstance(annotation, dict):
+            continue
+        if annotation.get("type") != "url_citation":
+            continue
+        cited = annotation.get("url_citation")
+        if not isinstance(cited, dict):
+            continue
+        url = cited.get("url")
+        if not isinstance(url, str) or not re.match(r"^https?://\S+$", url.strip()):
+            continue
+        url = url.strip()
+        if url in seen:
+            continue
+        seen.add(url)
+        title = cited.get("title")
+        content = cited.get("content")
+        found.append(
+            WebCitation(
+                title if isinstance(title, str) else "",
+                url,
+                content if isinstance(content, str) else "",
+            )
+        )
+    return found
+
+
 def _unavailable_from(failures: List[str]) -> ProviderUnavailable:
     """What a raise_on_unavailable caller gets when no endpoint gave text:
     NoAnswerText when at least one of them was reached and answered with
@@ -2835,6 +2898,11 @@ class RemoteModel(RemoteModelLike):
 
     def _request_extras(self, model: str) -> dict[str, Any]:
         """Extra request-body fields for ``model`` (none by default)."""
+        return {}
+
+    def _request_headers(self) -> dict[str, str]:
+        """Extra HTTP headers for each chat completion, beside the bearer
+        key (none by default; OpenRouter's attribution headers)."""
         return {}
 
     def _record_spend(self, model: str, result: Any) -> None:
@@ -5251,7 +5319,10 @@ class RemoteOpenLike(RemoteModel):
                     key = self.token
                     async with s.post(
                         url,
-                        headers={"Authorization": f"Bearer {key}"},
+                        headers={
+                            **self._request_headers(),
+                            "Authorization": f"Bearer {key}",
+                        },
                         json=request_body,
                     ) as response:
                         # An endpoint answered -- whatever the status. Probes
@@ -5567,6 +5638,11 @@ class RemoteOpenLike(RemoteModel):
                 elif "sources" in response_message:
                     citations = self._process_citation_objects(
                         response_message["sources"]
+                    )
+                elif response_message.get("annotations"):
+                    # OpenRouter's web search: url_citation annotations.
+                    citations = list(
+                        url_citations_from_annotations(response_message["annotations"])
                     )
 
             else:
@@ -6812,6 +6888,44 @@ class LunaRoute(RemoteFullOpenLike):
             self._concurrency.release(key)
 
 
+def configured_model_list(
+    models_env: str, defaults: List[Tuple[str, int, str]], owner: str
+) -> List[Tuple[str, int, str]]:
+    """(model, cost, tier) list for a provider whose models an operator can
+    name in ``models_env`` (comma-separated), else ``defaults``.
+
+    A model the override names that is also in ``defaults`` keeps its default
+    cost and tier; only a name the table does not know gets an incrementing
+    cost and the ``custom`` tier. Every override used to be ``custom``
+    (quality 88), so listing the sponsored frontier deployment, which the
+    comments above RemoteAzureOpenLike's DEFAULT_MODELS tell operators to do,
+    demoted it below DeepInfra in the external fan-out and put the paid
+    provider first. Repeated names are dropped: two descriptions of one
+    model registered two instances and doubled its calls.
+    """
+    override = get_env_variable(models_env) if models_env else None
+    if override and override.strip():
+        names = list(dict.fromkeys(n.strip() for n in override.split(",") if n.strip()))
+        if not names:
+            # e.g. AZURE_*_MODELS="," -- separators only, no real names.
+            # Fall back to defaults rather than silently disabling the
+            # provider with an empty model list.
+            logger.warning(
+                f"{owner}._configured_deployments: {models_env} is "
+                f"set but contains no valid deployment names; falling back to "
+                f"defaults"
+            )
+            return list(defaults)
+        base_cost = defaults[0][1] if defaults else 60
+        known = {name: (cost, tier) for name, cost, tier in defaults}
+        configured: List[Tuple[str, int, str]] = []
+        for i, name in enumerate(names):
+            cost, tier = known.get(name, (base_cost + i * 10, "custom"))
+            configured.append((name, cost, tier))
+        return configured
+    return list(defaults)
+
+
 class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
     """``RemoteFullOpenLike`` with shared per-model rate limiting and 429
     back-off, used by the external paid backends (Anthropic, Azure).
@@ -7369,32 +7483,7 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
         paid provider first. Repeated names are dropped: two descriptions of
         one deployment registered two instances and doubled its calls.
         """
-        override = get_env_variable(cls.MODELS_ENV) if cls.MODELS_ENV else None
-        if override and override.strip():
-            names = list(
-                dict.fromkeys(n.strip() for n in override.split(",") if n.strip())
-            )
-            if not names:
-                # e.g. AZURE_*_MODELS="," — separators only, no real names.
-                # Fall back to defaults rather than silently disabling the
-                # provider with an empty deployment list.
-                logger.warning(
-                    f"{cls.__name__}._configured_deployments: {cls.MODELS_ENV} is "
-                    f"set but contains no valid deployment names; falling back to "
-                    f"defaults"
-                )
-                return list(cls.DEFAULT_MODELS)
-            base_cost = cls.DEFAULT_MODELS[0][1] if cls.DEFAULT_MODELS else 60
-            known = {
-                deployment: (cost, tier)
-                for deployment, cost, tier in cls.DEFAULT_MODELS
-            }
-            configured: List[Tuple[str, int, str]] = []
-            for i, name in enumerate(names):
-                cost, tier = known.get(name, (base_cost + i * 10, "custom"))
-                configured.append((name, cost, tier))
-            return configured
-        return list(cls.DEFAULT_MODELS)
+        return configured_model_list(cls.MODELS_ENV, cls.DEFAULT_MODELS, cls.__name__)
 
     @property
     def supports_system(self):
@@ -8064,6 +8153,270 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             if extracted:
                 text = extracted.strip()
         return (text, [])
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    """A yes/no setting read with get_env_variable: "0", "false", "no" or
+    "off" (any case) is no, any other value yes, and ``default`` when unset
+    or blank."""
+    raw = get_env_variable(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+class OpenRouter(RateLimitedRemoteOpenLike):
+    """OpenRouter (openrouter.ai), one OpenAI-compatible API in front of many
+    hosted models. Registers each model as ``openrouter/<OpenRouter id>``.
+
+    External like every hosted backend: appeals reach it only as the backup
+    tier, with the person's external-models consent. A request carries
+    patient and plan details, and OpenRouter hands it to whichever upstream
+    provider serves the model, so every request asks OpenRouter to route
+    only to providers that do not collect the data it is sent
+    (``provider.data_collection: "deny"``) and, unless
+    ``OPENROUTER_REQUIRE_ZDR`` is turned off, only to zero-data-retention
+    endpoints (``provider.zdr``). A model with no such endpoint then fails
+    (HTTP 404/503) rather than going somewhere that keeps the text.
+
+    Environment variables:
+    - OPENROUTER_API_KEY (required), and optionally
+      SECONDARY_OPENROUTER_API_KEY (see api_keys_from_env)
+    - OPENROUTER_MODELS: comma-separated OpenRouter model ids, replacing
+      DEFAULT_MODELS
+    - OPENROUTER_REQUIRE_ZDR: default on
+    """
+
+    API_BASE: ClassVar[str] = "https://openrouter.ai/api/v1"
+    API_KEY_ENV: ClassVar[str] = "OPENROUTER_API_KEY"
+    MODELS_ENV: ClassVar[str] = "OPENROUTER_MODELS"
+    ZDR_ENV: ClassVar[str] = "OPENROUTER_REQUIRE_ZDR"
+    NAME_PREFIX: ClassVar[str] = "openrouter"
+    PROVIDER_LABEL: ClassVar[str] = "OpenRouter"
+    SPEND_PROVIDER: ClassVar[Optional[str]] = spend.OPENROUTER
+    # The models OpenRouter lists run to 1M tokens; 200k, like Anthropic's,
+    # keeps the shed ladder's arithmetic in the range it was tuned for.
+    MAX_LEN: ClassVar[int] = 200000
+    # Attribution headers (openrouter.ai/docs: HTTP-Referer and
+    # X-OpenRouter-Title). They name the site, never the request.
+    ATTRIBUTION_HEADERS: ClassVar[dict[str, str]] = {
+        "HTTP-Referer": "https://www.fighthealthinsurance.com",
+        "X-OpenRouter-Title": "Fight Health Insurance",
+    }
+    # Ordered cheapest -> most expensive: (OpenRouter id, cost, tier). Both
+    # had zero-data-retention endpoints in OpenRouter's catalog on
+    # 2026-11-06 (GET /api/v1/models?zdr=true). Tiers below "frontier" on
+    # purpose: OpenRouter is a backup to the providers already in the
+    # external fan-out (MLRouter.best_external_models), not a replacement.
+    DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
+        ("google/gemini-3.8-flash", 45, "speed"),
+        ("anthropic/claude-sonnet-5.5", 90, "quality"),
+    ]
+
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    def __init__(self, model: str, dual_mode: bool = False):
+        token = get_env_variable(self.API_KEY_ENV)
+        if token is None or len(token) < 1:
+            raise EnvironmentError(
+                f"No API key found for OpenRouter. Set {self.API_KEY_ENV} in "
+                f"{_SETTING_SOURCES}."
+            )
+        super().__init__(
+            self.API_BASE,
+            api_keys_from_env(self.API_KEY_ENV),
+            model=model,
+            dual_mode=dual_mode,
+            max_len=self.MAX_LEN,
+        )
+        self._ensure_rate_limiter(model)
+
+    @property
+    def supports_system(self):
+        return True
+
+    @property
+    def external(self):
+        return True
+
+    @classmethod
+    def require_zdr(cls) -> bool:
+        return _env_flag(cls.ZDR_ENV, True)
+
+    @classmethod
+    def provider_preferences(cls) -> dict[str, Any]:
+        """OpenRouter's provider routing preferences for every request."""
+        preferences: dict[str, Any] = {"data_collection": "deny"}
+        if cls.require_zdr():
+            preferences["zdr"] = True
+        return preferences
+
+    def _request_extras(self, model: str) -> dict[str, Any]:
+        return {"provider": self.provider_preferences()}
+
+    def _request_headers(self) -> dict[str, str]:
+        return dict(self.ATTRIBUTION_HEADERS)
+
+    @classmethod
+    def _configured_models(cls) -> List[Tuple[str, int, str]]:
+        return configured_model_list(cls.MODELS_ENV, cls.DEFAULT_MODELS, cls.__name__)
+
+    def get_tier(self) -> str:
+        for model, _cost, tier in self._configured_models():
+            if model == self.model:
+                return tier
+        return "unknown"
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        return cls._classify_env_keys(cls.API_KEY_ENV)
+
+    @classmethod
+    def model_catalog(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(
+                cost=cost,
+                name=f"{cls.NAME_PREFIX}/{model}",
+                internal_name=model,
+            )
+            for model, cost, _tier in cls._configured_models()
+        ]
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """The configured models; empty while OPENROUTER_API_KEY is unset."""
+        if not get_env_variable(cls.API_KEY_ENV):
+            logger.debug(f"{cls.__name__}.models: {cls.API_KEY_ENV} not set, skipping")
+            return []
+        return cls.model_catalog()
+
+    def _configured_and_not_limited(self) -> bool:
+        """Key set and not backing off after a 429. In memory only."""
+        if not get_env_variable(self.API_KEY_ENV):
+            return False
+        return self.rate_limiter.can_request()
+
+
+class OpenRouterWebSearch(OpenRouter):
+    """OpenRouter's web search, for context only: a cheap model with the
+    ``openrouter:web_search`` server tool, asked about a denial's treatment
+    and condition, whose answer is thrown away and whose ``url_citation``
+    annotations (the pages the search found, as WebCitation) are kept.
+    ml/web_search_context.py judges those before any reaches a letter.
+
+    Context-only (never drafts, never chats), so it sits outside every
+    general pool, like Perplexity. Registered when OPENROUTER_API_KEY is set
+    and OPENROUTER_WEB_SEARCH_ENABLED is not turned off.
+
+    Environment variables (besides OpenRouter's):
+    - OPENROUTER_WEB_SEARCH_ENABLED: default on
+    - OPENROUTER_WEB_SEARCH_MODEL: the model that runs the search
+    - OPENROUTER_WEB_SEARCH_ENGINE: OpenRouter's engine (auto when unset)
+    - OPENROUTER_WEB_SEARCH_MAX_RESULTS: 1-25, default 5
+    """
+
+    ENABLED_ENV: ClassVar[str] = "OPENROUTER_WEB_SEARCH_ENABLED"
+    MODEL_ENV: ClassVar[str] = "OPENROUTER_WEB_SEARCH_MODEL"
+    ENGINE_ENV: ClassVar[str] = "OPENROUTER_WEB_SEARCH_ENGINE"
+    MAX_RESULTS_ENV: ClassVar[str] = "OPENROUTER_WEB_SEARCH_MAX_RESULTS"
+    # Cheap, with a zero-data-retention endpoint (2026-11-06); it only has
+    # to phrase the search and name what it found.
+    DEFAULT_MODEL: ClassVar[str] = "anthropic/claude-haiku-5.5"
+    NAME: ClassVar[str] = "openrouter-web-search"
+    DEFAULT_MAX_RESULTS: ClassVar[int] = 5
+    # Its answer is discarded, so it needs few words; the search results
+    # come back as annotations whatever it writes.
+    MAX_TOKENS: ClassVar[int] = 1024
+    # Separate rate-limit state from the drafting models'.
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @property
+    def context_only(self):
+        return True
+
+    def quality(self) -> int:
+        return 80
+
+    @classmethod
+    def enabled(cls) -> bool:
+        return _env_flag(cls.ENABLED_ENV, True)
+
+    @classmethod
+    def search_model(cls) -> str:
+        configured = get_env_variable(cls.MODEL_ENV)
+        return (configured or "").strip() or cls.DEFAULT_MODEL
+
+    @classmethod
+    def max_results(cls) -> int:
+        raw = get_env_variable(cls.MAX_RESULTS_ENV)
+        try:
+            value = int((raw or "").strip())
+        except ValueError:
+            return cls.DEFAULT_MAX_RESULTS
+        return min(max(value, 1), 25)
+
+    @classmethod
+    def web_search_tool(cls) -> dict[str, Any]:
+        parameters: dict[str, Any] = {"max_results": cls.max_results()}
+        engine = (get_env_variable(cls.ENGINE_ENV) or "").strip()
+        if engine:
+            parameters["engine"] = engine
+        return {"type": "openrouter:web_search", "parameters": parameters}
+
+    def get_tier(self) -> str:
+        return "speed"
+
+    def _request_extras(self, model: str) -> dict[str, Any]:
+        return {
+            **super()._request_extras(model),
+            "tools": [self.web_search_tool()],
+            "max_tokens": self.MAX_TOKENS,
+        }
+
+    @classmethod
+    def model_catalog(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(cost=20, name=cls.NAME, internal_name=cls.search_model())
+        ]
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        if not get_env_variable(cls.API_KEY_ENV) or not cls.enabled():
+            return []
+        return cls.model_catalog()
+
+    async def web_search(
+        self, question: str, timeout: Optional[float] = None
+    ) -> List[WebCitation]:
+        """The pages a web search for ``question`` found, or [] when the
+        call failed or found none. Never raises (cancellation aside). The
+        model's own words are dropped: only the search engine's results,
+        each a real URL, are returned."""
+        try:
+            result = await self._infer(
+                system_prompts=[
+                    "You search the web for a service that helps patients "
+                    "appeal health insurance denials. Search for clinical "
+                    "guidelines, coverage policies and published evidence "
+                    "about the treatment you are asked about. Answer in one "
+                    "or two sentences; the sources you find matter, not your "
+                    "answer."
+                ],
+                prompt=question,
+                temperature=0.2,
+                timeout=timeout,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"{self}: web search failed ({type(e).__name__})")
+            return []
+        if not result:
+            return []
+        _text, citations = result
+        return [c for c in (citations or []) if isinstance(c, WebCitation)]
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]

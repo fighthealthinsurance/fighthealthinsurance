@@ -35,8 +35,9 @@ class PrivacyPolicyNamesTheModelHostTest(TestCase):
         self.assertIn("better text recognition for photos and scans on the scan page", self.text)
 
     def test_the_date_moved_with_the_change(self):
-        self.assertIn("Last updated: October 5, 2026", self.text)
-        self.assertNotIn("September 7, 2026", self.text)
+        # Moved again on 2026-11-06, when OpenRouter joined the AI providers.
+        self.assertIn("Last updated: November 6, 2026", self.text)
+        self.assertNotIn("October 5, 2026", self.text)
 
     def test_the_deletion_right_says_anonymous_totals_survive(self):
         # Since the status counters (#1017) a deletion request leaves

@@ -642,10 +642,14 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 "azure-openai/gpt-5.5",
                 # Retired.
                 "fhi-2025-may-0.3-float16-q8-vllm-compressed",
-                # LunaRoute's arena models, not configured here (no
-                # LUNA_ROUTE_KEY): off.
+                # Not configured here (no LUNA_ROUTE_KEY, no
+                # OPENROUTER_API_KEY): off. LunaRoute's arena models and
+                # OpenRouter's, its web search included.
+                "openrouter/anthropic/claude-sonnet-5.5",
                 "lunaroute/deepseek-4.1-flash",
                 "lunaroute/glm-5.3",
+                "openrouter-web-search",
+                "openrouter/google/gemini-3.8-flash",
                 # TypeSafe (Jev), not configured here: off, with the others.
                 "jev-1.13.0",
             ],

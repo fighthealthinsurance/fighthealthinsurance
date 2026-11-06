@@ -104,7 +104,7 @@ the appeal.
 ## Options
 
 1. **Hosted API (simplest).** Export `ANTHROPIC_API_KEY` (or `DEEPINFRA_API`,
-   or one of the Azure pairs below). Keep the routing above in mind: hosted
+   `OPENROUTER_API_KEY`, or one of the Azure pairs below). Keep the routing above in mind: hosted
    models serve appeals only as the backup tier.
 
 2. **Self-hosted model.** Serve the model with an OpenAI-compatible server
@@ -185,6 +185,8 @@ such as `sonar` are not listed in that line.
 | DeepInfra | `DeepInfra` | `DEEPINFRA_API` | the model id |
 | Perplexity (citations only) | `RemotePerplexity` | `PERPLEXITY_API` | `sonar` |
 | LunaRoute (Appeal Arena only) | `LunaRoute` | `LUNA_ROUTE_KEY` | `lunaroute/` |
+| OpenRouter | `OpenRouter` | `OPENROUTER_API_KEY` | `openrouter/` |
+| OpenRouter web search (context only) | `OpenRouterWebSearch` | `OPENROUTER_API_KEY` | `openrouter-web-search` |
 
 Perplexity is context-only: it finds citations and never generates an appeal
 by itself. LunaRoute (`https://gw.lunaroute.com/v1`, OpenAI-compatible)
@@ -210,8 +212,54 @@ the caller moves on to the next backend as it would from any failure. The
 count is per process only; a call that collides with another pod's is
 refused by LunaRoute and fails over the same way.
 
+**OpenRouter.** One key reaches many hosted models through
+OpenRouter's OpenAI-compatible API (`https://openrouter.ai/api/v1`). By
+default it registers `openrouter/google/gemini-3.8-flash` (speed tier) and
+`openrouter/anthropic/claude-sonnet-5.5` (quality tier), both ranked below
+the frontier models already in the external fan-out, so OpenRouter is a
+backup to them; `OPENROUTER_MODELS` (comma-separated OpenRouter ids)
+replaces that list. OpenRouter passes each request on to an upstream
+provider, so every request asks it to use only providers that do not
+collect the data (`provider.data_collection: "deny"`) and only
+zero-data-retention endpoints (`provider.zdr: true`). A model with no such
+endpoint fails rather than going somewhere that keeps the text. Set
+`OPENROUTER_REQUIRE_ZDR=false` to drop the ZDR requirement (the
+data-collection one stays). Requests also carry OpenRouter's attribution
+headers (`HTTP-Referer`, `X-OpenRouter-Title`), which name the site, never
+the request. A credit refusal (HTTP 402) pauses OpenRouter for the day like
+the other providers (`manage.py unpause_spend openrouter`); its spend is not
+budgeted here, so set a credit limit on the key itself.
+
+**Web search for extra citations.** With `OPENROUTER_API_KEY` set,
+OpenRouter's web search (the `openrouter:web_search` server tool, run by
+`anthropic/claude-haiku-5.5`, or `OPENROUTER_WEB_SEARCH_MODEL`) adds
+citations to an appeal ([`ml/web_search_context.py`](../fighthealthinsurance/ml/web_search_context.py)):
+
+- **Only with consent, and only the treatment.** It runs only when the
+  person left the external-models consent on (`Denial.use_external`, read
+  again just before the search), and it is sent the procedure and
+  diagnosis, never the letter, the history or anything about the person.
+- **Non-blocking.** It runs beside the citation backends, inside the
+  citation step's existing time box (at most 25 seconds), and a failure,
+  timeout or missing key just means no web citations.
+- **Results are judged before they are used.** The model's own answer is
+  thrown away; only the pages the search returned (title, URL, excerpt) are
+  kept. Each is asked the same three questions research judging asks of a
+  PubMed article (on topic? supports the treatment? argues against it?), by
+  Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on, else by our own best
+  general-purpose model. Pages judged off topic or against the treatment are
+  dropped, and so are pages nobody could judge in time. At most three are
+  kept, strongest support first, and added after the CMS citations.
+- **Settings.** `OPENROUTER_WEB_SEARCH_ENABLED=false` turns it off;
+  `OPENROUTER_WEB_SEARCH_ENGINE` picks OpenRouter's search engine (`exa`,
+  `native`, `parallel`, ...; OpenRouter chooses when unset);
+  `OPENROUTER_WEB_SEARCH_MAX_RESULTS` (1-25, default 5) sets how many pages
+  a search returns. Each search costs OpenRouter's search fee on top of the
+  model's tokens (about a cent).
+
 **Fallback keys.** Every key above except LunaRoute's can be paired with a
 second key for the same provider, set as `SECONDARY_<name>` (`SECONDARY_ANTHROPIC_API_KEY`,
+`SECONDARY_OPENROUTER_API_KEY`,
 `SECONDARY_DEEPINFRA_API`, `SECONDARY_AZURE_OPENAI_API_KEY`, and so on). The
 primary key is sent until the provider refuses it: for a rate limit (HTTP
 429), for credit or quota that ran out, or as a revoked key or disabled
