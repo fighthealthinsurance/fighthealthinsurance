@@ -182,11 +182,11 @@ class CombinedStorage(Storage):
         error_list: List[BaseException] = []
         correct_size(content)
         try:
-            expected = content.size
+            expected = getattr(content, "size")
         except Exception:
             expected = None
         seconds = save_timeout_seconds(content)
-        wrong_size = False
+        wrong_size: Optional[OSError] = None
         written: List[Storage] = []
         if name:
             name = unique_name(name, max_length)
@@ -260,13 +260,13 @@ class CombinedStorage(Storage):
                 logger.error(error_text(short))
                 error_list.append(short)
                 last_error = short
-                wrong_size = True
+                wrong_size = short
         # A wrong size is a storage bug, not a slow disk, and the disks are
-        # wiped on restart, so the save fails and leaves no copy anywhere.
-        if wrong_size:
+        # wiped on restart, so the save fails and removes every copy it made.
+        if wrong_size is not None:
             for backend in written:
                 self._remove_partial_copy(backend, l)
-            raise OSError(error_text(last_error)) from last_error
+            raise OSError(error_text(wrong_size)) from wrong_size
         if l is None:
             errors = [error_text(e) for e in error_list]
             logger.error(
