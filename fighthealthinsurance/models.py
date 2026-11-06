@@ -4784,12 +4784,16 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     PROCESSING_REMOVED = "removed"
     # A shared link: nothing to read, and the sweep never picks it up.
     PROCESSING_LINK = "link"
+    # Staff marked it as potential spam: kept, with its file, but never read
+    # and left out of every count. "Not spam" in the admin undoes it.
+    PROCESSING_SPAM = "potential_spam"
     PROCESSING_STATUS_CHOICES = [
         (PROCESSING_RECEIVED, "Received, not read yet"),
         (PROCESSING_READY, "Read and cleaned, ready for review"),
         (PROCESSING_UNREADABLE, "No text could be read"),
         (PROCESSING_REMOVED, "File and text deleted at the person's request"),
         (PROCESSING_LINK, "A link, never fetched: staff open it by hand"),
+        (PROCESSING_SPAM, "Potential spam: kept, never read or counted"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
