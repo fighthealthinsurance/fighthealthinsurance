@@ -154,6 +154,48 @@ _IMAGE_MAGIC = {
 }
 
 
+#: What to send instead, for the kinds of files people try that we don't
+#: take as attachments.
+_ATTACHMENT_TIPS = {
+    **dict.fromkeys(
+        (".eml", ".msg", ".mbox"),
+        "For an email, take a screenshot or print it to PDF and upload that.",
+    ),
+    **dict.fromkeys(
+        (".xlsx", ".xls", ".xlsm", ".csv", ".numbers", ".ods"),
+        "For a spreadsheet, save or print it as a PDF and upload that.",
+    ),
+    **dict.fromkeys(
+        (".html", ".htm", ".mht", ".mhtml", ".webarchive"),
+        "For a web page, print it to PDF and upload that.",
+    ),
+    **dict.fromkeys(
+        (".pages", ".odt"),
+        "Save the document as a PDF or Word file and upload that.",
+    ),
+    **dict.fromkeys(
+        (".zip", ".rar", ".7z", ".tar", ".gz"),
+        "We don't take zip files. Upload the documents inside it instead.",
+    ),
+    **dict.fromkeys(
+        (".mp4", ".mov", ".m4v", ".avi", ".webm", ".mp3", ".m4a", ".wav", ".aac"),
+        "We can't take video or audio yet. A screenshot or a written note "
+        "works instead.",
+    ),
+}
+
+
+def unsupported_attachment_message(ext: str) -> str:
+    """Why an attachment of type ``ext`` was refused, and what to send
+    instead when we know."""
+    message = (
+        "Unsupported file type. Please upload a document (PDF, Word or "
+        "text) or a photo (PNG, JPEG, GIF, TIFF, HEIC or WebP)."
+    )
+    tip = _ATTACHMENT_TIPS.get(ext)
+    return f"{message} {tip}" if tip else message
+
+
 def validate_attachment(
     file: UploadedFile, max_bytes: int = MAX_UPLOAD_FILE_BYTES
 ) -> None:
@@ -163,10 +205,7 @@ def validate_attachment(
     validate_upload_size(file, max_bytes)
     ext = policy_document_extension(file.name or "")
     if ext not in SUPPORTED_ATTACHMENT_EXTENSIONS:
-        raise forms.ValidationError(
-            "Unsupported file type. Please upload a document (PDF, Word or "
-            "text) or a photo (PNG, JPEG, GIF, TIFF, HEIC or WebP)."
-        )
+        raise forms.ValidationError(unsupported_attachment_message(ext))
     header = file.read(8)
     file.seek(0)
     expected = {".pdf": (_PDF_MAGIC,), ".docx": (_DOCX_MAGIC,), **_IMAGE_MAGIC}

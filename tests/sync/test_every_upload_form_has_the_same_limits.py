@@ -240,6 +240,31 @@ class DocumentsAndPhotosOnlyTestCase(TestCase):
                 SimpleUploadedFile("letter.pdf", b"MZ not a pdf" * 30)
             )
 
+    def test_a_saved_email_is_turned_away_with_what_to_send_instead(self):
+        from django import forms
+
+        with self.assertRaises(forms.ValidationError) as caught:
+            upload_limits.validate_attachment(
+                SimpleUploadedFile("denial.eml", b"From: plan\n" * 40)
+            )
+        self.assertIn("screenshot or print it to PDF", caught.exception.messages[0])
+
+    def test_a_spreadsheet_is_turned_away_with_what_to_send_instead(self):
+        from django import forms
+
+        with self.assertRaises(forms.ValidationError) as caught:
+            upload_limits.validate_attachment(
+                SimpleUploadedFile("bill.xlsx", b"PK\x03\x04" + b"0" * 400)
+            )
+        self.assertIn("save or print it as a PDF", caught.exception.messages[0])
+
+    def test_an_unknown_type_gets_the_plain_message(self):
+        self.assertEqual(
+            upload_limits.unsupported_attachment_message(".xyz"),
+            "Unsupported file type. Please upload a document (PDF, Word or "
+            "text) or a photo (PNG, JPEG, GIF, TIFF, HEIC or WebP).",
+        )
+
     def test_a_photo_of_a_letter_is_taken(self):
         upload_limits.validate_attachment(
             SimpleUploadedFile("letter.jpg", b"\xff\xd8\xff\xe0" + b"0" * 400)
