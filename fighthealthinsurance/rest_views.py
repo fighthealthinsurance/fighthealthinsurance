@@ -1718,6 +1718,13 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
                 {"error": "Attachment is too large"},
                 status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             )
+        from fighthealthinsurance import upload_rate_limit
+
+        if not upload_rate_limit.take(request, len(request.FILES.getlist("file"))):
+            return Response(
+                {"error": upload_rate_limit.LIMIT_MESSAGE},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         serializer = serializers.AppealAttachmentUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -1784,12 +1791,21 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
             )
         content = Cryptographer.decrypted(raw)
         # FileResponse needs a file-like object; raw bytes stream as digits.
+        # The type comes from the name, not from what the uploader's browser
+        # said, and the browser is told not to guess another.
+        import mimetypes
+
+        from fighthealthinsurance import upload_limits
+
+        filename = upload_limits.safe_filename(attachment.filename)
         response = FileResponse(
             io.BytesIO(content),
-            content_type=attachment.mime_type,
+            content_type=mimetypes.guess_type(filename)[0]
+            or "application/octet-stream",
             as_attachment=True,
-            filename=attachment.filename,
+            filename=filename,
         )
+        response["X-Content-Type-Options"] = "nosniff"
         return response
 
     @extend_schema(responses=serializers.StatusResponseSerializer)

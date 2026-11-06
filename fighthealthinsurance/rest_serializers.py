@@ -599,10 +599,19 @@ class AppealAttachmentUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
 
     def validate_file(self, value):  # type: ignore[no-untyped-def]
+        from django import forms
+
+        from fighthealthinsurance import upload_limits
+
         if value.size > MAX_ATTACHMENT_BYTES:
             raise serializers.ValidationError(
                 f"Attachments can be at most {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB."
             )
+        try:
+            upload_limits.validate_attachment(value, max_bytes=MAX_ATTACHMENT_BYTES)
+        except forms.ValidationError as error:
+            raise serializers.ValidationError(error.messages)
+        value.name = upload_limits.safe_filename(value.name)
         return value
 
 

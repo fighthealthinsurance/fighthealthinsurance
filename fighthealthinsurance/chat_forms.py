@@ -24,6 +24,7 @@ from fighthealthinsurance.state_help import get_states_sorted_by_name
 # upload_limits; they are named here as well, where callers have always found them.
 from fighthealthinsurance.upload_limits import (  # noqa: E402
     MAX_POLICY_DOCUMENT_BYTES,
+    MIN_POLICY_DOCUMENT_BYTES,
     MAX_UPLOAD_FILES,
     MAX_UPLOAD_TOTAL_BYTES,
     SUPPORTED_POLICY_EXTENSIONS,
@@ -56,7 +57,7 @@ UNREADABLE_PDF_MESSAGE = (
 #: The smallest file kept for research: below a short rate sheet saved as
 #: text, above a line of test text, which would make the share page's count
 #: say plans arrived that never did.
-MIN_SHARED_FILE_BYTES = 256
+MIN_SHARED_FILE_BYTES = MIN_POLICY_DOCUMENT_BYTES
 TOO_SMALL_MESSAGE = (
     "This file is too small to be a plan document. Please share the full "
     "document as a PDF, Word (.docx) or text file."
@@ -75,7 +76,8 @@ def validate_shared_document(file: UploadedFile) -> None:
         file.seek(0)
         raise forms.ValidationError(LOCKED_WORD_MESSAGE)
     file.seek(0)
-    validate_policy_document(file)
+    # Its own size check comes last, after the closer look.
+    validate_policy_document(file, min_bytes=0)
     try:
         if ext == ".docx":
             _check_docx(file)

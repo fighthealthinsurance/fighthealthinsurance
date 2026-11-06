@@ -37,7 +37,7 @@ def txt(name="SPD.txt", content=TXT):
 
 def docx(name="EOC.docx"):
     # A zip's first bytes are what the step checks for a Word file.
-    return SimpleUploadedFile(name, b"PK\x03\x04 word document", content_type="")
+    return SimpleUploadedFile(name, b"PK\x03\x04 word document" + b" " * 300, content_type="")
 
 
 class _StepTestCase(TestCase):
