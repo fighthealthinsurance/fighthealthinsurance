@@ -70,7 +70,8 @@ deleting a row removes its stored file.
 
 Every candidate that survives the hard excludes is stored, selected or not,
 up to `MAX_STORED` (10) per denial, so staff can see why a document was or
-was not chosen.
+was not chosen; the selected documents and the tie-break's candidates are
+always among the stored rows, whatever their rank.
 
 ## The bundle contract
 
@@ -81,8 +82,14 @@ written: more than `MAX_BUNDLE_BYTES` (256 MiB) of UTF-8 text, more than
 `MAX_DOCUMENTS` (5,000) records, a JSON object that gives a field twice, a
 record that is not an object, or a `bundle_version` other than 1.
 
-A record is one document. A record with a field outside the table is refused.
-The limits are the constants in `plan_document_bundle.py`.
+A record is one document. A record with a field outside the table is
+refused, and so is a second record with a `document_key` the bundle already
+used. One-line string fields (the title, the region, the employer, the URL,
+the insurer and plan names) have their whitespace collapsed to single spaces,
+so a scraped value cannot carry a line break into the prompt. A record whose
+value is of a shape this code did not foresee is skipped with
+`could not be read (<error class>)`, never a dead run. The limits are the
+constants in `plan_document_bundle.py`.
 
 | Field | Type | Required | Meaning and limits |
 |---|---|---|---|
@@ -103,7 +110,7 @@ The limits are the constants in `plan_document_bundle.py`.
 | `match_keywords` | list of strings | no | Phrases that place a letter with this document. Whitespace is collapsed, the text lower-cased, duplicates and empties dropped. Matched as whole phrases (below) |
 | `match_regex` | string, at most `MAX_REGEX` (800) | no | Must compile (case-insensitive, Unicode, multiline) |
 | `negative_regex` | string, at most 800 | no | Must compile. A pattern that matches the probe `NEGATIVE_REGEX_PROBE` (`medical necessity medically necessary medical center`) draws a warning, and refuses the record under `--strict` |
-| `source_url` | string, at most `MAX_URL` (2000) | no | Must start with `http://` or `https://` |
+| `source_url` | string, at most `MAX_URL` (2000) | no | A valid `http://` or `https://` URL (Django's `URLValidator`) |
 | `fetched_at` | ISO 8601 datetime string | no | A naive time is taken as UTC |
 | `source_sha256` | 64 hex characters | no | SHA-256 of the original file. Computed from the bytes when a `file` record leaves it out |
 | `pages` | non-empty list of strings, or of `{"page": N, "text": "..."}` objects | exactly one of `pages`, `text` and `file` | At most `MAX_PAGES` (2,000). Plain strings are numbered from 1; an object's `page` must be a whole number of 1 or more. Blank pages are dropped, and a record whose pages are all blank is refused |
@@ -240,9 +247,10 @@ and regex lists against a few made-up letters before shipping them.
 **Per-carrier bundles and `--deactivate-missing`.** Write one bundle per
 carrier holding that carrier's complete current set. `--deactivate-missing`
 retires the active documents of the carriers the bundle names whose keys it
-does not carry, and touches no other carrier, so a Kaiser bundle never
-retires an Aetna row; a partial bundle with the flag would retire the rest of
-the carrier's documents. Without the flag nothing is retired: a superseded
+does not carry (a key whose record was refused still counts as carried, so
+a typo in one record never retires its document), and touches no other
+carrier, so a Kaiser bundle never retires an Aetna row; a partial bundle
+with the flag would retire the rest of the carrier's documents. Without the flag nothing is retired: a superseded
 document stays active until it is deactivated in the admin or sent again with
 `"is_active": false`. Two plan years of one product within 15 points of each
 other are rivals that only the tie-break can separate, so retire last year's
@@ -275,7 +283,7 @@ kubectl exec <pod> -- python manage.py import_plan_documents \
 | `--source PATH`, `-s PATH` | The bundle file, or `-` (the default) for stdin |
 | `--format auto\|json\|jsonl` | `auto` (the default) reads a `.jsonl` source, or text that does not start with `[` or `{`, as JSON Lines, and anything else as JSON |
 | `--files-root DIR` | The directory the records' relative `file` paths are read under. Required when any record names a `file` |
-| `--store-file` | Keep the original of each `file` record on storage, named `<document_key><extension>` (the storage adds a token of its own to the name). A re-import with the same bytes and extension leaves the kept file alone; different bytes replace it |
+| `--store-file` | Keep the original of each `file` record on storage, named `<document_key><extension>` (the storage adds a token of its own to the name). A re-import with the same bytes and extension leaves the kept file alone; different bytes replace it, the old file going once the run commits |
 | `--batch LABEL` | Stored as `import_batch` on every row the run writes; default a UTC timestamp such as `20250115T080000Z` |
 | `--deactivate-missing` | Retire the named carriers' active documents the bundle does not list |
 | `--dry-run` | Do everything inside the transaction, then roll it back |
@@ -438,9 +446,12 @@ answered by `infer_with_fallback` at temperature 0 with a 20 s timeout over
 at most 2 of the internal general-purpose models (`models=` is never passed,
 so the excerpt stays with our models; the call is counted as the
 `entity_extraction` task). Only a whole number from 0 to the count is
-accepted. A pick and the candidates that do not conflict with it are selected
-with `method = "model"`; 0, an invalid answer or no answer selects nothing,
-and the rows are stored unselected. Fail closed.
+accepted. A pick and the candidates that do not conflict with it are
+selected, in rank order, with `method = "model"`; an answer of 0 selects
+nothing and the rows are stored unselected, so the question is not asked
+again for the same letter and corpus. When no model answers (every model
+timed out or was down), or the caller's remaining budget is under 20
+seconds, nothing is stored and the next refresh asks again. Fail closed.
 
 The tie-break fires only for conflicts the regexes do not settle: two plan
 years of one product, an HMO and a Deductible HMO of the same region, two
@@ -452,8 +463,11 @@ nothing is selected without a model call.
 ### Relevant passages
 
 `arefresh_match` stores the rows first and builds the text second, so a
-timeout keeps the selection. `build_relevance` quotes the selected documents
-whole when `MLPlanDocHelper.whole_text` fits `PASSAGE_BUDGET_CHARS` (4,500
+timeout keeps the selection. Both hooks pass their deadline (60 s at
+extraction, 40 s at appeal time); with less than 20 seconds of it left, the
+text is built from the model-free fallback terms and without a summary.
+`build_relevance` quotes the selected documents whole when
+`MLPlanDocHelper.whole_text` fits `PASSAGE_BUDGET_CHARS` (4,500
 characters); otherwise `MLPlanDocHelper.generate_search_terms` asks a model
 for search strings (the model-free fallback terms when it fails) and
 `relevant_passages(documents, terms, budget_chars=4500)` picks the passages,
@@ -466,14 +480,17 @@ were built for.
 
 Every row carries `inputs_hash`, a SHA-256 over what the selection depends
 on: the letter (its own hash), the carrier, the state, whether the claim is
-dental, and the carrier's corpus stamp (`corpus_stamp`: how many of its
-documents are active and the latest `updated_at` among them). The plan, the
-plan id text, the employer and the line of business join the hash only when
-some document of the carrier keys on them (has a plan, prefixes, an employer
-name, a specific line), so a plan id written later by a sibling extraction
-step does not stale the rows of a corpus that never looks at it. Procedure
-and diagnosis are not in it; they form `relevance_key`, which only rebuilds
-the text.
+dental, the carrier's corpus stamp (`corpus_stamp`: how many of its
+documents are active and the latest `updated_at` among them), and, per
+candidate document, the answers of its letter-dependent checks (does the
+negative regex hit, does the regex hit, how many keywords hit, does the
+employer hit, does a plan id prefix hit). A plan id, employer or plan
+context written later by a sibling extraction step or on the review page
+therefore moves the hash only when it changes one of those answers. The
+plan, the line of business and the plan year join only when some document
+of the carrier keys on them (has a plan, a specific line, a plan year).
+Procedure and diagnosis are not in it; they form `relevance_key`, which
+only rebuilds the text.
 
 A refresh that finds rows with the current hash keeps them: if none is
 selected it returns at once (the denial was already judged against this
@@ -486,8 +503,9 @@ again and the rows replaced.
 | The letter is replaced | The rows are deleted, and the new letter is matched afresh |
 | The carrier changes (a correction on the review page, a typed insurer) | A new hash: re-matched at the next refresh |
 | The state, or whether the claim is dental, changes | A new hash |
+| A plan id, employer, plan context or date arrives that changes what a document's regex, keywords, employer name, prefixes or plan year say about the letter | A new hash |
 | The carrier's corpus changes: an import creates or updates one of its documents, a document is activated or deactivated in the admin, `--deactivate-missing` retires one | The stamp moves: every denial of that carrier is re-matched at its next refresh |
-| The plan, plan id, employer or line of business changes | A new hash only when a document of the carrier keys on that fact |
+| The plan or line of business changes | A new hash only when a document of the carrier keys on that fact |
 | The procedure or diagnosis changes | `relevance_key` differs: the passages and summary are rebuilt, the selection kept |
 | A re-import that changes nothing | Nothing: the row is not saved and `updated_at` stays |
 | A refresh timed out before the text was built | `relevance_key` is blank, so the next refresh builds the text and keeps the selection |
@@ -559,8 +577,9 @@ whose last sentence tells the model to defer to the patient's own plan
 documents and must not be read as pointing at these automatically matched
 excerpts. Under prompt shedding the section is cut to
 `_PLAN_DOCUMENT_CONTEXT_TIER2_CAP` (3,500 characters) at tier 2, like
-`plan_context`, and is never dropped at tier 1: it is the member's own plan
-and outranks the comparative enrichment.
+`plan_context`, by `truncate_plan_document_context`, which cuts the body
+and keeps the closing marker; it is never dropped at tier 1: it is the
+member's own plan and outranks the comparative enrichment.
 
 ## The flag and the Experiments page
 
@@ -577,11 +596,12 @@ document matching" with `plan_document_matcher.enabled` as its live check
 (`experiments.py`). `scripts/run_local.sh` lists it in `EXPERIMENTAL_FLAGS`,
 so `--all-experiments` turns it on locally.
 
-The test suites pin it off: `tests/sync/conftest.py` sets it to `False` in
-its autouse `override_settings`, and `tests/async-unit/conftest.py` scrubs
-the variable from the environment, since tox passes the environment through.
-A test that needs the behaviour uses
-`override_settings(PLAN_DOCUMENT_MATCHING_ENABLED=True)`.
+The test suites pin it off: `tests/conftest.py` sets it to `False` in an
+autouse `override_settings` for every suite, and `tests/async-unit/conftest.py`
+also scrubs the variable from the environment, since tox passes the
+environment through. A test that needs the behaviour uses
+`override_settings(PLAN_DOCUMENT_MATCHING_ENABLED=True)`, which wins over
+the outer override.
 
 ## Admin and the staff text view
 
@@ -595,13 +615,15 @@ form has four groups: identity, Matching (the state, region, employer, plan
 year, prefixes, keywords and the two regexes, with a reminder to keep them
 away from letterhead and grievance addresses), Source, and Text. The `text`
 column is never on the form. The Text group's `upload` field takes a PDF,
-Word or text file (`validate_upload_size` against the importer's 50 MiB cap,
-then `validate_policy_document`, whose own cap of 20 MiB and PDF and DOCX
-magic-byte checks apply, so 20 MiB is the limit here); on save
-`page_marked_text_from_bytes` parses it the way the importer parses a `file`
-record, replaces the text, hashes and counts, and sets `import_batch` to
-`admin`. Saving an upload onto an existing row deletes that document's match
-rows. "Read the text" links to the staff text view. The actions **Activate**
+Word or text file of up to 20MB (`validate_policy_document`: the extension,
+the size, the PDF and DOCX magic bytes) and parses it while the form is
+validated, with `page_marked_text_from_bytes`, the way the importer parses
+a `file` record; a file that yields no text (a scanned PDF) is a form error.
+A new document needs its file. On save the text, hashes and counts are
+replaced and `import_batch` is set to `admin`; saving an upload onto an
+existing row deletes that document's match rows. The two regex fields show
+their pattern text, not the compiled pattern. "Read the text" links to the
+staff text view. The actions **Activate**
 and **Deactivate** set `is_active` and move `updated_at`, so the carrier's
 corpus stamp changes and its denials are matched again.
 

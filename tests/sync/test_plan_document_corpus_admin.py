@@ -16,6 +16,7 @@ from fighthealthinsurance.models import (
     PlanDocumentMatch,
     PublicPlanDocument,
 )
+from fighthealthinsurance.upload_limits import MAX_POLICY_DOCUMENT_BYTES
 from tests.pdf_fixtures import make_pdf_bytes
 
 User = get_user_model()
@@ -30,6 +31,9 @@ PDF_PAGES = [
     "Northern California Summary of Benefits and Coverage.",
     "Covered services and what you pay.",
 ]
+SOCAL_KEY = "kaiser-socal-eoc-2025-hmo"
+MATCH_REGEX = r"\bdeductible\s+hmo\b|\bkp\s*select\b"
+NEGATIVE_REGEX = r"\bsouthern\s+california\b|\bmedi[-\s]cal\b"
 
 
 class _CorpusAdminTestCase(TestCase):
@@ -68,10 +72,11 @@ class _CorpusAdminTestCase(TestCase):
         return PublicPlanDocument.objects.create(**fields)
 
     def match(self, document):
-        denial = Denial.objects.create(
+        denial, _ = Denial.objects.get_or_create(
             denial_id=1,
-            semi_sekret="sekret",
-            hashed_email=Denial.get_hashed_email(EMAIL),
+            defaults=dict(
+                semi_sekret="sekret", hashed_email=Denial.get_hashed_email(EMAIL)
+            ),
         )
         return PlanDocumentMatch.objects.create(
             denial=denial,
@@ -87,40 +92,12 @@ class _CorpusAdminTestCase(TestCase):
     def admin_url(self, model, page, *args):
         return reverse(f"admin:fighthealthinsurance_{model}_{page}", args=args)
 
-
-class CorpusAdminPagesTest(_CorpusAdminTestCase):
-    def test_public_plan_document_changelist_lists_the_documents(self):
-        doc = self.document()
-        response = self.client.get(self.admin_url("publicplandocument", "changelist"))
-        self.assertContains(response, doc.document_key)
-
-    def test_plan_document_match_changelist_lists_the_matches(self):
-        self.match(self.document())
-        response = self.client.get(self.admin_url("plandocumentmatch", "changelist"))
-        self.assertContains(
-            response,
-            "Kaiser Permanente: Kaiser Permanente Northern California 2025 HMO "
-            "Evidence of Coverage",
-        )
-
-    def test_public_plan_document_change_form_renders_with_a_link_to_the_text(self):
-        doc = self.document()
-        response = self.client.get(self.admin_url("publicplandocument", "change", doc.pk))
-        self.assertContains(
-            response, reverse("staff_plan_document_corpus_text", kwargs={"pk": doc.pk})
-        )
-
-    def test_plan_document_match_add_view_is_forbidden(self):
-        response = self.client.get(self.admin_url("plandocumentmatch", "add"))
-        self.assertEqual(response.status_code, 403)
-
-
-class PublicPlanDocumentAddFormTest(_CorpusAdminTestCase):
-    def form_data(self, upload):
-        """Every field the add form renders (admin.py's fieldsets, less the
-        read-only ones): JSON fields post as JSON text, a RegexField as its
-        pattern, and the date-time as its two halves."""
-        return {
+    def form_data(self, upload=None, **overrides):
+        """Every field the add and change forms render (admin.py's fieldsets,
+        less the read-only ones), for the SBC: JSON fields post as JSON text,
+        a RegexField as its pattern, and the date-time as its two halves.
+        ``overrides`` replace values; ``upload`` is sent only when given."""
+        data = {
             "document_key": SBC_KEY,
             "insurance_company": str(self.kaiser.pk),
             "insurance_plan": "",
@@ -141,10 +118,83 @@ class PublicPlanDocumentAddFormTest(_CorpusAdminTestCase):
             "source_url": "https://healthy.kaiserpermanente.org/norcal-sbc-2025.pdf",
             "fetched_at_0": "",
             "fetched_at_1": "",
-            "upload": upload,
             "_save": "Save",
         }
+        data.update(overrides)
+        if upload is not None:
+            data["upload"] = upload
+        return data
 
+    def form_errors(self, response):
+        if response.status_code == 302 or response.context is None:
+            return ""
+        return str(response.context["adminform"].form.errors)
+
+    def three_documents(self):
+        """Three Kaiser documents, each with its own key and title."""
+        return [
+            self.document(document_key=key, title=title)
+            for key, title in (
+                (
+                    EOC_KEY,
+                    "Kaiser Permanente Northern California 2025 HMO Evidence of Coverage",
+                ),
+                (
+                    SBC_KEY,
+                    "Kaiser Permanente Northern California 2025 HMO Summary of Benefits",
+                ),
+                (
+                    SOCAL_KEY,
+                    "Kaiser Permanente Southern California 2025 HMO Evidence of Coverage",
+                ),
+            )
+        ]
+
+
+class CorpusAdminPagesTest(_CorpusAdminTestCase):
+    def test_public_plan_document_changelist_lists_the_documents(self):
+        doc = self.document()
+        response = self.client.get(self.admin_url("publicplandocument", "changelist"))
+        self.assertContains(response, doc.document_key)
+
+    def test_plan_document_match_changelist_lists_the_matches(self):
+        self.match(self.document())
+        response = self.client.get(self.admin_url("plandocumentmatch", "changelist"))
+        self.assertContains(
+            response,
+            "Kaiser Permanente: Kaiser Permanente Northern California 2025 HMO "
+            "Evidence of Coverage",
+        )
+
+    def test_public_plan_document_changelist_lists_several_documents(self):
+        docs = self.three_documents()
+        response = self.client.get(self.admin_url("publicplandocument", "changelist"))
+        self.assertEqual(response.status_code, 200)
+        for doc in docs:
+            self.assertContains(response, doc.document_key)
+
+    def test_plan_document_match_changelist_lists_several_matches(self):
+        docs = self.three_documents()
+        for doc in docs:
+            self.match(doc)
+        response = self.client.get(self.admin_url("plandocumentmatch", "changelist"))
+        self.assertEqual(response.status_code, 200)
+        for doc in docs:
+            self.assertContains(response, f"Kaiser Permanente: {doc.title}")
+
+    def test_public_plan_document_change_form_renders_with_a_link_to_the_text(self):
+        doc = self.document()
+        response = self.client.get(self.admin_url("publicplandocument", "change", doc.pk))
+        self.assertContains(
+            response, reverse("staff_plan_document_corpus_text", kwargs={"pk": doc.pk})
+        )
+
+    def test_plan_document_match_add_view_is_forbidden(self):
+        response = self.client.get(self.admin_url("plandocumentmatch", "add"))
+        self.assertEqual(response.status_code, 403)
+
+
+class PublicPlanDocumentAddFormTest(_CorpusAdminTestCase):
     def post_add(self, upload):
         return self.client.post(
             self.admin_url("publicplandocument", "add"), self.form_data(upload)
@@ -154,11 +204,6 @@ class PublicPlanDocumentAddFormTest(_CorpusAdminTestCase):
         return SimpleUploadedFile(
             "norcal-sbc-2025.pdf", make_pdf_bytes(PDF_PAGES), content_type="application/pdf"
         )
-
-    def form_errors(self, response):
-        if response.status_code == 302 or response.context is None:
-            return ""
-        return str(response.context["adminform"].form.errors)
 
     def added(self):
         return PublicPlanDocument.objects.get(document_key=SBC_KEY)
@@ -208,6 +253,78 @@ class PublicPlanDocumentAddFormTest(_CorpusAdminTestCase):
         )
         self.assertContains(response, "does not appear to be a valid PDF")
         self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+    def test_an_add_without_an_upload_is_refused(self):
+        response = self.client.post(
+            self.admin_url("publicplandocument", "add"), self.form_data()
+        )
+        self.assertContains(response, "A new document needs its file.")
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+    def test_a_pdf_with_no_text_is_refused_with_the_reason(self):
+        response = self.post_add(
+            SimpleUploadedFile(
+                "blank.pdf", make_pdf_bytes([""]), content_type="application/pdf"
+            )
+        )
+        self.assertContains(response, "no text could be read")
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+    def test_an_upload_over_the_size_limit_is_refused(self):
+        header = b"%PDF-1.4\n"
+        response = self.post_add(
+            SimpleUploadedFile(
+                "huge.pdf",
+                header + b"\0" * (MAX_POLICY_DOCUMENT_BYTES + 1 - len(header)),
+                content_type="application/pdf",
+            )
+        )
+        self.assertContains(response, "File size must be less than 20MB")
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+
+class PublicPlanDocumentChangeFormTest(_CorpusAdminTestCase):
+    """The change form of a row with both regex fields set: a RegexField
+    holds a compiled pattern, and the form shows and saves its text."""
+
+    def setUp(self):
+        super().setUp()
+        self.doc = self.document(match_regex=MATCH_REGEX, negative_regex=NEGATIVE_REGEX)
+        self.url = self.admin_url("publicplandocument", "change", self.doc.pk)
+
+    def unchanged_post(self):
+        """The form posted back as the row stands: form_data's SBC values
+        replaced by this EOC row's own."""
+        return self.form_data(
+            document_key=self.doc.document_key,
+            title=self.doc.title,
+            document_type=self.doc.document_type,
+            match_regex=MATCH_REGEX,
+            negative_regex=NEGATIVE_REGEX,
+            source_url="",
+        )
+
+    def test_shows_the_regex_patterns_as_their_text(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, f'value="{MATCH_REGEX}"')
+        self.assertContains(response, f'value="{NEGATIVE_REGEX}"')
+        self.assertNotContains(response, "re.compile(")
+
+    def test_saving_the_form_unchanged_keeps_the_regex_patterns(self):
+        response = self.client.post(self.url, self.unchanged_post())
+        self.assertEqual(response.status_code, 302, self.form_errors(response))
+        self.doc.refresh_from_db()
+        self.assertEqual(
+            (self.doc.match_regex.pattern, self.doc.negative_regex.pattern),
+            (MATCH_REGEX, NEGATIVE_REGEX),
+        )
+
+    def test_saving_the_form_keeps_the_text_the_form_never_shows(self):
+        # The admin loads the row without its text; saving must not blank it.
+        response = self.client.post(self.url, self.unchanged_post())
+        self.assertEqual(response.status_code, 302, self.form_errors(response))
+        self.doc.refresh_from_db()
+        self.assertEqual((self.doc.text, self.doc.page_count), (TEXT, 2))
 
 
 class StaffTextViewTest(_CorpusAdminTestCase):

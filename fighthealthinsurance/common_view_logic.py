@@ -4659,9 +4659,10 @@ class DenialCreatorHelper:
             )(denial)
             if company is None:
                 return EXTRACTION_OUTCOME_NOTHING_FOUND
-            async with asyncio.timeout(MLPlanDocHelper.TIMEOUT_SECONDS):
+            budget = MLPlanDocHelper.TIMEOUT_SECONDS
+            async with asyncio.timeout(budget):
                 found = await plan_document_matcher.arefresh_match(
-                    denial, company=company
+                    denial, company=company, deadline=time.monotonic() + budget
                 )
             if found:
                 return EXTRACTION_OUTCOME_FOUND
@@ -6986,7 +6987,9 @@ class AppealsBackendHelper:
                 gather_awaitables.append(
                     tracked_awaitable(
                         asyncio.wait_for(
-                            plan_document_matcher.arefresh_match(denial),
+                            plan_document_matcher.arefresh_match(
+                                denial, deadline=time.monotonic() + 40
+                            ),
                             timeout=40,
                         ),
                         substep="plan_documents",

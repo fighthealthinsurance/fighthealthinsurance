@@ -57,8 +57,9 @@ import asyncio
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from channels.db import database_sync_to_async
 from django.conf import settings
@@ -101,6 +102,9 @@ PASSAGE_BUDGET_CHARS = 4500
 SUMMARY_MAX_CHARS = 1500
 #: The rendered prompt section.
 CONTEXT_MAX_CHARS = 6000
+#: Seconds of budget below which the text is built without a model, and a
+#: tie is not put to one.
+SHORT_BUDGET_SECONDS = 20
 
 _SPECIFIC_LOBS = frozenset(
     v
@@ -433,10 +437,50 @@ def _type_priority(c: Candidate) -> int:
     return -_DOCUMENT_TYPE_POINTS.get(c.document_type, 0)
 
 
+@dataclass(frozen=True)
+class BlobSignals:
+    """What the letter-dependent checks say about one candidate."""
+
+    negative_hit: bool
+    regex_hit: bool
+    keyword_hits: int
+    employer_hit: bool
+    prefix_hit: bool
+
+
+def blob_signals(c: Candidate, facts: DenialFacts) -> BlobSignals:
+    """The checks that read the letter (and the typed plan fields) for one
+    candidate. Scoring uses them, and so does the inputs hash: rows go
+    stale exactly when one of these answers changes."""
+    negative_hit = c.negative_regex is not None and bool(
+        c.negative_regex.search(facts.blob)
+    )
+    regex_hit = c.match_regex is not None and bool(c.match_regex.search(facts.blob))
+    keyword_hits = sum(
+        1 for k in c.match_keywords if whole_phrase_pattern(k).search(facts.blob)
+    )
+    employer_hit = False
+    if c.employer_name:
+        pattern = whole_phrase_pattern(c.employer_name)
+        employer_hit = bool(facts.employer_name) and bool(
+            pattern.search(facts.employer_name)
+        )
+        if not employer_hit and (
+            len(c.employer_name.split()) >= 2 or len(c.employer_name) >= 6
+        ):
+            employer_hit = bool(pattern.search(facts.blob))
+    plan_id_text = facts.plan_id_text.upper()
+    prefix_hit = bool(plan_id_text) and any(
+        plan_id_text.startswith(p) for p in c.plan_id_prefixes
+    )
+    return BlobSignals(negative_hit, regex_hit, keyword_hits, employer_hit, prefix_hit)
+
+
 def score_candidate(c: Candidate, facts: DenialFacts) -> Optional[Scored]:
     """A candidate's score for the denial, or None when a hard exclude
     applies. Pure: no ORM, no model."""
     doc_lob_specific = c.line_of_business in _SPECIFIC_LOBS
+    blob = blob_signals(c, facts)
     # E3 another state.
     if c.state and facts.state and c.state != facts.state:
         return None
@@ -453,36 +497,26 @@ def score_candidate(c: Candidate, facts: DenialFacts) -> Optional[Scored]:
     if facts.dental != is_dental_doc:
         return None
     # E6 the document rules itself out.
-    if c.negative_regex is not None and c.negative_regex.search(facts.blob):
+    if blob.negative_hit:
         return None
     # E7 another plan of the same carrier.
     if c.insurance_plan_id and facts.plan_id and c.insurance_plan_id != facts.plan_id:
         return None
 
     signals: Dict[str, Any] = {}
-    score = 0.0
     if c.insurance_plan_id and facts.plan_id and c.insurance_plan_id == facts.plan_id:
         signals["same_plan"] = 40
-    plan_id_text = facts.plan_id_text.upper()
-    if plan_id_text and any(plan_id_text.startswith(p) for p in c.plan_id_prefixes):
+    if blob.prefix_hit:
         signals["plan_id_prefix"] = 30
-    if c.employer_name:
-        pattern = whole_phrase_pattern(c.employer_name)
-        hit = bool(facts.employer_name) and bool(pattern.search(facts.employer_name))
-        if not hit and (len(c.employer_name.split()) >= 2 or len(c.employer_name) >= 6):
-            hit = bool(pattern.search(facts.blob))
-        if hit:
-            signals["employer"] = 30
-    if c.match_regex is not None and c.match_regex.search(facts.blob):
+    if blob.employer_hit:
+        signals["employer"] = 30
+    if blob.regex_hit:
         signals["match_regex"] = 25
-    hits = sum(
-        1 for k in c.match_keywords if whole_phrase_pattern(k).search(facts.blob)
-    )
-    if hits:
+    if blob.keyword_hits:
         # The count, never the phrases: the signals are logged beside the
         # denial id, and a phrase is often a city.
-        signals["keyword"] = min(hits * 10, 30)
-        signals["keyword_hits"] = hits
+        signals["keyword"] = min(blob.keyword_hits * 10, 30)
+        signals["keyword_hits"] = blob.keyword_hits
     if c.state and facts.state and c.state == facts.state:
         signals["state"] = 10
     if doc_lob_specific and facts.lob:
@@ -608,9 +642,18 @@ class MatchOutcome:
 def _inputs_hash(
     facts: DenialFacts, stamp: Tuple[int, str], candidates: Sequence[Candidate]
 ) -> str:
-    """The selection's inputs, hashed; only the facts this carrier's corpus
-    keys on, so a plan id or plan written later by a sibling extraction
-    step does not stale the rows of a corpus that never looks at it."""
+    """The selection's inputs, hashed.
+
+    What goes in is what can change the selection for this carrier's
+    corpus: the letter, the carrier, the state, whether the claim is
+    dental, the corpus stamp, and per candidate the answers of its
+    letter-dependent checks (negative regex, regex, keyword count,
+    employer, plan id prefix), so a plan id, employer or plan context
+    written later matters only when it changes an answer. The plan, the
+    line of business and the year join only when some candidate keys on
+    them. Procedure and diagnosis stay out: they shape the passages, not
+    the selection.
+    """
     parts: Dict[str, Any] = {
         "letter": facts.letter_hash,
         "company": facts.company_id,
@@ -618,15 +661,25 @@ def _inputs_hash(
         "dental": facts.dental,
         "corpus_n": stamp[0],
         "corpus_latest": stamp[1],
+        "answers": [
+            [
+                c.id,
+                b.negative_hit,
+                b.regex_hit,
+                b.keyword_hits,
+                b.employer_hit,
+                b.prefix_hit,
+            ]
+            for c in candidates
+            for b in (blob_signals(c, facts),)
+        ],
     }
     if any(c.insurance_plan_id for c in candidates):
         parts["plan"] = facts.plan_id
-    if any(c.plan_id_prefixes for c in candidates):
-        parts["plan_id_text"] = facts.plan_id_text.upper()
-    if any(c.employer_name for c in candidates):
-        parts["employer"] = facts.employer_name.lower()
     if any(c.line_of_business in _SPECIFIC_LOBS for c in candidates):
         parts["lob"] = [facts.lob, facts.lob_is_hard]
+    if any(c.plan_year for c in candidates):
+        parts["year"] = facts.year
     return hashlib.sha256(
         json.dumps(parts, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
@@ -747,10 +800,18 @@ def tie_break_answer_valid(text: str, count: int) -> bool:
     return 0 <= int(match.group(1)) <= count
 
 
-async def tie_break(denial_text: str, candidates: Sequence[Scored]) -> Optional[Scored]:
+#: tie_break's answer when no model answered: not "none of them", so the
+#: question is asked again on the next refresh.
+NO_ANSWER = "no_answer"
+
+
+async def tie_break(
+    denial_text: str, candidates: Sequence[Scored]
+) -> Union[Scored, None, str]:
     """One of our own models picks among candidates the rules cannot
-    separate, or 0 for none. Internal models only: ``models=`` is never
-    passed, so the letter excerpt stays with us."""
+    separate: the pick, None for "none of them" (an answer of 0), or
+    NO_ANSWER when no model answered. Internal models only: ``models=`` is
+    never passed, so the letter excerpt stays with us."""
     if len(candidates) < 2:
         return None
     count = len(candidates)
@@ -768,7 +829,7 @@ async def tie_break(denial_text: str, candidates: Sequence[Scored]) -> Optional[
         task="entity_extraction",
     )
     if not answer:
-        return None
+        return NO_ANSWER
     pick = int(answer.strip())
     if pick < 1:
         return None
@@ -831,6 +892,14 @@ def _store_rows(
     """Replace the denial's rows with the outcome's, ranked. Only while the
     row still holds the letter the match was made from; False otherwise."""
     selected_ids = {s.candidate.id for s in selected}
+    # The chosen documents and the tie-break's candidates are always kept;
+    # the rest of the stored set is the best of the others.
+    must = list(selected) + [
+        s for s in outcome.tie_break_candidates if s.candidate.id not in selected_ids
+    ]
+    must_ids = {s.candidate.id for s in must}
+    rest = [s for s in outcome.scored if s.candidate.id not in must_ids]
+    stored = ranked(must + rest[: max(0, MAX_STORED - len(must))])
     with transaction.atomic():
         if not Denial.objects.filter(
             denial_id=denial.denial_id, denial_text=denial.denial_text
@@ -849,7 +918,7 @@ def _store_rows(
                 method=method,
                 inputs_hash=outcome.inputs_hash,
             )
-            for rank, s in enumerate(outcome.scored[:MAX_STORED], start=1)
+            for rank, s in enumerate(stored, start=1)
         ]
         PlanDocumentMatch.objects.bulk_create(rows)
     return True
@@ -880,8 +949,20 @@ def _first_selected(rows: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return min(chosen, key=lambda r: r["rank"])
 
 
+def _remaining(deadline: Optional[float]) -> Optional[float]:
+    return None if deadline is None else deadline - time.monotonic()
+
+
+def _model_affordable(deadline: Optional[float]) -> bool:
+    remaining = _remaining(deadline)
+    return remaining is None or remaining >= SHORT_BUDGET_SECONDS
+
+
 async def arefresh_match(
-    denial: Denial, *, company: Optional[InsuranceCompany] = None
+    denial: Denial,
+    *,
+    company: Optional[InsuranceCompany] = None,
+    deadline: Optional[float] = None,
 ) -> bool:
     """Bring the denial's match rows up to date; True when documents are
     selected for it.
@@ -890,7 +971,9 @@ async def arefresh_match(
     procedure or diagnosis changed); otherwise the documents are scored
     again, a model breaks a tie when there is one, the rows are stored
     before any text is built, so a timeout keeps the selection, and the
-    rank-1 selected row then gets its passages and summary.
+    rank-1 selected row then gets its passages and summary. ``deadline``
+    (time.monotonic) is the caller's budget: with little of it left the
+    text is built without a model, and a tie is not put to one.
     """
     try:
         outcome = await database_sync_to_async(match_documents)(denial, company)
@@ -914,7 +997,9 @@ async def arefresh_match(
                 ]
                 texts = await database_sync_to_async(_texts_for)(selected_ids)
                 if texts:
-                    relevant, summary = await build_relevance(denial, texts)
+                    relevant, summary = await build_relevance(
+                        denial, texts, use_model=_model_affordable(deadline)
+                    )
                     await database_sync_to_async(_store_relevance)(
                         denial, outcome, first["document_id"], relevant, summary
                     )
@@ -922,11 +1007,22 @@ async def arefresh_match(
         selected = list(outcome.selected)
         method = PlanDocumentMatch.METHOD_RULES
         if not selected and outcome.tie_break_candidates:
-            pick = await tie_break(
-                denial.denial_text or "", outcome.tie_break_candidates
-            )
+            if not _model_affordable(deadline):
+                # No budget to ask. Nothing is stored, so the next refresh
+                # asks.
+                return False
+            async with asyncio.timeout(TIE_BREAK_TIMEOUT + 5):
+                pick = await tie_break(
+                    denial.denial_text or "", outcome.tie_break_candidates
+                )
+            if isinstance(pick, str):
+                # No model answered: not a verdict. Nothing is stored, so
+                # the question is asked again on the next refresh.
+                return False
             if pick is not None:
-                selected = companions(pick, outcome.tie_break_candidates)
+                # Rank order, so the text lands on the row the reader
+                # takes first.
+                selected = ranked(companions(pick, outcome.tie_break_candidates))
                 method = PlanDocumentMatch.METHOD_MODEL
         stored = await database_sync_to_async(_store_rows)(
             denial, outcome, selected, method
@@ -938,7 +1034,9 @@ async def arefresh_match(
             for s in selected
             if s.candidate.id in outcome.texts
         ]
-        relevant, summary = await build_relevance(denial, documents)
+        relevant, summary = await build_relevance(
+            denial, documents, use_model=_model_affordable(deadline)
+        )
         await database_sync_to_async(_store_relevance)(
             denial, outcome, selected[0].candidate.id, relevant, summary
         )
@@ -1008,6 +1106,19 @@ def format_plan_document_context(rows: Sequence[PlanDocumentMatch]) -> str:
     body = "\n".join(lines)
     body = truncate_at_boundary(
         body, CONTEXT_MAX_CHARS - len(PLAN_DOCUMENT_END) - 2, ellipsis=""
+    )
+    return f"{body}\n{PLAN_DOCUMENT_END}\n"
+
+
+def truncate_plan_document_context(text: str, max_chars: int) -> str:
+    """``text`` (a rendered section) cut to ``max_chars`` with its closing
+    marker kept, so what the prompt adds after it stays outside the quoted
+    block. For prompt shedding, which otherwise cuts strings blindly."""
+    if len(text) <= max_chars:
+        return text
+    body = text.split(PLAN_DOCUMENT_END, 1)[0]
+    body = truncate_at_boundary(
+        body, max(0, max_chars - len(PLAN_DOCUMENT_END) - 2), ellipsis=""
     )
     return f"{body}\n{PLAN_DOCUMENT_END}\n"
 

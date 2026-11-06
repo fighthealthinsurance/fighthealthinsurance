@@ -19,6 +19,7 @@ The letters are invented.
 
 import asyncio
 import contextlib
+import time
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -26,7 +27,7 @@ from unittest.mock import AsyncMock, patch
 from django.test import TestCase, TransactionTestCase, override_settings
 from loguru import logger
 
-from fighthealthinsurance import pa_requirements
+from fighthealthinsurance import pa_requirements, plan_document_matcher
 from fighthealthinsurance.common_view_logic import (
     EXTRACTION_OUTCOME_FOUND,
     EXTRACTION_OUTCOME_NOTHING_FOUND,
@@ -52,6 +53,7 @@ from fighthealthinsurance.plan_document_matcher import (
     PASSAGE_BUDGET_CHARS,
     PLAN_DOCUMENT_END,
     PLAN_DOCUMENT_GUARD,
+    SHORT_BUDGET_SECONDS,
     arefresh_match,
     build_relevance,
     current_hashes,
@@ -576,6 +578,38 @@ class CurrentHashesTests(_CorpusMixin, TestCase):
         self.denial_row.plan_id = "GRP-12345"
         self.assertNotEqual(current_hashes(self.denial_row)[0], before)
 
+    def test_a_keyword_phrase_arriving_in_plan_context_moves_the_hash(self):
+        # The generic letter names no region. The phrase reaches the blob
+        # through plan_context and turns the corpus's keyword answers (and
+        # the SoCal document's negative regex).
+        denial = self.denial(GENERIC_LETTER)
+        before = current_hashes(denial)[0]
+        denial.plan_context = "Northern California Region"
+        self.assertNotEqual(current_hashes(denial)[0], before)
+
+    def test_plan_context_that_turns_no_answer_leaves_the_hash_alone(self):
+        denial = self.denial(GENERIC_LETTER)
+        before = current_hashes(denial)[0]
+        denial.plan_context = "An HMO plan through my employer."
+        self.assertEqual(current_hashes(denial)[0], before)
+
+    def test_a_denial_date_arriving_moves_the_hash_while_a_candidate_has_a_year(
+        self,
+    ):
+        denial = self.denial(SF_LETTER, denial_date=None)
+        before = current_hashes(denial)[0]
+        denial.denial_date = date(2025, 3, 1)
+        self.assertNotEqual(current_hashes(denial)[0], before)
+
+    def test_the_denial_date_is_ignored_while_no_candidate_has_a_year(self):
+        PublicPlanDocument.objects.filter(insurance_company=self.kaiser).update(
+            plan_year=None
+        )
+        denial = self.denial(SF_LETTER, denial_date=None)
+        before = current_hashes(denial)[0]
+        denial.denial_date = date(2025, 3, 1)
+        self.assertEqual(current_hashes(denial)[0], before)
+
     def test_the_procedure_changes_the_relevance_key_and_not_the_inputs_hash(self):
         inputs_before, key_before = current_hashes(self.denial_row)
         self.denial_row.procedure = "MRI of the lumbar spine"
@@ -843,6 +877,8 @@ class BuildRelevanceTests(TestCase):
         self.assertEqual(models.search.await_args.args[0], SF_LETTER)
         self.assertEqual(models.search.await_args.kwargs["documents"], self.long)
         self.assertLess(len(relevant), len(LONG_EOC_TEXT))
+        # Within the budget, give or take the labels and separators.
+        self.assertLessEqual(len(relevant), PASSAGE_BUDGET_CHARS + 400)
         self.assertIn("[EOC, page", relevant)
         self.assertEqual(summary, SUMMARY)
         # The summary is written from exactly the text that will be quoted.
@@ -871,9 +907,9 @@ class RefreshMatchTests(_CorpusMixin, TransactionTestCase):
     def setUp(self):
         self.build_corpus()
 
-    def refresh(self, denial, **mocks):
+    def refresh(self, denial, *, deadline=None, **mocks):
         with _no_models(**mocks) as models:
-            found = asyncio.run(arefresh_match(denial))
+            found = asyncio.run(arefresh_match(denial, deadline=deadline))
         return found, models
 
     def test_a_refresh_stores_every_surviving_candidate_ranked_with_its_signals(self):
@@ -908,7 +944,8 @@ class RefreshMatchTests(_CorpusMixin, TransactionTestCase):
         self.assertIn(f"[{self.norcal_eoc.citation_name()}, page", first.relevant_text)
         self.assertIn("medical necessity", first.relevant_text)
         self.assertLess(len(first.relevant_text), len(LONG_EOC_TEXT))
-        self.assertLessEqual(len(first.relevant_text), PASSAGE_BUDGET_CHARS * 2)
+        # Within the budget, give or take the labels and separators.
+        self.assertLessEqual(len(first.relevant_text), PASSAGE_BUDGET_CHARS + 400)
         self.assertEqual(first.summary, SUMMARY)
         self.assertEqual(first.relevance_key, current_hashes(denial)[1])
         for row in rows[1:]:
@@ -1005,6 +1042,48 @@ class RefreshMatchTests(_CorpusMixin, TransactionTestCase):
         self.assertIn(self.norcal_eoc.citation_name(), section)
         self.assertNotIn(self.deductible_hmo_eoc.citation_name(), section)
 
+    def test_a_pick_outranked_by_its_companion_puts_the_text_on_the_lower_rank(
+        self,
+    ):
+        # "3" is the SBC. Its companion, the NorCal EOC, outranks it, so the
+        # selection is stored in rank order and the passages land on the
+        # EOC's row: the lowest-rank selected row, the one the reader takes
+        # first.
+        denial = self.denial(TIE_BREAK_LETTER)
+        found, models = self.refresh(denial, tie_break_answer="3")
+        self.assertTrue(found)
+        models.infer.assert_awaited_once()
+        rows = self.rows(denial)
+        self.assertEqual(
+            [(r.document_id, r.rank, r.selected) for r in rows],
+            [
+                (self.deductible_hmo_eoc.id, 1, False),
+                (self.norcal_eoc.id, 2, True),
+                (self.norcal_sbc.id, 3, True),
+                (self.senior_advantage_eoc.id, 4, False),
+            ],
+        )
+        self.assertEqual({r.method for r in rows}, {PlanDocumentMatch.METHOD_MODEL})
+        self.assertIn(
+            f"[{self.norcal_eoc.citation_name()}, page", rows[1].relevant_text
+        )
+        self.assertEqual(rows[1].summary, SUMMARY)
+        self.assertEqual(rows[1].relevance_key, current_hashes(denial)[1])
+        for row in (rows[0], rows[2], rows[3]):
+            self.assertEqual((row.relevant_text, row.summary), ("", ""))
+        # The passages were built over the pick and its companion, in rank
+        # order.
+        self.assertEqual(
+            [d.name for d in models.search.await_args.kwargs["documents"]],
+            [self.norcal_eoc.citation_name(), self.norcal_sbc.citation_name()],
+        )
+        section = get_plan_document_context_for_denial(denial)
+        self.assertTrue(section.startswith(PLAN_DOCUMENT_GUARD))
+        self.assertIn(self.norcal_eoc.citation_name(), section)
+        self.assertIn(self.norcal_sbc.citation_name(), section)
+        self.assertNotIn(self.deductible_hmo_eoc.citation_name(), section)
+        self.assertIn(SUMMARY, section)
+
     def test_a_declined_tie_break_stores_the_rows_and_selects_nothing(self):
         denial = self.denial(TIE_BREAK_LETTER)
         found, models = self.refresh(denial, tie_break_answer="0")
@@ -1018,12 +1097,24 @@ class RefreshMatchTests(_CorpusMixin, TransactionTestCase):
         models.summarize.assert_not_awaited()
         self.assertEqual(get_plan_document_context_for_denial(denial), "")
 
-    def test_no_answer_from_the_model_selects_nothing(self):
+    def test_no_answer_from_the_model_stores_nothing(self):
         denial = self.denial(TIE_BREAK_LETTER)
         found, models = self.refresh(denial, tie_break_answer=None)
         self.assertFalse(found)
         models.infer.assert_awaited_once()
-        self.assertFalse(any(r.selected for r in self.rows(denial)))
+        models.search.assert_not_awaited()
+        # Not a verdict: no rows, so nothing reads as "asked and declined".
+        self.assertEqual(self.rows(denial), [])
+        self.assertEqual(get_plan_document_context_for_denial(denial), "")
+
+    def test_an_unanswered_tie_break_is_asked_again_on_the_next_refresh(self):
+        denial = self.denial(TIE_BREAK_LETTER)
+        _, first = self.refresh(denial, tie_break_answer=None)
+        found, second = self.refresh(denial, tie_break_answer=None)
+        self.assertFalse(found)
+        first.infer.assert_awaited_once()
+        second.infer.assert_awaited_once()
+        self.assertEqual(self.rows(denial), [])
 
     def test_a_declined_tie_break_is_not_asked_again_while_the_hash_holds(self):
         denial = self.denial(TIE_BREAK_LETTER)
@@ -1070,6 +1161,118 @@ class RefreshMatchTests(_CorpusMixin, TransactionTestCase):
         self.assertFalse(found)
         self.assertEqual(self.rows(denial), [])
         models.infer.assert_not_awaited()
+
+    def test_the_selected_rows_are_stored_whatever_max_stored_allows(self):
+        denial = self.denial(SF_LETTER)
+        with patch.object(plan_document_matcher, "MAX_STORED", 2):
+            found, _ = self.refresh(denial)
+        self.assertTrue(found)
+        rows = self.rows(denial)
+        self.assertEqual(
+            [(r.document_id, r.rank, r.selected, r.score) for r in rows],
+            [(self.norcal_eoc.id, 1, True, 49), (self.norcal_sbc.id, 2, True, 45)],
+        )
+        self.assertIn(PLAN_DOCUMENT_GUARD, get_plan_document_context_for_denial(denial))
+
+    def test_the_tie_break_candidates_are_stored_beyond_max_stored(self):
+        # The pick and both rivals are kept, re-ranked by score; the best of
+        # the rest (the Senior Advantage EOC) no longer fits.
+        denial = self.denial(TIE_BREAK_LETTER)
+        with patch.object(plan_document_matcher, "MAX_STORED", 2):
+            found, _ = self.refresh(denial, tie_break_answer="3")
+        self.assertTrue(found)
+        rows = self.rows(denial)
+        self.assertEqual(
+            [(r.document_id, r.rank, r.selected, r.score) for r in rows],
+            [
+                (self.deductible_hmo_eoc.id, 1, False, 44),
+                (self.norcal_eoc.id, 2, True, 39),
+                (self.norcal_sbc.id, 3, True, 35),
+            ],
+        )
+
+    def test_the_best_of_the_rest_fill_up_to_max_stored(self):
+        denial = self.denial(SF_LETTER)
+        with patch.object(plan_document_matcher, "MAX_STORED", 3):
+            self.refresh(denial)
+        self.assertEqual(
+            [r.document_id for r in self.rows(denial)],
+            [self.norcal_eoc.id, self.norcal_sbc.id, self.deductible_hmo_eoc.id],
+        )
+
+    def test_a_short_budget_builds_the_passages_without_a_model(self):
+        denial = self.denial(SF_LETTER)
+        found, models = self.refresh(denial, deadline=time.monotonic() + 5)
+        self.assertTrue(found)
+        models.search.assert_not_awaited()
+        models.summarize.assert_not_awaited()
+        models.infer.assert_not_awaited()
+        rows = self.rows(denial)
+        self.assertEqual(
+            [r.document_id for r in rows if r.selected],
+            [self.norcal_eoc.id, self.norcal_sbc.id],
+        )
+        first = rows[0]
+        # The fallback terms chose the passages; no model, so no summary.
+        self.assertNotEqual(first.relevant_text, "")
+        self.assertIn(f"[{self.norcal_eoc.citation_name()}, page", first.relevant_text)
+        self.assertEqual(first.summary, "")
+        self.assertEqual(first.relevance_key, current_hashes(denial)[1])
+        section = get_plan_document_context_for_denial(denial)
+        self.assertTrue(section.startswith(PLAN_DOCUMENT_GUARD))
+        self.assertIn("Relevant passages", section)
+        self.assertNotIn("Summary of these passages", section)
+
+    def test_a_short_budget_rebuilds_changed_passages_without_a_model_too(self):
+        denial = self.denial(SF_LETTER)
+        self.refresh(denial)
+        denial.procedure = "MRI of the lumbar spine"
+        denial.save(update_fields=["procedure"])
+        found, models = self.refresh(denial, deadline=time.monotonic() + 5)
+        self.assertTrue(found)
+        models.search.assert_not_awaited()
+        models.summarize.assert_not_awaited()
+        first = self.rows(denial)[0]
+        self.assertEqual(first.relevance_key, current_hashes(denial)[1])
+        self.assertNotEqual(first.relevant_text, "")
+        self.assertEqual(first.summary, "")
+
+    def test_a_short_budget_does_not_put_a_tie_to_the_model(self):
+        denial = self.denial(TIE_BREAK_LETTER)
+        found, models = self.refresh(
+            denial, tie_break_answer="1", deadline=time.monotonic() + 5
+        )
+        self.assertFalse(found)
+        models.infer.assert_not_awaited()
+        models.search.assert_not_awaited()
+        # Nothing stored, so a refresh with budget asks.
+        self.assertEqual(self.rows(denial), [])
+        self.assertEqual(get_plan_document_context_for_denial(denial), "")
+
+    def test_a_tie_waits_for_a_refresh_with_budget(self):
+        denial = self.denial(TIE_BREAK_LETTER)
+        self.refresh(denial, tie_break_answer="1", deadline=time.monotonic() + 5)
+        found, models = self.refresh(
+            denial,
+            tie_break_answer="1",
+            deadline=time.monotonic() + SHORT_BUDGET_SECONDS + 60,
+        )
+        self.assertTrue(found)
+        models.infer.assert_awaited_once()
+        self.assertEqual(
+            [r.document_id for r in self.rows(denial) if r.selected],
+            [self.deductible_hmo_eoc.id],
+        )
+
+    def test_an_ample_budget_still_asks_the_models(self):
+        denial = self.denial(SF_LETTER)
+        found, models = self.refresh(
+            denial, deadline=time.monotonic() + SHORT_BUDGET_SECONDS + 60
+        )
+        self.assertTrue(found)
+        models.search.assert_awaited_once()
+        models.summarize.assert_awaited_once()
+        self.assertEqual(self.rows(denial)[0].summary, SUMMARY)
 
 
 class ExtractionStepTests(_CorpusMixin, TransactionTestCase):
@@ -1135,8 +1338,9 @@ class LogHygieneTests(_CorpusMixin, TransactionTestCase):
         with _captured_logs() as lines, _no_models():
             self.assertTrue(asyncio.run(arefresh_match(denial)))
         joined = "\n".join(lines)
-        # The match did log, so the assertions below are about its lines.
-        self.assertIn(f"Plan documents for denial {denial.denial_id}", joined)
+        # The match did log beside the denial id (the wording is its own),
+        # so the assertions below are about its lines.
+        self.assertTrue(any(str(denial.denial_id) in line for line in lines))
         lowered = joined.lower()
         for secret in (
             SF_LETTER,

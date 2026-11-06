@@ -5,8 +5,9 @@ section; this pins where the two prompt builders put it (right after the
 payer-policy block, whose last sentence tells the model to defer to the
 patient's own plan documents and must not be read as pointing at these
 automatically matched excerpts), that nothing renders without it, that the
-tier-2 context shed cuts it instead of dropping it, and that ``make_appeals``
-reads it off the denial only while ``PLAN_DOCUMENT_MATCHING_ENABLED`` is on.
+tier-2 context shed cuts it instead of dropping it and keeps its closing
+marker, and that ``make_appeals`` reads it off the denial only while
+``PLAN_DOCUMENT_MATCHING_ENABLED`` is on.
 
 The helpers mirror ``test_generate_appeal.py`` (``_mock_denial``, the
 MagicMock backend reached through make_appeals' sync ``infer`` seam, the
@@ -19,18 +20,19 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.test import override_settings
 
-from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.generate_appeal import (
     AppealGenerator,
     AppealTemplateGenerator,
     _PLAN_DOCUMENT_CONTEXT_TIER2_CAP,
     _PROMPT_TIER1_NULLS,
     _PROMPT_TIER2_TRUNCATIONS,
+    _apply_tier2_truncations,
     _shed_context,
 )
 from fighthealthinsurance.plan_document_matcher import (
     PLAN_DOCUMENT_END,
     PLAN_DOCUMENT_GUARD,
+    truncate_plan_document_context,
 )
 
 DENIAL_TEXT = "Your MRI was denied as not medically necessary."
@@ -52,10 +54,12 @@ SECTION = (
     f"{PASSAGE}\n"
     f"{PLAN_DOCUMENT_END}\n"
 )
-# Past the tier-2 cap, so a truncation has something to cut.
+# Past the tier-2 cap, so a truncation has something to cut; closed by the
+# marker like every rendered section.
 LONG_SECTION = (
     f"{PLAN_DOCUMENT_GUARD}\nRelevant passages (page-labelled):\n"
     + f"{PASSAGE} " * (_PLAN_DOCUMENT_CONTEXT_TIER2_CAP // len(PASSAGE) + 10)
+    + f"\n{PLAN_DOCUMENT_END}\n"
 )
 
 BUILDERS = ["make_open_prompt", "make_sectioned_open_prompt"]
@@ -176,6 +180,14 @@ def _rebuild_spy(builder):
     return seen, rebuild
 
 
+def _section_in(prompt):
+    """The plan-document section as it stands in ``prompt``: from the guard
+    through the closing marker's line."""
+    start = prompt.index(PLAN_DOCUMENT_GUARD)
+    end = prompt.index(PLAN_DOCUMENT_END, start) + len(PLAN_DOCUMENT_END) + 1
+    return prompt[start:end]
+
+
 def test_plan_document_context_is_a_tier_two_truncation_after_plan_context():
     assert _PROMPT_TIER2_TRUNCATIONS[0][0] == "plan_context"
     assert (
@@ -202,12 +214,52 @@ def test_tier2_shed_truncates_plan_document_context():
     )
 
     assert "prompt.plan_document_context(truncated)" in changed
-    assert len(seen["plan_document_context"]) <= cap
+    shed_section = seen["plan_document_context"]
+    assert len(shed_section) <= cap
+    assert shed_section == truncate_plan_document_context(LONG_SECTION, cap)
     rebuilt = new_calls[0]["prompt"]
     assert LONG_SECTION not in rebuilt
-    assert truncate_at_boundary(LONG_SECTION, cap, ellipsis="") in rebuilt
+    assert shed_section in rebuilt
+    # In the prompt itself: at most the cap, and still closed by the marker,
+    # so what the prompt adds after it stays outside the quoted block.
+    in_prompt = _section_in(rebuilt)
+    assert len(in_prompt) <= cap
+    assert in_prompt.endswith("\n" + PLAN_DOCUMENT_END + "\n")
+    assert rebuilt.count(PLAN_DOCUMENT_END) == 1
     # Cut, not dropped: the guard at the head of the section is still there.
     assert PLAN_DOCUMENT_GUARD in rebuilt
+    assert in_prompt.startswith(PLAN_DOCUMENT_GUARD)
+
+
+def test_apply_tier2_truncations_cuts_the_section_and_keeps_its_marker():
+    cap = _PLAN_DOCUMENT_CONTEXT_TIER2_CAP
+    target = {"plan_document_context": LONG_SECTION, "plan_context": "short"}
+    changed: set = set()
+
+    _apply_tier2_truncations(
+        target, _PROMPT_TIER2_TRUNCATIONS, changed, label="prompt."
+    )
+
+    assert changed == {"prompt.plan_document_context(truncated)"}
+    cut = target["plan_document_context"]
+    assert len(cut) <= cap
+    assert cut.startswith(PLAN_DOCUMENT_GUARD)
+    assert cut.endswith("\n" + PLAN_DOCUMENT_END + "\n")
+    assert cut.count(PLAN_DOCUMENT_END) == 1
+    # The other key was within its cap and is untouched.
+    assert target["plan_context"] == "short"
+
+
+def test_apply_tier2_truncations_leaves_a_section_within_the_cap_alone():
+    target = {"plan_document_context": SECTION}
+    changed: set = set()
+
+    _apply_tier2_truncations(
+        target, _PROMPT_TIER2_TRUNCATIONS, changed, label="prompt."
+    )
+
+    assert changed == set()
+    assert target["plan_document_context"] is SECTION
 
 
 def test_tier2_shed_leaves_a_section_within_the_cap_alone():

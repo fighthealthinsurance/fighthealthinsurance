@@ -1076,7 +1076,17 @@ def _apply_tier2_truncations(
     for key, cap in truncations:
         val = target.get(key)
         if isinstance(val, str) and len(val) > cap:
-            target[key] = truncate_at_boundary(val, cap, ellipsis="")
+            if key == "plan_document_context":
+                # The section closes with a marker that keeps what follows
+                # it in the prompt outside the quoted plan text; a blind
+                # cut would drop it.
+                from fighthealthinsurance.plan_document_matcher import (
+                    truncate_plan_document_context,
+                )
+
+                target[key] = truncate_plan_document_context(val, cap)
+            else:
+                target[key] = truncate_at_boundary(val, cap, ellipsis="")
             changed.add(f"{label}{key}(truncated)")
 
 

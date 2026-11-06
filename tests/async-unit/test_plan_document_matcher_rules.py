@@ -4,7 +4,9 @@
 ORM, no model call. So the worked examples here build ``Candidate`` and
 ``DenialFacts`` directly and check the arithmetic the module's docstring
 describes (hard excludes, points per signal, the identifying-signal rule,
-the margin). Everything that needs rows -- ``match_documents``,
+the margin), the letter-dependent answers ``blob_signals`` gives the scorer
+and the inputs hash, and the cut ``truncate_plan_document_context`` makes
+for prompt shedding. Everything that needs rows -- ``match_documents``,
 ``arefresh_match``, the renderer -- lives in
 tests/sync/test_plan_document_matcher.py.
 
@@ -23,15 +25,20 @@ from fighthealthinsurance.plan_document_matcher import (
     MARGIN,
     MAX_SELECTED,
     MIN_SCORE,
+    PLAN_DOCUMENT_END,
+    PLAN_DOCUMENT_GUARD,
+    BlobSignals,
     Candidate,
     DenialFacts,
     Scored,
+    blob_signals,
     companions,
     conflicts,
     ranked,
     score_candidate,
     select,
     tie_break_answer_valid,
+    truncate_plan_document_context,
 )
 
 # The flags RegexField compiles match_regex / negative_regex with.
@@ -123,6 +130,30 @@ def signals_of(c: Candidate, f: DenialFacts) -> dict:
     result = score_candidate(c, f)
     assert result is not None, "a hard exclude fired where a score was expected"
     return result.signals
+
+
+CITATION = "Kaiser Permanente Northern California HMO Evidence of Coverage (2025)"
+RENDERED_PASSAGE = (
+    "Magnetic resonance imaging of the spine is covered when medical necessity "
+    "is established by the treating physician under the plan's criteria; an "
+    "appeal may be filed within 180 days of a denial."
+)
+
+
+def rendered_section(passages: int) -> str:
+    """A section as ``format_plan_document_context`` renders it: the guard,
+    the matched document, ``passages`` page-labelled passages, and the
+    closing marker on its own line."""
+    lines = [
+        PLAN_DOCUMENT_GUARD,
+        "Matched document(s):",
+        f"- {CITATION} -- Evidence of Coverage, CA, Northern California, "
+        "https://example.com/kaiser/norcal-eoc-2025.pdf",
+        "Relevant passages (page-labelled):",
+    ]
+    for page in range(1, passages + 1):
+        lines.append(f"[{CITATION}, page {page}]\n{RENDERED_PASSAGE}")
+    return "\n".join(lines) + f"\n{PLAN_DOCUMENT_END}\n"
 
 
 class TestWholePhrasePattern:
@@ -579,3 +610,195 @@ class TestTieBreakAnswerValid:
     )
     def test_only_a_number_from_zero_to_the_count_is_valid(self, answer, count, valid):
         assert tie_break_answer_valid(answer, count) is valid
+
+
+class TestBlobSignals:
+    """The five letter-dependent answers, one candidate at a time: what the
+    scorer turns into points and the inputs hash stores per candidate."""
+
+    def test_a_candidate_that_keys_on_nothing_answers_false_to_everything(self):
+        c = candidate(
+            match_keywords=(),
+            match_regex=None,
+            negative_regex=None,
+            employer_name="",
+            plan_id_prefixes=(),
+        )
+        # Even a denial with an employer and a plan id: the answers come
+        # from what the document keys on.
+        f = facts(employer_name="Golden Gate Transit", plan_id_text="GRP-12345")
+        assert blob_signals(c, f) == BlobSignals(
+            negative_hit=False,
+            regex_hit=False,
+            keyword_hits=0,
+            employer_hit=False,
+            prefix_hit=False,
+        )
+
+    def test_the_negative_regex_hit_is_answered(self):
+        c = candidate(negative_regex=regex(EXAMPLE_NEGATIVE_REGEX))
+        letter = "Kaiser Permanente Los Angeles Medical Center denied an MRI."
+        assert blob_signals(c, facts(blob=letter)).negative_hit is True
+        # LETTER says "medically", which the regex is written not to match.
+        assert blob_signals(c, facts()).negative_hit is False
+
+    def test_the_match_regex_hit_is_answered(self):
+        c = candidate(match_regex=regex(r"\bdeductible\s+hmo\b"))
+        hit = facts(blob="Your Deductible HMO plan denied an MRI.")
+        assert blob_signals(c, hit).regex_hit is True
+        assert blob_signals(c, facts()).regex_hit is False
+
+    def test_keyword_hits_count_the_phrases_found_not_their_occurrences(self):
+        c = candidate(
+            match_keywords=("northern california", "san francisco", "sacramento")
+        )
+        blob = (
+            "Kaiser Permanente San Francisco, Northern California Region. "
+            "Northern California again; San Francisco again."
+        )
+        assert blob_signals(c, facts(blob=blob)).keyword_hits == 2
+
+    def test_keywords_are_counted_as_whole_phrases(self):
+        c = candidate(match_keywords=("san jose",))
+        assert blob_signals(c, facts(blob="Seen at San Joseph.")).keyword_hits == 0
+
+    def test_the_employer_is_found_in_the_typed_employer(self):
+        c = candidate(employer_name="Golden Gate Transit")
+        f = facts(employer_name="Golden Gate Transit District")
+        assert blob_signals(c, f).employer_hit is True
+
+    def test_a_multi_word_employer_is_found_in_the_letter(self):
+        c = candidate(employer_name="Golden Gate Transit")
+        f = facts(blob=LETTER + " Group: Golden Gate Transit.", employer_name="")
+        assert blob_signals(c, f).employer_hit is True
+
+    def test_a_short_one_word_employer_is_not_looked_for_in_the_letter(self):
+        c = candidate(employer_name="Acme")
+        f = facts(blob=LETTER + " Group: Acme.", employer_name="")
+        assert blob_signals(c, f).employer_hit is False
+
+    def test_a_denial_without_an_employer_answers_no_employer_hit(self):
+        c = candidate(employer_name="Golden Gate Transit")
+        assert blob_signals(c, facts(employer_name="")).employer_hit is False
+
+    def test_the_plan_id_prefix_hit_is_answered_case_insensitively(self):
+        c = candidate(plan_id_prefixes=("GRP",))
+        assert blob_signals(c, facts(plan_id_text="grp-12345")).prefix_hit is True
+        assert blob_signals(c, facts(plan_id_text="HMO-12345")).prefix_hit is False
+
+    def test_an_empty_plan_id_never_answers_a_prefix_hit(self):
+        c = candidate(plan_id_prefixes=("GRP", ""))
+        assert blob_signals(c, facts(plan_id_text="")).prefix_hit is False
+
+    def test_every_answer_at_once(self):
+        c = candidate(
+            match_keywords=("northern california", "san francisco", "sacramento"),
+            match_regex=regex(r"\bdeductible\s+hmo\b"),
+            negative_regex=regex(EXAMPLE_NEGATIVE_REGEX),
+            employer_name="Golden Gate Transit",
+            plan_id_prefixes=("GRP",),
+        )
+        f = facts(
+            blob=(
+                "Kaiser Permanente San Francisco Deductible HMO denied an MRI; "
+                "the member moved from Los Angeles."
+            ),
+            employer_name="Golden Gate Transit",
+            plan_id_text="GRP-12345",
+        )
+        assert blob_signals(c, f) == BlobSignals(
+            negative_hit=True,
+            regex_hit=True,
+            keyword_hits=1,
+            employer_hit=True,
+            prefix_hit=True,
+        )
+
+    def test_the_scorer_turns_the_same_answers_into_points(self):
+        # One set of answers for the score and for the inputs hash.
+        c = candidate(
+            match_keywords=("northern california", "san francisco"),
+            match_regex=regex(r"\bdeductible\s+hmo\b"),
+            employer_name="Golden Gate Transit",
+            plan_id_prefixes=("GRP",),
+        )
+        f = facts(
+            blob=LETTER + " Deductible HMO. Group: Golden Gate Transit.",
+            plan_id_text="GRP-12345",
+        )
+        answers = blob_signals(c, f)
+        s = signals_of(c, f)
+        assert answers == BlobSignals(False, True, 1, True, True)
+        assert s["keyword_hits"] == answers.keyword_hits
+        assert s["keyword"] == 10 * answers.keyword_hits
+        assert ("match_regex" in s) is answers.regex_hit
+        assert ("employer" in s) is answers.employer_hit
+        assert ("plan_id_prefix" in s) is answers.prefix_hit
+
+    def test_a_negative_hit_is_the_scorers_hard_exclude(self):
+        c = candidate(negative_regex=regex(EXAMPLE_NEGATIVE_REGEX))
+        f = facts(blob="Kaiser Permanente Los Angeles Medical Center denied an MRI.")
+        assert blob_signals(c, f).negative_hit is True
+        assert score_candidate(c, f) is None
+
+
+class TestTruncatePlanDocumentContext:
+    """The cut prompt shedding makes to a rendered section: within
+    ``max_chars``, the closing marker kept."""
+
+    def test_a_section_that_fits_is_returned_unchanged(self):
+        section = rendered_section(2)
+        assert truncate_plan_document_context(section, len(section)) is section
+        assert truncate_plan_document_context(section, len(section) + 1000) is section
+
+    def test_a_long_section_is_cut_from_the_tail_and_keeps_the_marker(self):
+        section = rendered_section(30)
+        max_chars = 1500
+        assert len(section) > max_chars
+        result = truncate_plan_document_context(section, max_chars)
+        assert len(result) <= max_chars
+        assert result.endswith("\n" + PLAN_DOCUMENT_END + "\n")
+        assert result.count(PLAN_DOCUMENT_END) == 1
+        # The head survives: the guard, the citation and the passages
+        # heading; the passages themselves took the cut.
+        assert result.startswith(PLAN_DOCUMENT_GUARD + "\n")
+        assert f"- {CITATION} --" in result
+        assert "Relevant passages (page-labelled):" in result
+        assert result.count(f"[{CITATION}, page") < 30
+
+    @pytest.mark.parametrize(
+        "max_chars",
+        [len(PLAN_DOCUMENT_END) + 2, 50, 100, 333, 1000, 2047, 3500],
+    )
+    def test_the_result_never_exceeds_max_chars_and_always_ends_with_the_marker(
+        self, max_chars
+    ):
+        section = rendered_section(30)
+        assert len(section) > max_chars
+        result = truncate_plan_document_context(section, max_chars)
+        assert len(result) <= max_chars
+        assert result.endswith(PLAN_DOCUMENT_END + "\n")
+
+    def test_a_tiny_max_chars_leaves_little_but_the_marker(self):
+        result = truncate_plan_document_context(rendered_section(30), 50)
+        assert len(result) <= 50
+        assert result.endswith("\n" + PLAN_DOCUMENT_END + "\n")
+        assert PLAN_DOCUMENT_GUARD not in result
+        assert result.count(PLAN_DOCUMENT_END) == 1
+
+    def test_the_marker_is_kept_even_when_max_chars_cannot_hold_it(self):
+        # Below the marker's own length nothing can both fit and close the
+        # block; the marker wins, so what follows in the prompt is never
+        # read as plan text. Shedding's cap is far above this floor.
+        result = truncate_plan_document_context(rendered_section(3), 10)
+        assert result == "\n" + PLAN_DOCUMENT_END + "\n"
+
+    def test_the_cut_never_splits_the_marker(self):
+        section = rendered_section(30)
+        # Every budget around the length of the body up to the marker.
+        body_length = len(section.split(PLAN_DOCUMENT_END, 1)[0])
+        for max_chars in range(body_length - 5, body_length + len(PLAN_DOCUMENT_END)):
+            result = truncate_plan_document_context(section, max_chars)
+            assert result.count(PLAN_DOCUMENT_END) == 1, max_chars
+            assert result.endswith(PLAN_DOCUMENT_END + "\n"), max_chars
+            assert len(result) <= max_chars, max_chars

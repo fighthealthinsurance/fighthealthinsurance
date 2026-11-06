@@ -26,6 +26,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -260,18 +262,21 @@ def _read_file(relative: Any, files_root: Optional[str]) -> Tuple[bytes, str]:
         raise RecordError("file: a relative path")
     if files_root is None:
         raise RecordError("file: the import needs --files-root to read files")
-    if os.path.isabs(relative):
+    if "\x00" in relative or os.path.isabs(relative):
         raise RecordError("file: the path must be relative to the files root")
-    root = os.path.realpath(files_root)
-    path = os.path.realpath(os.path.join(root, relative))
-    if os.path.commonpath([root, path]) != root:
-        raise RecordError("file: the path leaves the files root")
-    if not os.path.isfile(path):
-        raise RecordError("file: no such file under the files root")
-    if os.path.getsize(path) > MAX_FILE_BYTES:
-        raise RecordError(f"file: larger than {MAX_FILE_BYTES} bytes")
-    with open(path, "rb") as fh:
-        return fh.read(), os.path.basename(path)
+    try:
+        root = os.path.realpath(files_root)
+        path = os.path.realpath(os.path.join(root, relative))
+        if os.path.commonpath([root, path]) != root:
+            raise RecordError("file: the path leaves the files root")
+        if not os.path.isfile(path):
+            raise RecordError("file: no such file under the files root")
+        if os.path.getsize(path) > MAX_FILE_BYTES:
+            raise RecordError(f"file: larger than {MAX_FILE_BYTES} bytes")
+        with open(path, "rb") as fh:
+            return fh.read(), os.path.basename(path)
+    except (OSError, ValueError) as exc:
+        raise RecordError(f"file: cannot be read ({type(exc).__name__})") from None
 
 
 # ---- One record -------------------------------------------------------------------
@@ -280,12 +285,14 @@ def _read_file(relative: Any, files_root: Optional[str]) -> Tuple[bytes, str]:
 def _string(
     record: Dict[str, Any], name: str, limit: int, required: bool = False
 ) -> str:
+    """A one-line string field: whitespace collapsed, so a scraped title or
+    URL cannot carry a line break into the prompt."""
     value = record.get(name, "")
     if value is None:
         value = ""
     if not isinstance(value, str):
         raise RecordError(f"{name}: a string")
-    value = value.strip()
+    value = " ".join(value.split())
     if required and not value:
         raise RecordError(f"{name}: required")
     if len(value) > limit:
@@ -431,14 +438,20 @@ def prepare_document_fields(
         )
 
     source_url = _string(record, "source_url", MAX_URL)
-    if source_url and not source_url.lower().startswith(("http://", "https://")):
-        raise RecordError("source_url: an http(s) URL")
+    if source_url:
+        try:
+            URLValidator(schemes=["http", "https"])(source_url)
+        except ValidationError:
+            raise RecordError("source_url: an http(s) URL") from None
     fetched_at = None
     fetched_raw = record.get("fetched_at")
     if fetched_raw not in (None, ""):
         if not isinstance(fetched_raw, str):
             raise RecordError("fetched_at: an ISO 8601 datetime")
-        fetched_at = parse_datetime(fetched_raw)
+        try:
+            fetched_at = parse_datetime(fetched_raw)
+        except ValueError:
+            fetched_at = None
         if fetched_at is None:
             raise RecordError("fetched_at: an ISO 8601 datetime")
         if timezone.is_naive(fetched_at):
@@ -578,7 +591,16 @@ def _store_file(doc: PublicPlanDocument, prepared: PreparedDocument) -> Optional
     ):
         return None
     if doc.stored_file:
-        doc.stored_file.delete(save=False)
+        # After the commit, not now: a rollback puts the row back pointing
+        # at this file. The helper also leaves a file another row still
+        # names.
+        from fighthealthinsurance.models import _delete_files_on_commit
+
+        # A detached copy: saving below renames doc.stored_file in place,
+        # and the callback reads the name only at commit time.
+        old_file = doc.stored_file
+        old_copy = old_file.field.attr_class(doc, old_file.field, old_file.name)
+        _delete_files_on_commit(PublicPlanDocument, doc.pk, [("stored_file", old_copy)])
     doc.stored_file.save(
         f"{prepared.document_key}{ext}", ContentFile(prepared.file_bytes), save=True
     )
@@ -613,57 +635,84 @@ def import_bundle(
     A refused record is counted and skipped; with ``strict`` the first one
     (or the first warning) raises BundleError and nothing is written.
     ``deactivate_missing`` retires the documents of the carriers the bundle
-    names whose keys it does not carry, and only theirs. ``dry_run`` does
-    the work and rolls it back, writing no files.
+    names whose keys it does not carry (a key whose record was refused
+    still counts as carried), and only theirs. ``dry_run`` does the work
+    and rolls it back, writing no files; a run that is abandoned removes
+    the files it had written.
     """
     result = ImportResult()
-    seen_keys: List[str] = []
+    # Every key the bundle names, valid record or not.
+    named_keys: List[str] = []
     seen_companies: set = set()
     # Files written to storage this run, removed if the run is abandoned:
     # the rows roll back with the transaction, the files would not.
     written_files: List[str] = []
-    with transaction.atomic():
-        for index, record in enumerate(records):
-            key = (
-                str(record.get("document_key", "")) if isinstance(record, dict) else ""
-            )
-            try:
-                prepared = prepare_document_fields(
-                    record,
-                    files_root=files_root,
-                    store_file=store_file,
-                    import_batch=import_batch,
+    try:
+        with transaction.atomic():
+            for index, record in enumerate(records):
+                raw_key = (
+                    record.get("document_key") if isinstance(record, dict) else None
                 )
-                if strict and prepared.warnings:
-                    raise RecordError(prepared.warnings[0])
-                outcome, stored_name = store_document(prepared, write_files=not dry_run)
-                if stored_name:
-                    written_files.append(stored_name)
-            except RecordError as exc:
-                if strict:
-                    transaction.set_rollback(True)
-                    _remove_files(written_files)
-                    raise BundleError(
-                        f"record {index} ({key or 'no key'}): {exc}"
-                    ) from None
-                result.skipped.append((index, key, str(exc)))
-                continue
-            for warning in prepared.warnings:
-                result.warnings.append((index, prepared.document_key, warning))
-            seen_keys.append(prepared.document_key)
-            seen_companies.add(prepared.fields["insurance_company"].id)
-            setattr(result, outcome, getattr(result, outcome) + 1)
-        if deactivate_missing and seen_companies:
-            result.deactivated = (
-                PublicPlanDocument.objects.filter(
-                    insurance_company_id__in=seen_companies
+                key = raw_key if isinstance(raw_key, str) else ""
+                try:
+                    if key and key in named_keys:
+                        raise RecordError("document_key: given twice in this bundle")
+                    if key:
+                        named_keys.append(key)
+                    prepared = prepare_document_fields(
+                        record,
+                        files_root=files_root,
+                        store_file=store_file,
+                        import_batch=import_batch,
+                    )
+                    if strict and prepared.warnings:
+                        raise RecordError(prepared.warnings[0])
+                    outcome, stored_name = store_document(
+                        prepared, write_files=not dry_run
+                    )
+                    if stored_name:
+                        written_files.append(stored_name)
+                except RecordError as exc:
+                    if strict:
+                        transaction.set_rollback(True)
+                        raise BundleError(
+                            f"record {index} ({key or 'no key'}): {exc}"
+                        ) from None
+                    result.skipped.append((index, key, str(exc)))
+                    continue
+                except Exception as exc:
+                    # A record this code did not foresee (a value of an odd
+                    # type deep in a field) is a bad record, not a dead run.
+                    logger.opt(exception=True).warning(
+                        f"Plan document record {index} could not be read: "
+                        f"{type(exc).__name__}"
+                    )
+                    reason = f"could not be read ({type(exc).__name__})"
+                    if strict:
+                        transaction.set_rollback(True)
+                        raise BundleError(
+                            f"record {index} ({key or 'no key'}): {reason}"
+                        ) from None
+                    result.skipped.append((index, key, reason))
+                    continue
+                for warning in prepared.warnings:
+                    result.warnings.append((index, prepared.document_key, warning))
+                seen_companies.add(prepared.fields["insurance_company"].id)
+                setattr(result, outcome, getattr(result, outcome) + 1)
+            if deactivate_missing and seen_companies:
+                result.deactivated = (
+                    PublicPlanDocument.objects.filter(
+                        insurance_company_id__in=seen_companies
+                    )
+                    .exclude(document_key__in=named_keys)
+                    .filter(is_active=True)
+                    .update(is_active=False, updated_at=timezone.now())
                 )
-                .exclude(document_key__in=seen_keys)
-                .filter(is_active=True)
-                .update(is_active=False, updated_at=timezone.now())
-            )
-        if dry_run:
-            transaction.set_rollback(True)
+            if dry_run:
+                transaction.set_rollback(True)
+    except BaseException:
+        _remove_files(written_files)
+        raise
     logger.info(
         f"Plan document bundle: created={result.created} updated={result.updated} "
         f"unchanged={result.unchanged} skipped={len(result.skipped)} "

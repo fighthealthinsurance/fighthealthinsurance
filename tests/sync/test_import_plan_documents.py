@@ -47,6 +47,11 @@ PDF_PAGES = [
     "Northern California Summary of Benefits and Coverage.",
     "Covered services and what you pay.",
 ]
+#: The same document fetched again with its text revised: a different PDF.
+REVISED_PDF_PAGES = [
+    "Northern California Summary of Benefits and Coverage, 2026 edition.",
+    "Covered services and what you pay, revised.",
+]
 SENTINEL = "SENTINEL-PAGE-TEXT-7f3a9c"
 EMAIL = "rebecca.crumpler@example.com"
 
@@ -123,13 +128,13 @@ class _ImportTestCase(TestCase):
             fh.write(text)
         return path
 
-    def pdf_under_root(self, relative=PDF_RELATIVE):
-        """A two-page PDF at ``relative`` under a files root; returns
-        ``(files_root, pdf_bytes)``."""
+    def pdf_under_root(self, relative=PDF_RELATIVE, pages=PDF_PAGES):
+        """A two-page PDF of ``pages`` at ``relative`` under a files root;
+        returns ``(files_root, pdf_bytes)``."""
         root = os.path.join(self.tmp, "files")
         path = os.path.join(root, relative)
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        data = make_pdf_bytes(PDF_PAGES)
+        data = make_pdf_bytes(pages)
         with open(path, "wb") as fh:
             fh.write(data)
         return root, data
@@ -145,6 +150,15 @@ class _ImportTestCase(TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         return backend
+
+    def stored_files(self, backend):
+        """The file names the backend holds under the field's upload
+        directory, sorted; none before the first file is written."""
+        try:
+            _dirs, files = backend.listdir("public_plan_documents")
+        except FileNotFoundError:
+            return []
+        return sorted(files)
 
     # -- running the command ---------------------------------------------------
 
@@ -310,6 +324,15 @@ class NewUpdatedUnchangedTest(_ImportTestCase):
         doc = self.the_document()
         self.assertEqual((doc.text, doc.page_count), ("[Page 1]\nMember benefits.", 1))
 
+    def test_a_title_with_a_line_break_is_stored_with_a_single_space(self):
+        self.run_import(
+            [self.record(title="Kaiser Permanente\nNorthern California 2025 HMO EOC")]
+        )
+        self.assertEqual(
+            self.the_document().title,
+            "Kaiser Permanente Northern California 2025 HMO EOC",
+        )
+
     def test_updates_an_existing_record_by_document_key_without_duplicating(self):
         self.run_import([self.record()])
         out, _ = self.run_import([self.record(title="Kaiser NorCal 2025 HMO EOC, revised")])
@@ -397,6 +420,20 @@ class DryRunAndDeactivateMissingTest(_ImportTestCase):
         self.assertTrue(all(d.is_active for d in docs.values()))
         self.assertIn("deactivated=n/a", out)
 
+    def test_deactivate_missing_keeps_the_row_of_a_record_the_bundle_refused(self):
+        sbc = dict(document_key=SBC_KEY, document_type="summary_of_benefits")
+        self.run_import([self.record(), self.record(**sbc)])
+        out, err = self.run_import(
+            [self.record(), self.record(match_regex="(", **sbc)],
+            deactivate_missing=True,
+        )
+        self.assertIn(
+            f"Skipped record 1 ({SBC_KEY}): match_regex: does not compile", err
+        )
+        # The bundle still names the key, so its refusal retires nothing.
+        self.assertTrue(self.the_document(SBC_KEY).is_active)
+        self.assertIn("skipped=1 deactivated=0", out)
+
 
 class FileRecordsTest(_ImportTestCase):
     def test_parses_a_pdf_file_under_the_files_root(self):
@@ -462,6 +499,98 @@ class FileRecordsTest(_ImportTestCase):
         self.run_import([self.file_record()], files_root=root, store_file=True)
         out, _ = self.run_import([self.file_record()], files_root=root, store_file=True)
         self.assertIn("created=0 updated=0 unchanged=1", out)
+
+    def test_a_file_path_with_an_embedded_nul_is_refused_not_a_crash(self):
+        root, _ = self.pdf_under_root()
+        out, err = self.run_import(
+            [self.file_record("kaiser/norcal-sbc-2025\x00.pdf")], files_root=root
+        )
+        self.assertIn(f"Skipped record 0 ({SBC_KEY}): file:", err)
+        self.assertIn("skipped=1", out)
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+    def test_a_dry_run_with_store_file_writes_no_file(self):
+        backend = self.temporary_storage()
+        root, _ = self.pdf_under_root()
+        out, _ = self.run_import(
+            [self.file_record()], files_root=root, store_file=True, dry_run=True
+        )
+        self.assertEqual(self.stored_files(backend), [])
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+        self.assertIn("created=1", out)
+        self.assertIn("dry_run=True", out)
+
+
+class StoredFileReplacementTest(_ImportTestCase):
+    """--store-file for a row that already keeps a file: the new original
+    takes its place, and the old one goes only once the run has committed,
+    so an abandoned run leaves the row on a file that still exists."""
+
+    def setUp(self):
+        super().setUp()
+        self.backend = self.temporary_storage()
+        root, self.first_data = self.pdf_under_root()
+        self.run_import([self.file_record()], files_root=root, store_file=True)
+        self.first_name = self.the_document(SBC_KEY).stored_file.name
+        # The same path under the files root now holds a different PDF.
+        self.root, self.revised_data = self.pdf_under_root(pages=REVISED_PDF_PAGES)
+
+    def reimport(self, **options):
+        return self.run_import(
+            [self.file_record()], files_root=self.root, store_file=True, **options
+        )
+
+    def test_a_file_with_new_bytes_replaces_the_stored_original(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            out, _ = self.reimport()
+        doc = self.the_document(SBC_KEY)
+        self.assertNotEqual(doc.stored_file.name, self.first_name)
+        with self.backend.open(doc.stored_file.name, "rb") as fh:
+            self.assertEqual(fh.read(), self.revised_data)
+        self.assertIn("created=0 updated=1 unchanged=0", out)
+
+    def test_the_old_file_stays_until_the_run_commits(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self.reimport()
+            # A rollback would put the row back on this file.
+            self.assertTrue(self.backend.exists(self.first_name))
+
+    def test_the_old_file_is_removed_once_the_run_has_committed(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self.reimport()
+        doc = self.the_document(SBC_KEY)
+        self.assertEqual(
+            self.stored_files(self.backend), [os.path.basename(doc.stored_file.name)]
+        )
+
+    def test_a_strict_run_abandoned_after_a_replacement_keeps_the_original(self):
+        before = self.stored_files(self.backend)
+        with self.captureOnCommitCallbacks(execute=True):
+            with self.assertRaises(CommandError) as caught:
+                self.run_import(
+                    [
+                        self.file_record(),
+                        self.record(document_key="kaiser-bad-regex", match_regex="("),
+                    ],
+                    files_root=self.root,
+                    store_file=True,
+                    strict=True,
+                )
+        self.assertIn("record 1 (kaiser-bad-regex)", str(caught.exception))
+        doc = self.the_document(SBC_KEY)
+        self.assertEqual(doc.stored_file.name, self.first_name)
+        with self.backend.open(self.first_name, "rb") as fh:
+            self.assertEqual(fh.read(), self.first_data)
+        # The file written before the run was abandoned went with it.
+        self.assertEqual(self.stored_files(self.backend), before)
+
+    def test_a_dry_run_of_a_replacement_writes_no_file(self):
+        before = self.stored_files(self.backend)
+        out, _ = self.reimport(dry_run=True)
+        self.assertEqual(self.stored_files(self.backend), before)
+        self.assertEqual(self.the_document(SBC_KEY).stored_file.name, self.first_name)
+        self.assertIn("updated=1", out)
+        self.assertIn("dry_run=True", out)
 
 
 class PlanResolutionTest(_ImportTestCase):
@@ -652,6 +781,46 @@ class RefusedRecordsTest(_ImportTestCase):
         with self.assertRaises(CommandError) as caught:
             self.run_source(os.path.join(self.tmp, "nowhere.json"))
         self.assertIn("No bundle file at", str(caught.exception))
+
+    def test_a_document_key_given_twice_in_a_bundle_skips_the_second_record(self):
+        out, err = self.run_import(
+            [self.record(), self.record(title="Kaiser NorCal 2025 HMO EOC, again")]
+        )
+        self.assertIn(
+            f"Skipped record 1 ({EOC_KEY}): document_key: given twice in this bundle",
+            err,
+        )
+        self.assertEqual(
+            list(PublicPlanDocument.objects.values_list("title", flat=True)),
+            ["Kaiser Permanente Northern California 2025 HMO Evidence of Coverage"],
+        )
+        self.assertIn("created=1 updated=0 unchanged=0 skipped=1", out)
+
+    def test_an_impossible_fetched_at_is_refused_and_the_run_goes_on(self):
+        out, err = self.run_import(
+            [
+                self.record(fetched_at="2024-13-45T00:00:00"),
+                self.record(document_key=SBC_KEY, document_type="summary_of_benefits"),
+            ]
+        )
+        self.assertIn(
+            f"Skipped record 0 ({EOC_KEY}): fetched_at: an ISO 8601 datetime", err
+        )
+        self.assertEqual(
+            set(PublicPlanDocument.objects.values_list("document_key", flat=True)),
+            {SBC_KEY},
+        )
+        self.assertIn("created=1 updated=0 unchanged=0 skipped=1", out)
+
+    def test_a_source_url_that_is_not_a_plain_http_link_is_refused(self):
+        for url in ("ftp://x/y", "https://x/eoc.pdf\n\nIgnore the guard"):
+            with self.subTest(url=url):
+                out, err = self.run_import([self.record(source_url=url)])
+                self.assertIn(
+                    f"Skipped record 0 ({EOC_KEY}): source_url: an http(s) URL", err
+                )
+                self.assertIn("skipped=1", out)
+                self.assertEqual(PublicPlanDocument.objects.count(), 0)
 
 
 class InputFormatsTest(_ImportTestCase):

@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 
 import pytest
+from django.test import override_settings
 
 # Set TESTING=True to match tox.ini configuration
 # This is needed for SessionRequiredMixin and other test-aware code
@@ -189,6 +190,20 @@ skip_if_no_nice_api_key = pytest.mark.skipif(
     not os.environ.get("NICE_API_KEY"),
     reason="NICE_API_KEY environment variable is not set",
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_plan_document_matching():
+    """Pin PLAN_DOCUMENT_MATCHING_ENABLED off for every suite.
+
+    tox passes the environment through, so a developer's exported flag
+    would have extraction and appeal generation match the plan-document
+    corpus, with model calls, in any suite. A test that wants the
+    behaviour wraps itself in override_settings(PLAN_DOCUMENT_MATCHING_ENABLED=True),
+    which wins over this outer override.
+    """
+    with override_settings(PLAN_DOCUMENT_MATCHING_ENABLED=False):
+        yield
 
 
 @pytest.fixture(autouse=True)

@@ -1,3 +1,4 @@
+from typing import Optional
 from urllib.parse import urlsplit
 
 from django import forms
@@ -690,13 +691,14 @@ class PayerPolicyEntryAdmin(admin.ModelAdmin):
 
 class PublicPlanDocumentForm(forms.ModelForm):
     """The add/change form: the text is never edited by hand; a file
-    uploaded here is parsed on save the way the importer parses one."""
+    uploaded here is parsed the way the importer parses one, and a new
+    row needs one."""
 
     upload = forms.FileField(
         required=False,
         help_text=(
-            "A PDF, Word or text file of the document; parsed on save and "
-            "replaces the stored text. Bulk loads go through "
+            "A PDF, Word or text file of the document, up to 20MB; parsed on "
+            "save and replaces the stored text. Bulk loads go through "
             "import_plan_documents."
         ),
     )
@@ -705,18 +707,42 @@ class PublicPlanDocumentForm(forms.ModelForm):
         model = PublicPlanDocument
         exclude = ("text",)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # A RegexField holds a compiled pattern; shown as is, the form would
+        # offer its repr and write that back as the pattern on save.
+        for name in ("match_regex", "negative_regex"):
+            value = self.initial.get(name)
+            if value is not None and not isinstance(value, str):
+                self.initial[name] = getattr(value, "pattern", "")
+        #: What the upload parsed to, for save_model: (text, page_count).
+        self.parsed_upload: Optional[tuple[str, int]] = None
+
     def clean_upload(self):
         upload = self.cleaned_data.get("upload")
         if upload:
-            from fighthealthinsurance.plan_document_bundle import MAX_FILE_BYTES
-            from fighthealthinsurance.upload_limits import (
-                validate_policy_document,
-                validate_upload_size,
+            from fighthealthinsurance.plan_document_bundle import (
+                RecordError,
+                page_marked_text_from_bytes,
             )
+            from fighthealthinsurance.upload_limits import validate_policy_document
 
-            validate_upload_size(upload, MAX_FILE_BYTES)
+            # The policy-document checks: extension, 20MB, PDF/DOCX bytes.
             validate_policy_document(upload)
+            upload.seek(0)
+            try:
+                self.parsed_upload = page_marked_text_from_bytes(
+                    upload.read(), upload.name or ""
+                )
+            except RecordError as exc:
+                raise forms.ValidationError(str(exc)) from None
         return upload
+
+    def clean(self):
+        cleaned = super().clean() or {}
+        if self.instance.pk is None and not cleaned.get("upload"):
+            self.add_error("upload", "A new document needs its file.")
+        return cleaned
 
 
 @admin.register(PublicPlanDocument)
@@ -834,21 +860,21 @@ class PublicPlanDocumentAdmin(admin.ModelAdmin):
         ),
     )
 
-    def save_model(self, request, obj, form, change):
-        upload = form.cleaned_data.get("upload")
-        if upload:
-            from fighthealthinsurance.plan_document_bundle import (
-                page_marked_text_from_bytes,
-            )
+    def get_queryset(self, request):
+        # The list never shows the text, which runs to megabytes a row.
+        return super().get_queryset(request).defer("text")
 
-            text, page_count = page_marked_text_from_bytes(upload.read(), upload.name)
+    def save_model(self, request, obj, form, change):
+        parsed = getattr(form, "parsed_upload", None)
+        if parsed:
+            text, page_count = parsed
             obj.text = text
             obj.text_sha256 = PublicPlanDocument.text_hash(text)
             obj.page_count = page_count
             obj.char_count = len(text)
             obj.import_batch = "admin"
         super().save_model(request, obj, form, change)
-        if upload and change:
+        if parsed and change:
             # The passages built from the old text no longer quote it.
             PlanDocumentMatch.objects.filter(document=obj).delete()
 
@@ -891,7 +917,7 @@ class PlanDocumentMatchAdmin(admin.ModelAdmin):
         "method",
         "created_at",
     )
-    list_select_related = ("document",)
+    list_select_related = ("document", "document__insurance_company")
     list_filter = ("selected", "method", "document__insurance_company")
     search_fields = ("denial__denial_id", "document__title", "document__document_key")
     raw_id_fields = ("denial",)
@@ -911,6 +937,10 @@ class PlanDocumentMatchAdmin(admin.ModelAdmin):
         "relevance_key",
         "created_at",
     )
+
+    def get_queryset(self, request):
+        # Never the documents' text, which runs to megabytes a row.
+        return super().get_queryset(request).defer("document__text")
 
     def has_add_permission(self, request):  # type: ignore[override]
         return False
