@@ -181,7 +181,10 @@ class CombinedStorage(Storage):
         last_error: Optional[BaseException] = None
         error_list: List[BaseException] = []
         correct_size(content)
+        expected = getattr(content, "size", None)
         seconds = save_timeout_seconds(content)
+        wrong_size = False
+        written: List[Storage] = []
         if name:
             name = unique_name(name, max_length)
         for backend in self.backends:
@@ -239,6 +242,25 @@ class CombinedStorage(Storage):
                 continue
             if l is not None and stored is not None and stored != l:
                 self._remove_renamed_copy(backend, l, stored)
+                continue
+            if l is None:
+                continue
+            if created_here:
+                written.append(backend)
+            if self._wrong_size(backend, l, expected):
+                short = OSError(
+                    f"{backend} stored {file_tag(l)} at a size other than the {expected} bytes it was given"
+                )
+                logger.error(error_text(short))
+                error_list.append(short)
+                last_error = short
+                wrong_size = True
+        # A wrong size is a storage bug, not a slow disk, and the disks are
+        # wiped on restart, so the save fails and leaves no copy anywhere.
+        if wrong_size:
+            for backend in written:
+                self._remove_partial_copy(backend, l)
+            raise OSError(error_text(last_error)) from last_error
         if l is None:
             errors = [error_text(e) for e in error_list]
             logger.error(
@@ -247,6 +269,25 @@ class CombinedStorage(Storage):
             raise Exception(f"Failed to save to any backend w/ errors {errors}")
         else:
             return l
+
+    def _wrong_size(self, backend: Storage, name: str, expected: Any) -> bool:
+        """Whether ``backend`` reports a size under ``name`` other than the
+        bytes it was given. A backend that can't say is trusted: only a
+        size it reports and that differs counts against the copy."""
+        if not isinstance(expected, int) or isinstance(expected, bool):
+            return False
+        stored = None
+        try:
+            with Timeout(2.0):
+                stored = backend.size(name)
+        except Exception as e:
+            logger.debug(
+                f"Could not check the size of {file_tag(name)} on {backend}: {error_text(e)}"
+            )
+            return False
+        if not isinstance(stored, int) or isinstance(stored, bool):
+            return False
+        return stored != expected
 
     def _name_in_use(self, backend: Storage, name: Optional[str]) -> bool:
         """Whether ``name`` already names a file on ``backend``, under a short

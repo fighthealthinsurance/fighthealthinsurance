@@ -47,6 +47,46 @@ class SizedBucket(Storage):
         return ContentFile(self.files[name], name=name)
 
 
+class MeasuredBucket(SizedBucket):
+    """A bucket that reports sizes, keeping ``drop`` bytes fewer than it is given."""
+
+    def __init__(self, drop=0):
+        super().__init__()
+        self.drop = drop
+
+    def _save(self, name, content):
+        content.seek(0)
+        data = content.read()
+        self.files[name] = data[: len(data) - self.drop]
+        return name
+
+    def size(self, name):
+        return len(self.files[name])
+
+    def delete(self, name):
+        self.files.pop(name, None)
+
+
+class SizeCheckedAfterSavingTest(SimpleTestCase):
+    def test_a_copy_kept_short_fails_the_save_and_leaves_nothing(self):
+        disk, bucket = MeasuredBucket(), MeasuredBucket(drop=10)
+        with self.assertRaises(OSError):
+            CombinedStorage(disk, bucket).save("eoc.pdf", ContentFile(DOCUMENT))
+        self.assertEqual(disk.files, {})
+        self.assertEqual(bucket.files, {})
+
+    def test_whole_copies_save_as_before(self):
+        disk, bucket = MeasuredBucket(), MeasuredBucket()
+        name = CombinedStorage(disk, bucket).save("eoc.pdf", ContentFile(DOCUMENT))
+        self.assertEqual(bucket.files[name], DOCUMENT)
+        self.assertEqual(disk.files[name], DOCUMENT)
+
+    def test_a_backend_that_cannot_report_a_size_is_trusted(self):
+        bucket = SizedBucket()
+        name = CombinedStorage(bucket).save("eoc.pdf", ContentFile(DOCUMENT))
+        self.assertEqual(bucket.files[name], DOCUMENT)
+
+
 class StoredWholeTest(SimpleTestCase):
     def test_the_bucket_keeps_all_of_an_encrypted_file(self):
         bucket = SizedBucket()
