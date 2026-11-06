@@ -18,7 +18,8 @@ unlinked, and staff can link it in the admin.
 """
 
 import re
-from typing import NamedTuple, Optional
+import uuid
+from typing import NamedTuple, Optional, Union
 
 from django.db import IntegrityError, transaction
 
@@ -177,7 +178,7 @@ def _find(ein: str, normalized: str) -> Optional[PlanSponsor]:
     return company or PlanSponsor.objects.filter(normalized_name=normalized).first()
 
 
-def link_sponsor(doc_id: object, sponsor: Sponsor) -> PlanSponsor:
+def link_sponsor(doc_id: Union[str, uuid.UUID], sponsor: Sponsor) -> PlanSponsor:
     """The company on the running list for ``sponsor``, added when it isn't
     there, linked to the document ``doc_id`` if that has no company yet."""
     normalized = normalize_name(sponsor.name)
