@@ -784,13 +784,17 @@ class Share(NamedTuple):
 
 
 #: The least cleaned text a shared file needs to count as a plan's document.
-#: Real plan documents run to pages; a test upload is often a line.
-MIN_DOCUMENT_CHARS = 500
+#: A short rate sheet clears it; a test upload is often a line.
+MIN_DOCUMENT_CHARS = 200
 
 
-def is_document(status: str, cleaned_text: Optional[str]) -> bool:
+def is_document(status: str, cleaned_text: Optional[str], filename: str) -> bool:
     """Whether a shared file's reading found a document: read and cleaned,
-    with at least MIN_DOCUMENT_CHARS of text."""
+    with at least MIN_DOCUMENT_CHARS of text, or a PDF with no text to
+    read, as a scan is. A PDF passed the closer look on the way in
+    (validate_shared_document), so it is a real file staff can open."""
+    if status == PolicyDocument.PROCESSING_UNREADABLE:
+        return filename.lower().endswith(".pdf")
     return (
         status == PolicyDocument.PROCESSING_READY
         and len((cleaned_text or "").strip()) >= MIN_DOCUMENT_CHARS
@@ -802,9 +806,9 @@ def plan_shares() -> list[Share]:
     whether it is a new plan."""
     # Each share is one plan unless every file and link in it came in an
     # earlier share. Removed rows count for nothing, and so does a file
-    # until its reading finds a document's worth of text (is_document): a
-    # file waiting to be read, one that can't be read, and a line of test
-    # text are not plans.
+    # until its reading finds a document (is_document): a file waiting to be
+    # read, a text or Word file with no text, and a line of test text are
+    # not plans; a scanned PDF is.
     rows = (
         PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_SOURCES)
         .exclude(processing_status=PolicyDocument.PROCESSING_REMOVED)
@@ -823,6 +827,7 @@ def plan_shares() -> list[Share]:
             "employer_name",
             "processing_status",
             "cleaned_text",
+            "filename",
         )
     )
     batches: dict[Any, dict[str, Any]] = {}
@@ -840,6 +845,7 @@ def plan_shares() -> list[Share]:
         employer_name,
         status,
         cleaned_text,
+        filename,
     ) in rows:
         found = batches.setdefault(
             batch or pk,
@@ -858,7 +864,7 @@ def plan_shares() -> list[Share]:
         )
         is_link = source == PolicyDocument.SOURCE_SHARED_LINK
         found["link_count" if is_link else "file_count"] += 1
-        if not is_link and not is_document(status, cleaned_text):
+        if not is_link and not is_document(status, cleaned_text, filename or ""):
             continue
         digest = link_hash if is_link else file_hash
         if digest:

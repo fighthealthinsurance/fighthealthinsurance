@@ -11,7 +11,10 @@ survived. Lists what it would change unless ``--apply``::
     python manage.py reread_shared_documents --apply
 
 Applied, the rows go back to waiting with their text cleared, and the
-hourly sweep reads them. Safe to run again: a row read since is left alone.
+hourly sweep reads them. A row read again between the list and the change
+keeps its new reading. Meant to run once after the fix deploys: run again,
+it also sends back files that are simply unreadable, such as scans, which
+costs one more reading each and nothing else.
 """
 
 from typing import Any
@@ -37,9 +40,9 @@ class Command(BaseCommand):
                 PolicyDocument.PROCESSING_READY,
                 PolicyDocument.PROCESSING_UNREADABLE,
             ),
-        ).only("pk", "processing_status", "cleaned_text")
+        ).only("pk", "processing_status", "processed_at", "cleaned_text")
         damaged = [
-            row.pk
+            row
             for row in rows
             if row.processing_status == PolicyDocument.PROCESSING_UNREADABLE
             or looks_encrypted((row.cleaned_text or "").encode())
@@ -47,15 +50,17 @@ class Command(BaseCommand):
         self.stdout.write(f"{len(damaged)} shared file(s) to read again")
         if not options["apply"] or not damaged:
             return
-        updated = PolicyDocument.objects.filter(
-            pk__in=damaged,
-            processing_status__in=(
-                PolicyDocument.PROCESSING_READY,
-                PolicyDocument.PROCESSING_UNREADABLE,
-            ),
-        ).update(
-            processing_status=PolicyDocument.PROCESSING_RECEIVED,
-            processed_at=None,
-            cleaned_text="",
-        )
+        updated = 0
+        for row in damaged:
+            # Only a row still as it was listed: one read again since keeps
+            # its new reading.
+            updated += PolicyDocument.objects.filter(
+                pk=row.pk,
+                processing_status=row.processing_status,
+                processed_at=row.processed_at,
+            ).update(
+                processing_status=PolicyDocument.PROCESSING_RECEIVED,
+                processed_at=None,
+                cleaned_text="",
+            )
         self.stdout.write(f"{updated} sent back; the hourly sweep reads them")

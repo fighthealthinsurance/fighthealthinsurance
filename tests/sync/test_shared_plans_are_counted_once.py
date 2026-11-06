@@ -300,6 +300,15 @@ class OnlyReadDocumentsCountTest(_PlansTestCase):
         self.share(files=["sbc"], text="", status=PolicyDocument.PROCESSING_UNREADABLE)
         self.assertEqual(self.plans(), 0)
 
+    def test_a_scanned_pdf_with_no_text_is_a_plan(self):
+        self.share(
+            files=["scan"],
+            text="",
+            status=PolicyDocument.PROCESSING_UNREADABLE,
+            filename="shared-1.pdf",
+        )
+        self.assertEqual(self.plans(), 1)
+
     def test_a_line_of_text_is_not_a_plan(self):
         self.share(files=["test"], text="hello")
         self.assertEqual(self.plans(), 0)

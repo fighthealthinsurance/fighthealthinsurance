@@ -30,6 +30,7 @@ from fighthealthinsurance.pdf_text import read_mupdf_pages
 _FERNET_PREFIX = b"gAAAAA"
 #: A Fernet token: version (1), timestamp (8), IV (16), ciphertext, HMAC (32).
 _FERNET_HEADER_BYTES = 25
+_FERNET_MAC_BYTES = 32
 _fernet_key: Optional[bytes] = None
 
 
@@ -55,13 +56,24 @@ def salvage_truncated(raw_bytes: bytes) -> bytes:
     Fernet is AES-CBC with an HMAC at the end, so a token missing its end
     fails the whole decryption, though every complete block before the cut
     still decrypts. What this returns is unauthenticated and incomplete:
-    for reading what was kept, never for trusting it.
+    for reading what was kept, never for trusting it. A token whose length
+    says it is whole failed for another reason (another key, a damaged MAC),
+    and decrypting it would turn the MAC into text, so that gives b"" too.
     """
     text = raw_bytes.strip()
+    whole_text = len(text) % 4 == 0
     text = text[: len(text) - len(text) % 4]
     try:
         token = base64.urlsafe_b64decode(text)
     except (binascii.Error, ValueError):
+        return b""
+    # Whole tokens are base64 of 57 + 16k bytes, padded with "=" unless k is a
+    # multiple of 3. A cut one ends in "=" never, and has a whole token's
+    # length about one time in two hundred; that one is left unsalvaged.
+    overhead = _FERNET_HEADER_BYTES + _FERNET_MAC_BYTES
+    body_bytes = len(token) - overhead
+    if text.endswith(b"=") or (whole_text and body_bytes > 0 and body_bytes % 48 == 0):
+        logger.warning("A whole stored document failed to decrypt; not salvaged")
         return b""
     iv = token[9:_FERNET_HEADER_BYTES]
     body = token[_FERNET_HEADER_BYTES:]

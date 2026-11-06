@@ -26,7 +26,7 @@ from fighthealthinsurance.ml.ml_document_extraction import (
 )
 from fighthealthinsurance.models import PolicyDocument
 
-DOCUMENT = b"%PDF-1.4 Evidence of Coverage, Crumpler Mutual Gold PPO. " * 300
+DOCUMENT = b"%PDF-1.4 Evidence of Coverage, Crumpler Mutual Gold PPO. " * 301
 
 
 class SizedBucket(Storage):
@@ -82,6 +82,17 @@ class SalvagedTest(SimpleTestCase):
     def test_a_line_of_text_is_not_mistaken_for_ciphertext(self):
         self.assertFalse(looks_encrypted(b"Summary of Benefits and Coverage"))
 
+    def test_a_whole_file_under_another_key_gives_nothing(self):
+        from cryptography.fernet import Fernet
+
+        other = Fernet(Fernet.generate_key()).encrypt(DOCUMENT)
+        self.assertEqual(salvage_truncated(other), b"")
+
+    def test_a_whole_file_with_a_damaged_mac_gives_nothing(self):
+        token = bytearray(Cryptographer.encrypted(DOCUMENT))
+        token[-10] = ord("A") if token[-10] != ord("A") else ord("B")
+        self.assertEqual(salvage_truncated(bytes(token)), b"")
+
     def test_too_little_kept_gives_nothing(self):
         self.assertEqual(salvage_truncated(b"gAAAAABq6hLE"), b"")
 
@@ -104,6 +115,12 @@ class ReadBackTest(TestCase):
         doc = self.stored(token[: len(DOCUMENT)])
         got = read_and_decrypt_file(doc.document_enc)
         self.assertTrue(got and DOCUMENT.startswith(got))
+
+    def test_a_whole_file_under_another_key_reads_back_as_nothing(self):
+        from cryptography.fernet import Fernet
+
+        doc = self.stored(Fernet(Fernet.generate_key()).encrypt(DOCUMENT))
+        self.assertIsNone(read_and_decrypt_file(doc.document_enc))
 
     def test_a_whole_file_reads_back_whole(self):
         doc = self.stored(Cryptographer.encrypted(DOCUMENT))

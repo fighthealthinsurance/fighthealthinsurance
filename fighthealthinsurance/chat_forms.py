@@ -53,10 +53,10 @@ UNREADABLE_PDF_MESSAGE = (
 )
 
 
-#: The smallest file kept for research. A plan document runs to pages; a
-#: file under this is a test or a mistake, and counting it would make the
-#: share page's count say plans arrived that never did.
-MIN_SHARED_FILE_BYTES = 1024
+#: The smallest file kept for research: below a short rate sheet saved as
+#: text, above a line of test text, which would make the share page's count
+#: say plans arrived that never did.
+MIN_SHARED_FILE_BYTES = 256
 TOO_SMALL_MESSAGE = (
     "This file is too small to be a plan document. Please share the full "
     "document as a PDF, Word (.docx) or text file."
