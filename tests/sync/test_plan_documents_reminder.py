@@ -203,7 +203,7 @@ class AskingForTheReminderTest(_ReminderTestCase):
         shared = self.client.post(
             reverse("share_plan_documents"),
             {
-                "plan_documents": [SimpleUploadedFile("sbc.txt", b"Summary")],
+                "plan_documents": [SimpleUploadedFile("sbc.txt", b"Summary " * 200)],
                 "agree": "on",
                 "email": EMAIL,
                 "rendered": render_token(at=time.time() - 60),

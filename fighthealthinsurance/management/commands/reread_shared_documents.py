@@ -1,0 +1,66 @@
+"""Send shared plan documents back to be read again, after a reading that
+saw ciphertext instead of the document.
+
+Until combined_storage.correct_size, the bucket kept each encrypted file
+cut short, nothing decrypted, and the reading stored the ciphertext as the
+document's text or found it unreadable. read_and_decrypt_file now salvages
+what was kept, so these rows read again get the part of the document that
+survived. Lists what it would change unless ``--apply``::
+
+    python manage.py reread_shared_documents
+    python manage.py reread_shared_documents --apply
+
+Applied, the rows go back to waiting with their text cleared, and the
+hourly sweep reads them. A row read again between the list and the change
+keeps its new reading. Meant to run once after the fix deploys: run again,
+it also sends back files that are simply unreadable, such as scans, which
+costs one more reading each and nothing else.
+"""
+
+from typing import Any
+
+from django.core.management.base import BaseCommand
+
+from fighthealthinsurance.ml.ml_document_extraction import looks_encrypted
+from fighthealthinsurance.models import PolicyDocument
+
+
+class Command(BaseCommand):
+    help = "Re-read shared plan documents whose reading saw ciphertext."
+
+    def add_arguments(self, parser: Any) -> None:
+        parser.add_argument(
+            "--apply", action="store_true", help="Change the rows (default: list)."
+        )
+
+    def handle(self, *args: Any, **options: Any) -> None:
+        rows = PolicyDocument.objects.filter(
+            source__in=PolicyDocument.SHARED_FILE_SOURCES,
+            processing_status__in=(
+                PolicyDocument.PROCESSING_READY,
+                PolicyDocument.PROCESSING_UNREADABLE,
+            ),
+        ).only("pk", "processing_status", "processed_at", "cleaned_text")
+        # One row at a time, keeping only what the change needs: a reading
+        # can run to millions of characters.
+        damaged = [
+            (row.pk, row.processing_status, row.processed_at)
+            for row in rows.iterator(chunk_size=50)
+            if row.processing_status == PolicyDocument.PROCESSING_UNREADABLE
+            or looks_encrypted((row.cleaned_text or "")[:64].encode())
+        ]
+        self.stdout.write(f"{len(damaged)} shared file(s) to read again")
+        if not options["apply"] or not damaged:
+            return
+        updated = 0
+        for pk, status, processed_at in damaged:
+            # Only a row still as it was listed: one read again since keeps
+            # its new reading.
+            updated += PolicyDocument.objects.filter(
+                pk=pk, processing_status=status, processed_at=processed_at
+            ).update(
+                processing_status=PolicyDocument.PROCESSING_RECEIVED,
+                processed_at=None,
+                cleaned_text="",
+            )
+        self.stdout.write(f"{updated} sent back; the hourly sweep reads them")

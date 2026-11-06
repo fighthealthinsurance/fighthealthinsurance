@@ -37,8 +37,8 @@ from fighthealthinsurance.models import (
 
 EMAIL = "rebecca.crumpler@test-fhi.com"
 SEMI_SEKRET = "sekret-for-the-share-box"
-PDF = b"%PDF-1.4 Summary of Benefits for the Crumpler Cooperative" + b" x" * 100
-TXT = b"Summary Plan Description, Crumpler Cooperative, plan year 2026."
+PDF = b"%PDF-1.4 Summary of Benefits for the Crumpler Cooperative" + b" x" * 600
+TXT = b"Summary Plan Description, Crumpler Cooperative, plan year 2026. " * 20
 
 
 def pdf(name="Rebecca Lee Crumpler SBC.pdf", content=PDF):
