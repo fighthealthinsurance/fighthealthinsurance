@@ -3,7 +3,7 @@ and the numbers behind the ask.
 
 In open enrollment season an eyebrow says next year's plan documents are
 out. The goal line says 100 employer plans by January 15, and shows a
-running count of distinct employer plans only from 20, counted the same for
+running count of distinct companies only from 20, counted the same for
 every visitor and at most ten minutes old; after January 15 it goes. Any
 kind of plan is welcome, and the page says so under the goal. Three cards
 in a row name the documents for a plan through work in the order we want
@@ -24,7 +24,7 @@ from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
-from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.models import PlanSponsor, PolicyDocument
 from fighthealthinsurance.shared_plan_documents import (
     GOAL_DATE,
     PLAN_COUNT_SECONDS,
@@ -47,17 +47,29 @@ DASHES = ("\u2014", "\u2013")
 PLAN_TEXT = "Summary Plan Description, Crumpler Cooperative. " * 20
 
 
-def seed_plans(count, start=0, **facts):
-    """``count`` shares of one different file each, employer plans unless
-    ``facts`` say otherwise."""
+EACH = object()
+
+
+def seed_plans(count, start=0, company=EACH, **facts):
+    """``count`` shares of one different file each, each naming a company
+    of its own unless ``company`` names one for all, or is None for none."""
     facts = {"plan_category": "employer_erisa", **facts}
     for n in range(start, start + count):
+        name = f"Employer {n}" if company is EACH else company
+        sponsor = (
+            PlanSponsor.objects.get_or_create(
+                normalized_name=name.lower(), defaults={"name": name}
+            )[0]
+            if name
+            else None
+        )
         PolicyDocument.objects.create(
             source=PolicyDocument.SOURCE_SHARED,
             share_batch=uuid.uuid4(),
             fingerprint=f"plan-{n}",
             processing_status=PolicyDocument.PROCESSING_READY,
             cleaned_text=PLAN_TEXT,
+            plan_sponsor=sponsor,
             **facts,
         )
 
@@ -125,23 +137,23 @@ class TheGoalTest(_PageTestCase):
             plan_category="employer_erisa",
             processing_status=PolicyDocument.PROCESSING_READY,
             cleaned_text=PLAN_TEXT,
+            plan_sponsor=PlanSponsor.objects.get(name="Employer 0"),
         )
         goal = self.goal(self.page())
         self.assertEqual(goal.find(id="share-goal-count").get_text(strip=True), "20 so far")
 
-    def test_the_count_is_employer_plans_only(self):
-        seed_plans(8)
-        seed_plans(6, start=8, plan_category="employer_non_erisa")
-        seed_plans(6, start=14, plan_category="unknown", employer_name="Crumpler Clinic")
-        # Welcome, but not what the goal counts.
-        seed_plans(5, start=20, plan_category="aca_marketplace")
-        seed_plans(3, start=25, plan_category="medicare_advantage")
-        seed_plans(2, start=28, plan_category="unknown")
+    def test_the_count_is_companies_each_once(self):
+        seed_plans(20)
+        # Welcome, but not what the goal counts: no company named, a kind
+        # and an employer typed by the sharer, or a company already counted.
+        seed_plans(5, start=20, company=None, plan_category="aca_marketplace")
+        seed_plans(3, start=25, company=None, employer_name="Crumpler Clinic")
+        seed_plans(2, start=28, company="Employer 0")
         goal = self.goal(self.page())
         self.assertEqual(goal.find(id="share-goal-count").get_text(strip=True), "20 so far")
 
     def test_other_plans_alone_never_show_a_count(self):
-        seed_plans(30, plan_category="medicaid_chip")
+        seed_plans(30, company=None, plan_category="medicaid_chip")
         self.assertIsNone(self.goal(self.page()).find(id="share-goal-count"))
 
     def test_under_the_goal_the_page_says_any_plan_is_welcome(self):

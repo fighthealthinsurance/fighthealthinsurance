@@ -53,6 +53,7 @@ from fighthealthinsurance.models import (
     PayerPolicyEntry,
     PlanDocuments,
     PlanSource,
+    PlanSponsor,
     PlanSourceRelation,
     PlanType,
     PlanTypesRelation,
@@ -1395,6 +1396,33 @@ class AuditLogAdmin(admin.ModelAdmin):
         return False
 
 
+@admin.register(PlanSponsor)
+class PlanSponsorAdmin(admin.ModelAdmin):
+    """The running list of companies behind shared plan documents. Staff fix
+    a name or EIN here, or add a company to link a document to by hand."""
+
+    list_display = ("name", "ein", "documents", "created_at")
+    search_fields = ("name", "normalized_name", "ein")
+    readonly_fields = ("normalized_name", "first_document", "created_at")
+
+    def get_queryset(self, request):
+        return (
+            super()
+            .get_queryset(request)
+            .annotate(document_count=Count("policy_documents"))
+        )
+
+    @admin.display(description="Documents", ordering="document_count")
+    def documents(self, obj: PlanSponsor) -> int:
+        return getattr(obj, "document_count", 0)
+
+    def save_model(self, request, obj, form, change):
+        from fighthealthinsurance.plan_sponsors import normalize_name
+
+        obj.normalized_name = normalize_name(obj.name)
+        super().save_model(request, obj, form, change)
+
+
 @admin.register(PolicyDocument)
 class PolicyDocumentAdmin(admin.ModelAdmin):
     list_display = (
@@ -1403,6 +1431,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "source",
         "document_type",
         "plan_category",
+        "plan_sponsor",
         "processing_status",
         "created_at",
         "file",
@@ -1426,6 +1455,8 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     # never the raw fields; the cleaned text runs long. A shared link is
     # shown, never edited.
     exclude = ("document_enc", "cleaned_text", "shared_link")
+    # The company is set by the reading; staff can fix it.
+    autocomplete_fields = ("plan_sponsor",)
     readonly_fields = (
         "id",
         "created_at",
