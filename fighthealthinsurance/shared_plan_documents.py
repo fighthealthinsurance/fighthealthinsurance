@@ -783,11 +783,28 @@ class Share(NamedTuple):
     employer: bool
 
 
+#: The least cleaned text a shared file needs to count as a plan's document.
+#: Real plan documents run to pages; a test upload is often a line.
+MIN_DOCUMENT_CHARS = 500
+
+
+def is_document(status: str, cleaned_text: Optional[str]) -> bool:
+    """Whether a shared file's reading found a document: read and cleaned,
+    with at least MIN_DOCUMENT_CHARS of text."""
+    return (
+        status == PolicyDocument.PROCESSING_READY
+        and len((cleaned_text or "").strip()) >= MIN_DOCUMENT_CHARS
+    )
+
+
 def plan_shares() -> list[Share]:
     """Every share still holding a file or link, oldest first, marked with
     whether it is a new plan."""
     # Each share is one plan unless every file and link in it came in an
-    # earlier share. Removed rows count for nothing.
+    # earlier share. Removed rows count for nothing, and so does a file
+    # until its reading finds a document's worth of text (is_document): a
+    # file waiting to be read, one that can't be read, and a line of test
+    # text are not plans.
     rows = (
         PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_SOURCES)
         .exclude(processing_status=PolicyDocument.PROCESSING_REMOVED)
@@ -804,6 +821,8 @@ def plan_shares() -> list[Share]:
             "plan_year",
             "premium_amount",
             "employer_name",
+            "processing_status",
+            "cleaned_text",
         )
     )
     batches: dict[Any, dict[str, Any]] = {}
@@ -819,6 +838,8 @@ def plan_shares() -> list[Share]:
         year,
         premium,
         employer_name,
+        status,
+        cleaned_text,
     ) in rows:
         found = batches.setdefault(
             batch or pk,
@@ -837,6 +858,8 @@ def plan_shares() -> list[Share]:
         )
         is_link = source == PolicyDocument.SOURCE_SHARED_LINK
         found["link_count" if is_link else "file_count"] += 1
+        if not is_link and not is_document(status, cleaned_text):
+            continue
         digest = link_hash if is_link else file_hash
         if digest:
             found["links" if is_link else "files"].add(digest)

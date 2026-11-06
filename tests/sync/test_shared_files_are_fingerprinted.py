@@ -21,8 +21,8 @@ from fighthealthinsurance.shared_plan_documents import fingerprint, render_token
 
 User = get_user_model()
 
-SBC = b"Summary of Benefits and Coverage, Crumpler Cooperative, 2026."
-SPD = b"Summary Plan Description, Crumpler Cooperative, 2026."
+SBC = b"Summary of Benefits and Coverage, Crumpler Cooperative, 2026. " * 20
+SPD = b"Summary Plan Description, Crumpler Cooperative, 2026. " * 20
 
 
 def txt(content, name="plan.txt"):

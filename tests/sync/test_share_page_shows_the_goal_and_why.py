@@ -44,6 +44,9 @@ LOCMEM_CACHE = {
 DASHES = ("\u2014", "\u2013")
 
 
+PLAN_TEXT = "Summary Plan Description, Crumpler Cooperative. " * 20
+
+
 def seed_plans(count, start=0, **facts):
     """``count`` shares of one different file each, employer plans unless
     ``facts`` say otherwise."""
@@ -53,7 +56,8 @@ def seed_plans(count, start=0, **facts):
             source=PolicyDocument.SOURCE_SHARED,
             share_batch=uuid.uuid4(),
             fingerprint=f"plan-{n}",
-            processing_status=PolicyDocument.PROCESSING_RECEIVED,
+            processing_status=PolicyDocument.PROCESSING_READY,
+            cleaned_text=PLAN_TEXT,
             **facts,
         )
 
@@ -119,7 +123,8 @@ class TheGoalTest(_PageTestCase):
             share_batch=uuid.uuid4(),
             fingerprint="plan-0",
             plan_category="employer_erisa",
-            processing_status=PolicyDocument.PROCESSING_RECEIVED,
+            processing_status=PolicyDocument.PROCESSING_READY,
+            cleaned_text=PLAN_TEXT,
         )
         goal = self.goal(self.page())
         self.assertEqual(goal.find(id="share-goal-count").get_text(strip=True), "20 so far")

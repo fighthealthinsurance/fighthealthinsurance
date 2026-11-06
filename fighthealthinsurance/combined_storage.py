@@ -51,6 +51,30 @@ def unique_name(name: str, max_length: Optional[int] = None) -> str:
     return candidate
 
 
+def correct_size(content: Any) -> None:
+    """Set ``content.size`` to the bytes it really holds, when it can be measured.
+
+    The encrypted file field hands storage its ciphertext with the size of
+    the file before encryption, which is about a quarter smaller. The bucket
+    backend sends exactly ``size`` bytes, so it kept only that much of the
+    ciphertext, and nothing it stored could be decrypted. The disks write
+    to the end and were fine, but they start empty after a restart, so
+    reads fell through to the bucket's cut copy.
+    """
+    try:
+        position = content.tell()
+        content.seek(0, os.SEEK_END)
+        actual = content.tell()
+        content.seek(position)
+    except Exception:
+        return
+    try:
+        if getattr(content, "size", None) != actual:
+            content.size = actual
+    except Exception:
+        logger.opt(exception=True).warning("Could not correct a stored file's size")
+
+
 def save_timeout_seconds(content: Any) -> float:
     """The time one backend gets to store ``content``, by its size when it has one."""
     try:
@@ -154,6 +178,7 @@ class CombinedStorage(Storage):
         l: Optional[str] = None
         last_error: Optional[BaseException] = None
         error_list: List[BaseException] = []
+        correct_size(content)
         seconds = save_timeout_seconds(content)
         if name:
             name = unique_name(name, max_length)

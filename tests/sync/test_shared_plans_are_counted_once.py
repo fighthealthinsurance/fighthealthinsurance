@@ -22,6 +22,7 @@ from django.utils import timezone
 
 from fighthealthinsurance.models import PolicyDocument
 from fighthealthinsurance.shared_plan_documents import (
+    MIN_DOCUMENT_CHARS,
     distinct_plan_count,
     employer_plan_count,
     link_fingerprint,
@@ -34,14 +35,25 @@ User = get_user_model()
 LINK = "https://benefits.crumpler-clinic.example.org/2027/plan-documents"
 LINK_B = "https://www.crumplermutual.example.com/plans/gold-ppo"
 START = datetime.datetime(2026, 10, 20, 15, 0, tzinfo=datetime.timezone.utc)
+PLAN_TEXT = "Summary Plan Description, Crumpler Cooperative. " * 20
 
 
 class _PlansTestCase(TestCase):
     def setUp(self):
         self.minutes = 0
 
-    def share(self, files=(), links=(), at=None, source=PolicyDocument.SOURCE_SHARED, **facts):
-        """One share's rows, made directly: each file by its fingerprint."""
+    def share(
+        self,
+        files=(),
+        links=(),
+        at=None,
+        source=PolicyDocument.SOURCE_SHARED,
+        text=PLAN_TEXT,
+        status=PolicyDocument.PROCESSING_READY,
+        **facts,
+    ):
+        """One share's rows, made directly: each file by its fingerprint,
+        read as ``text`` unless told otherwise."""
         self.minutes += 1
         when = at or START + datetime.timedelta(minutes=self.minutes)
         batch = uuid.uuid4()
@@ -53,7 +65,8 @@ class _PlansTestCase(TestCase):
                     share_batch=batch,
                     shared_at=when,
                     fingerprint=digest,
-                    processing_status=PolicyDocument.PROCESSING_RECEIVED,
+                    processing_status=status,
+                    cleaned_text=text,
                     **facts,
                 )
             )
@@ -276,3 +289,30 @@ class StaffSeeThePlansTest(_PlansTestCase):
         section = self.counts_on_the_page()
         self.assertIn("0 different plans from 0 shares.", section.get_text(" ", strip=True))
         self.assertEqual(self.rows(section, "shared-plan-weeks"), [["No shares yet."]])
+
+
+class OnlyReadDocumentsCountTest(_PlansTestCase):
+    def test_a_file_not_yet_read_is_not_a_plan(self):
+        self.share(files=["sbc"], text="", status=PolicyDocument.PROCESSING_RECEIVED)
+        self.assertEqual(self.plans(), 0)
+
+    def test_an_unreadable_file_is_not_a_plan(self):
+        self.share(files=["sbc"], text="", status=PolicyDocument.PROCESSING_UNREADABLE)
+        self.assertEqual(self.plans(), 0)
+
+    def test_a_line_of_text_is_not_a_plan(self):
+        self.share(files=["test"], text="hello")
+        self.assertEqual(self.plans(), 0)
+
+    def test_a_document_just_long_enough_is_a_plan(self):
+        self.share(files=["sbc"], text="x" * MIN_DOCUMENT_CHARS)
+        self.assertEqual(self.plans(), 1)
+
+    def test_a_test_file_does_not_block_the_real_one_that_follows(self):
+        self.share(files=["sbc"], text="hello")
+        self.share(files=["sbc"])
+        self.assertEqual(self.plans(), 1)
+
+    def test_a_test_employer_share_does_not_count_toward_the_goal(self):
+        self.share(files=["test"], text="hello", plan_category="employer_erisa")
+        self.assertEqual(employer_plan_count(), 0)

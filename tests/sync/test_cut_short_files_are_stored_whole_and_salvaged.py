@@ -1,0 +1,166 @@
+"""Encrypted files are stored whole, and ones cut short are salvaged.
+
+The encrypted file field hands storage its ciphertext with the size of the
+file before encryption. The bucket backend sent exactly that many bytes, so
+every encrypted file it kept was cut short and could not be decrypted, and
+reads fell back to the ciphertext as if it were the document. Storage now
+measures what it is given, and a file already cut short gives back the part
+that was kept.
+"""
+
+import io
+
+from django.core.files.base import ContentFile
+from django.core.files.storage import Storage
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
+from django.test import SimpleTestCase, TestCase
+from django_encrypted_filefield.crypt import Cryptographer
+from django_encrypted_filefield.fields import EncryptedFile
+
+from fighthealthinsurance.combined_storage import CombinedStorage, correct_size
+from fighthealthinsurance.ml.ml_document_extraction import (
+    looks_encrypted,
+    read_and_decrypt_file,
+    salvage_truncated,
+)
+from fighthealthinsurance.models import PolicyDocument
+
+DOCUMENT = b"%PDF-1.4 Evidence of Coverage, Crumpler Mutual Gold PPO. " * 300
+
+
+class SizedBucket(Storage):
+    """Stores exactly ``content.size`` bytes, as the bucket backend does."""
+
+    def __init__(self):
+        self.files = {}
+
+    def _save(self, name, content):
+        content.seek(0)
+        self.files[name] = content.read(content.size)
+        return name
+
+    def exists(self, name):
+        return name in self.files
+
+    def _open(self, name, mode="rb"):
+        return ContentFile(self.files[name], name=name)
+
+
+class StoredWholeTest(SimpleTestCase):
+    def test_the_bucket_keeps_all_of_an_encrypted_file(self):
+        bucket = SizedBucket()
+        upload = SimpleUploadedFile("eoc.pdf", DOCUMENT)
+        name = CombinedStorage(bucket).save("eoc.pdf", EncryptedFile(upload))
+        self.assertEqual(Cryptographer.decrypted(bucket.files[name]), DOCUMENT)
+
+    def test_the_size_is_what_the_content_holds(self):
+        content = EncryptedFile(SimpleUploadedFile("eoc.pdf", DOCUMENT))
+        correct_size(content)
+        self.assertEqual(content.size, len(content.getvalue()))
+
+    def test_measuring_leaves_the_content_where_it_was(self):
+        content = io.BytesIO(DOCUMENT)
+        content.size = 1
+        content.seek(7)
+        correct_size(content)
+        self.assertEqual(content.tell(), 7)
+
+
+class SalvagedTest(SimpleTestCase):
+    def cut(self):
+        token = Cryptographer.encrypted(DOCUMENT)
+        return token[: len(DOCUMENT)]
+
+    def test_a_cut_file_gives_back_the_start_of_the_document(self):
+        salvaged = salvage_truncated(self.cut())
+        self.assertTrue(DOCUMENT.startswith(salvaged))
+
+    def test_most_of_the_document_survives_the_cut(self):
+        self.assertGreater(len(salvage_truncated(self.cut())), len(DOCUMENT) // 2)
+
+    def test_a_line_of_text_is_not_mistaken_for_ciphertext(self):
+        self.assertFalse(looks_encrypted(b"Summary of Benefits and Coverage"))
+
+    def test_too_little_kept_gives_nothing(self):
+        self.assertEqual(salvage_truncated(b"gAAAAABq6hLE"), b"")
+
+
+class ReadBackTest(TestCase):
+    def tearDown(self):
+        for doc in PolicyDocument.objects.all():
+            if doc.document_enc:
+                doc.document_enc.delete(save=False)
+
+    def stored(self, raw):
+        doc = PolicyDocument(filename="eoc.pdf")
+        doc.document_enc.save("eoc.pdf", ContentFile(b"x"), save=True)
+        with doc.document_enc.storage.open(doc.document_enc.name, "wb") as f:
+            f.write(raw)
+        return doc
+
+    def test_a_cut_file_reads_back_as_the_start_of_the_document(self):
+        token = Cryptographer.encrypted(DOCUMENT)
+        doc = self.stored(token[: len(DOCUMENT)])
+        got = read_and_decrypt_file(doc.document_enc)
+        self.assertTrue(got and DOCUMENT.startswith(got))
+
+    def test_a_whole_file_reads_back_whole(self):
+        doc = self.stored(Cryptographer.encrypted(DOCUMENT))
+        self.assertEqual(read_and_decrypt_file(doc.document_enc), DOCUMENT)
+
+
+class RereadTest(TestCase):
+    def row(self, **fields):
+        return PolicyDocument.objects.create(
+            source=PolicyDocument.SOURCE_SHARED_EXPLAIN, filename="a.pdf", **fields
+        )
+
+    def test_a_reading_of_ciphertext_goes_back_to_waiting(self):
+        row = self.row(
+            processing_status=PolicyDocument.PROCESSING_READY,
+            cleaned_text="gAAAAABq6hLEfHGiSAtygJNwtpnmqG",
+        )
+        call_command("reread_shared_documents", "--apply", stdout=io.StringIO())
+        row.refresh_from_db()
+        self.assertEqual(row.processing_status, PolicyDocument.PROCESSING_RECEIVED)
+
+    def test_an_unreadable_file_goes_back_to_waiting(self):
+        row = self.row(processing_status=PolicyDocument.PROCESSING_UNREADABLE)
+        call_command("reread_shared_documents", "--apply", stdout=io.StringIO())
+        row.refresh_from_db()
+        self.assertEqual(row.processing_status, PolicyDocument.PROCESSING_RECEIVED)
+
+    def test_a_good_reading_is_left_alone(self):
+        row = self.row(
+            processing_status=PolicyDocument.PROCESSING_READY,
+            cleaned_text="Summary of Benefits and Coverage",
+        )
+        call_command("reread_shared_documents", "--apply", stdout=io.StringIO())
+        row.refresh_from_db()
+        self.assertEqual(row.processing_status, PolicyDocument.PROCESSING_READY)
+
+    def test_without_apply_nothing_changes(self):
+        row = self.row(processing_status=PolicyDocument.PROCESSING_UNREADABLE)
+        call_command("reread_shared_documents", stdout=io.StringIO())
+        row.refresh_from_db()
+        self.assertEqual(row.processing_status, PolicyDocument.PROCESSING_UNREADABLE)
+
+
+class TooSmallToShareTest(SimpleTestCase):
+    def test_a_file_too_small_to_be_a_plan_document_is_refused(self):
+        from django import forms
+
+        from fighthealthinsurance.chat_forms import validate_shared_document
+
+        with self.assertRaises(forms.ValidationError):
+            validate_shared_document(SimpleUploadedFile("test.txt", b"hello"))
+
+    def test_a_plan_sized_text_file_is_kept(self):
+        from fighthealthinsurance.chat_forms import (
+            MIN_SHARED_FILE_BYTES,
+            validate_shared_document,
+        )
+
+        text = b"Evidence of Coverage. " * (MIN_SHARED_FILE_BYTES // 20 + 1)
+        validate_shared_document(SimpleUploadedFile("eoc.txt", text))

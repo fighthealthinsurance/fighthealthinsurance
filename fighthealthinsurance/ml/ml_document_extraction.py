@@ -5,6 +5,8 @@ Handles PDF, DOCX, and plain text extraction with page/section tracking.
 Also provides encrypted file decryption for EncryptedFileField.
 """
 
+import base64
+import binascii
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -14,10 +16,64 @@ from typing import Any, Dict, Optional
 
 from loguru import logger
 
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from django_encrypted_filefield.constants import PASSWORD, SALT
 from django_encrypted_filefield.crypt import Cryptographer
 
 from fighthealthinsurance import word_text
 from fighthealthinsurance.pdf_text import read_mupdf_pages
+
+#: How every token the encrypted file field writes starts: Fernet's version
+#: byte and the first bytes of its timestamp, base64-encoded.
+_FERNET_PREFIX = b"gAAAAA"
+#: A Fernet token: version (1), timestamp (8), IV (16), ciphertext, HMAC (32).
+_FERNET_HEADER_BYTES = 25
+_fernet_key: Optional[bytes] = None
+
+
+def looks_encrypted(raw_bytes: bytes) -> bool:
+    """Whether ``raw_bytes`` starts like a token the encrypted file field wrote."""
+    return raw_bytes.lstrip().startswith(_FERNET_PREFIX)
+
+
+def _encryption_key() -> bytes:
+    """The AES half of the file field's Fernet key, derived the way its
+    Cryptographer derives it."""
+    global _fernet_key
+    if _fernet_key is None:
+        _fernet_key = PBKDF2HMAC(
+            algorithm=hashes.SHA256(), length=32, salt=SALT, iterations=100000
+        ).derive(PASSWORD)
+    return _fernet_key[16:]
+
+
+def salvage_truncated(raw_bytes: bytes) -> bytes:
+    """The start of a document whose encrypted copy was cut short, or b"".
+
+    Fernet is AES-CBC with an HMAC at the end, so a token missing its end
+    fails the whole decryption, though every complete block before the cut
+    still decrypts. What this returns is unauthenticated and incomplete:
+    for reading what was kept, never for trusting it.
+    """
+    text = raw_bytes.strip()
+    text = text[: len(text) - len(text) % 4]
+    try:
+        token = base64.urlsafe_b64decode(text)
+    except (binascii.Error, ValueError):
+        return b""
+    iv = token[9:_FERNET_HEADER_BYTES]
+    body = token[_FERNET_HEADER_BYTES:]
+    body = body[: len(body) - len(body) % 16]
+    if len(iv) < 16 or not body:
+        return b""
+    try:
+        decryptor = Cipher(algorithms.AES(_encryption_key()), modes.CBC(iv)).decryptor()
+        return decryptor.update(body)
+    except Exception:
+        logger.opt(exception=True).warning("Could not salvage a stored document")
+        return b""
 
 
 def read_and_decrypt_file(
@@ -57,8 +113,19 @@ def read_and_decrypt_file(
             try:
                 return bytes(Cryptographer.decrypted(raw_bytes))
             except Exception:
+                pass
+            if not looks_encrypted(raw_bytes):
                 logger.debug("Decryption failed, returning raw bytes as fallback")
                 return raw_bytes
+            # Encrypted but cut short (combined_storage.correct_size): the
+            # part that was kept still decrypts, and that beats handing a
+            # reader the ciphertext as if it were the document.
+            salvaged = salvage_truncated(raw_bytes)
+            logger.warning(
+                f"Read {len(salvaged)} bytes from a stored document cut short "
+                "in storage"
+            )
+            return salvaged or None
     except Exception as e:
         logger.warning(f"Could not read a stored document: {type(e).__name__}")
         return None
