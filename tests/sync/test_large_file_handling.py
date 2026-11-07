@@ -104,7 +104,7 @@ class PlanDocumentsFormChecksFilesTest(TestCase):
     def test_files_within_the_limits_pass(self):
         form = PlanDocumentsForm(
             data={"denial_id": 1, "email": EMAIL, "semi_sekret": SEMI_SEKRET},
-            files={"plan_documents": [_pdf(), _upload("notes.txt", 20)]},
+            files={"plan_documents": [_pdf(), _upload("notes.txt", 400)]},
         )
         self.assertTrue(form.is_valid(), form.errors)
 
@@ -137,13 +137,21 @@ class FollowUpFormChecksFilesTest(TestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("followup_documents", form.errors)
 
-    def test_any_format_within_the_limit_is_accepted(self):
-        # Nothing parses follow-up documents, so format is not checked.
+    def test_a_document_within_the_limit_is_accepted(self):
+        form = FollowUpForm(
+            data=self._base(),
+            files={"followup_documents": _upload("evidence.txt", 100)},
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+
+    def test_a_format_outside_documents_and_photos_is_refused(self):
+        # Follow-up documents take documents and photos (validate_attachment).
         form = FollowUpForm(
             data=self._base(),
             files={"followup_documents": _upload("evidence.bin", 100)},
         )
-        self.assertTrue(form.is_valid(), form.errors)
+        self.assertFalse(form.is_valid())
+        self.assertIn("followup_documents", form.errors)
 
     def test_too_many_files_are_refused(self):
         form = FollowUpForm(

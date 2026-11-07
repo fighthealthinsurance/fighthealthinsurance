@@ -3,7 +3,7 @@ from urllib.parse import urlsplit
 from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from django.db import connection
+from django.db import connection, transaction
 from django.db.models import Count, DateTimeField, IntegerField
 from django.db.models.expressions import RawSQL
 from django.urls import reverse
@@ -1524,16 +1524,24 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         # Back to where it would be had it never been marked: a shared file
         # waits for the hourly sweep to read it again, a shared link is a
         # link again, and any other upload has no reading status.
+        # One transaction, and each kind of row in its own update: the last
+        # update never reaches a shared file or link, so one marked again
+        # meanwhile keeps its status instead of losing it.
         spam = queryset.filter(processing_status=PolicyDocument.PROCESSING_SPAM)
-        files = spam.filter(source__in=PolicyDocument.SHARED_FILE_SOURCES).update(
-            processing_status=PolicyDocument.PROCESSING_RECEIVED,
-            processed_at=None,
-            cleaned_text="",
-        )
-        links = spam.filter(source=PolicyDocument.SOURCE_SHARED_LINK).update(
-            processing_status=PolicyDocument.PROCESSING_LINK
-        )
-        others = spam.update(processing_status="")
+        with transaction.atomic():
+            files = spam.filter(source__in=PolicyDocument.SHARED_FILE_SOURCES).update(
+                processing_status=PolicyDocument.PROCESSING_RECEIVED,
+                processed_at=None,
+                cleaned_text="",
+            )
+            links = spam.filter(source=PolicyDocument.SOURCE_SHARED_LINK).update(
+                processing_status=PolicyDocument.PROCESSING_LINK
+            )
+            others = (
+                spam.exclude(source__in=PolicyDocument.SHARED_FILE_SOURCES)
+                .exclude(source=PolicyDocument.SOURCE_SHARED_LINK)
+                .update(processing_status="")
+            )
         updated = files + links + others
         logger.info(
             f"Staff user {request.user.pk} marked {updated} policy document(s) "

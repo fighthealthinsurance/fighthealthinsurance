@@ -212,6 +212,14 @@ class Base(Configuration):
     MCP_ASSISTANT_PER_IP_DAILY = _env_int(
         "MCP_ASSISTANT_PER_IP_DAILY", 5, minimum=1, maximum=10_000
     )
+    # Files one address, email or account may upload per UTC hour and per
+    # UTC day, across every page that takes files (upload_rate_limit.py).
+    FHI_UPLOAD_FILES_PER_HOUR = _env_int(
+        "FHI_UPLOAD_FILES_PER_HOUR", 20, minimum=1, maximum=10_000
+    )
+    FHI_UPLOAD_FILES_PER_DAY = _env_int(
+        "FHI_UPLOAD_FILES_PER_DAY", 60, minimum=1, maximum=100_000
+    )
     # The appeal link caps, shared by prepare_appeal and draft_appeal_in_chat,
     # counted from the table so they hold across pods (soft at the edge: two
     # pods can pass the check together): links live at once, and links made

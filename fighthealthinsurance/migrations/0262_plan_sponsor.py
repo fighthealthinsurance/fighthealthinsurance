@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0260_policydocument_potential_spam"),
+        ("fighthealthinsurance", "0261_merge_0260s"),
     ]
 
     operations = [
