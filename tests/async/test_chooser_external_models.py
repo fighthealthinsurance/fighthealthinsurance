@@ -755,6 +755,21 @@ def test_gender_affirming_care_matching_covers_treatments_and_diagnoses():
     assert practice_area_text_matches(area, "Gender-affirming hormone therapy")
     assert practice_area_text_matches(area, "My insurer denied my top surgery")
     assert practice_area_text_matches(area, "I'm a trans woman on estradiol")
+    assert practice_area_text_matches(area, "Puberty blockers")
+
+
+def test_practice_area_wildcard_terms_are_single_words():
+    # A wildcard is matched against one token at a time, so a prefix with a
+    # space in it ("puberty blocker*") could never match anything.
+    from fighthealthinsurance.chooser_practice_areas import _PRACTICE_AREA_TERMS
+
+    multiword_wildcards = [
+        term
+        for terms in _PRACTICE_AREA_TERMS.values()
+        for term in terms
+        if term.endswith("*") and " " in term
+    ]
+    assert multiword_wildcards == []
 
 
 def test_gender_affirming_care_matching_skips_transplants_and_transfusions():
