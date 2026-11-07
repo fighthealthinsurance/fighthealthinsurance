@@ -1,5 +1,5 @@
 import re
-from typing import Optional
+from typing import Optional, Sequence
 
 PRACTICE_AREAS = {
     "primary-care": "Primary care / general medicine",
@@ -9,6 +9,7 @@ PRACTICE_AREAS = {
     "neurology": "Neurology",
     "mental-health": "Mental health / psychiatry",
     "womens-health": "Women's health / OB-GYN",
+    "gender-affirming-care": "Gender-affirming / trans care",
     "pediatrics": "Pediatrics",
     "gastroenterology": "Gastroenterology / digestive health",
     "endocrinology": "Endocrinology / diabetes and hormone care",
@@ -147,6 +148,38 @@ _PRACTICE_AREA_TERMS = {
         "contracept*",
         "birth control",
     ),
+    "gender-affirming-care": (
+        # Only gender-specific vocabulary; the treatments it shares with
+        # other specialties are in _PRACTICE_AREA_SHARED_TERMS. "trans" is
+        # a whole-word term (not "trans*") so transplant and transfusion
+        # stay out.
+        "gender affirming",
+        "gender affirmation",
+        "gender confirming",
+        "gender confirmation",
+        "gender dysphoria",
+        "f64",
+        "gender incongruence",
+        "gender identity",
+        "gender reassignment",
+        "sex reassignment",
+        "transgender",
+        "transsexual*",
+        "trans",
+        "nonbinary",
+        "non binary",
+        "genderqueer",
+        "wpath",
+        "feminiz*",
+        "masculiniz*",
+        "top surgery",
+        "bottom surgery",
+        "vaginoplasty",
+        "phalloplasty",
+        "metoidioplasty",
+        "tracheal shave",
+        "chondrolaryngoplasty",
+    ),
     "pediatrics": (
         "pediatric*",
         "paediatric*",
@@ -268,21 +301,80 @@ _PRACTICE_AREA_TERMS = {
 }
 
 
-def practice_area_text_matches(raw_area: object, text: object) -> bool:
-    """Whether generated text contains vocabulary for the requested area."""
-    area = normalize_practice_area(raw_area)
-    if area is None or not isinstance(text, str):
-        return False
-    words = re.findall(r"[a-z0-9]+", text.casefold())
-    tokens = set(words)
-    normalized = f" {' '.join(words)} "
-    for term in _PRACTICE_AREA_TERMS[area]:
+# Vocabulary an area shares with other specialties: it counts toward the
+# area only alongside one of the area's own terms (see
+# practice_area_texts_match). Gender-affirming care's hormones and surgeries
+# are also cancer, menopause and hypogonadism care, so "Mastectomy" for
+# "Estrogen-receptor-positive DCIS" must not pass as gender-affirming care,
+# while "Mastectomy" for "Gender dysphoria" must.
+_PRACTICE_AREA_SHARED_TERMS = {
+    "gender-affirming-care": (
+        "hormone therapy",
+        "hrt",
+        "estradiol",
+        "estrogen",
+        "testosterone",
+        "spironolactone",
+        "cyproterone",
+        "puberty blocker",
+        "puberty blockers",
+        "puberty suppression",
+        "gnrh",
+        "leuprolide",
+        "lupron",
+        "triptorelin",
+        "histrelin",
+        "orchiectom*",
+        "mastectom*",
+        "hysterectom*",
+        "breast augmentation",
+        "electrolysis",
+        "hair removal",
+    ),
+}
+
+
+def _has_any_term(terms: tuple, tokens: set, normalized: str) -> bool:
+    """Whether any term matches: a trailing "*" is a single-token prefix,
+    anything else a whole-word phrase in the space-joined ``normalized``."""
+    for term in terms:
         if term.endswith("*"):
             if any(token.startswith(term[:-1]) for token in tokens):
                 return True
         elif f" {term} " in normalized:
             return True
     return False
+
+
+def _normalized(text: str) -> tuple:
+    """The text's lowercase word tokens, and those words space-joined."""
+    words = re.findall(r"[a-z0-9]+", text.casefold())
+    return set(words), f" {' '.join(words)} "
+
+
+def practice_area_texts_match(raw_area: object, texts: Sequence[object]) -> bool:
+    """Whether generated texts that describe one case (a procedure and a
+    diagnosis, or a conversation's user turns) all belong to the requested
+    area: each must contain the area's vocabulary, and at least one must
+    contain a term of the area's own rather than one it shares."""
+    area = normalize_practice_area(raw_area)
+    if area is None or not texts or not all(isinstance(t, str) for t in texts):
+        return False
+    own = _PRACTICE_AREA_TERMS[area]
+    shared = _PRACTICE_AREA_SHARED_TERMS.get(area, ())
+    anchored = False
+    for text in texts:
+        tokens, normalized = _normalized(str(text))
+        if _has_any_term(own, tokens, normalized):
+            anchored = True
+        elif not _has_any_term(shared, tokens, normalized):
+            return False
+    return anchored
+
+
+def practice_area_text_matches(raw_area: object, text: object) -> bool:
+    """Whether one piece of generated text belongs to the requested area."""
+    return practice_area_texts_match(raw_area, [text])
 
 
 def normalize_practice_area(raw: object) -> Optional[str]:
