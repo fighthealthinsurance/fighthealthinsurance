@@ -1144,6 +1144,37 @@ class RefreshMatchTests(_CorpusMixin, TransactionTestCase):
         self.assertNotIn(self.deductible_hmo_eoc.citation_name(), section)
         self.assertIn(SUMMARY, section)
 
+    def dental_only_denial(self):
+        """A letter that only mentions dental care, with nothing but the
+        dental document in the running."""
+        PublicPlanDocument.objects.exclude(id=self.kaiser_dental.id).update(
+            is_active=False
+        )
+        return self.denial(DENTAL_LETTER)
+
+    def test_a_lone_dental_document_is_selected_when_the_model_says_so(self):
+        denial = self.dental_only_denial()
+        found, models = self.refresh(denial, tie_break_answer="1")
+        self.assertTrue(found)
+        models.infer.assert_awaited_once()
+        (row,) = self.rows(denial)
+        self.assertEqual(
+            (row.document_id, row.selected, row.method),
+            (self.kaiser_dental.id, True, PlanDocumentMatch.METHOD_MODEL),
+        )
+
+    def test_a_lone_dental_document_is_not_selected_when_the_model_declines(self):
+        denial = self.dental_only_denial()
+        found, _ = self.refresh(denial, tie_break_answer="0")
+        self.assertFalse(found)
+        self.assertEqual([r.selected for r in self.rows(denial)], [False])
+
+    def test_a_lone_dental_document_waits_when_no_model_answers(self):
+        denial = self.dental_only_denial()
+        found, _ = self.refresh(denial, tie_break_answer=None)
+        self.assertFalse(found)
+        self.assertFalse(any(r.selected for r in self.rows(denial)))
+
     def test_a_declined_tie_break_stores_the_rows_and_selects_nothing(self):
         denial = self.denial(TIE_BREAK_LETTER)
         found, models = self.refresh(denial, tie_break_answer="0")

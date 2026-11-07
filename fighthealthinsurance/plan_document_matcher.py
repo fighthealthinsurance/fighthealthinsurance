@@ -861,8 +861,10 @@ async def tie_break(
     separate: the pick, None for "none of them" (an answer of 0), or
     NO_ANSWER when no model answered. Internal models only: ``models=`` is
     never passed, so the letter excerpt stays with us."""
-    if len(candidates) < 2:
+    if not candidates:
         return None
+    # One candidate is a question too: a dental document only the letter's
+    # words make eligible is put to the model alone.
     count = len(candidates)
     answer = await infer_with_fallback(
         system_prompts=[
