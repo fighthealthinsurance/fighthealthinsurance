@@ -179,6 +179,11 @@ _PRACTICE_AREA_TERMS = {
         "cyproterone",
         "puberty blocker",
         "puberty blockers",
+        "gnrh",
+        "leuprolide",
+        "lupron",
+        "triptorelin",
+        "histrelin",
         "puberty suppression",
         "feminiz*",
         "masculiniz*",
@@ -330,6 +335,11 @@ _PRACTICE_AREA_EXCLUDED_TERMS = {
         "tumor",
         "tumour",
         "metasta*",
+        "neoplas*",
+        "oncolog*",
+        "lymphoma",
+        "leukemia",
+        "sarcoma",
         "hypogonad*",
         "low testosterone",
         "testosterone deficiency",
@@ -338,6 +348,8 @@ _PRACTICE_AREA_EXCLUDED_TERMS = {
 
 
 def _has_any_term(terms: tuple, tokens: set, normalized: str) -> bool:
+    """Whether any term matches: a trailing "*" is a single-token prefix,
+    anything else a whole-word phrase in the space-joined ``normalized``."""
     for term in terms:
         if term.endswith("*"):
             if any(token.startswith(term[:-1]) for token in tokens):

@@ -758,6 +758,8 @@ def test_gender_affirming_care_matching_covers_treatments_and_diagnoses():
     assert practice_area_text_matches(area, "Puberty blockers")
     assert practice_area_text_matches(area, "F64.0")
     assert practice_area_text_matches(area, "Spironolactone")
+    assert practice_area_text_matches(area, "Leuprolide (Lupron Depot)")
+    assert practice_area_text_matches(area, "GnRH agonist")
 
 
 def test_practice_area_wildcard_terms_are_single_words():
@@ -790,6 +792,10 @@ def test_gender_affirming_care_matching_skips_cancer_and_hypogonadism():
         area, "Estrogen-receptor-positive breast cancer"
     )
     assert not practice_area_text_matches(area, "Male hypogonadism (low testosterone)")
+    assert not practice_area_text_matches(area, "Leuprolide for prostate cancer")
+    assert not practice_area_text_matches(
+        area, "Estrogen-receptor-positive breast neoplasm"
+    )
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
