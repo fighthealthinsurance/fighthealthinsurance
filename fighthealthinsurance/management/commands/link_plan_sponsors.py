@@ -48,16 +48,22 @@ class Command(BaseCommand):
         names: dict[tuple[str, str], str] = {}
         sources: Counter[str] = Counter()
         looked = 0
-        # Read the ids first: the model's reading takes seconds a document,
-        # longer than a database cursor should stay open.
-        for pk, text in list(rows.values_list("pk", "cleaned_text")):
+        # The ids first, then each text on its own: the model's reading
+        # takes seconds a document, longer than a database cursor should
+        # stay open, and the texts together can be large.
+        for pk in list(rows.values_list("pk", flat=True)):
+            text = rows.filter(pk=pk).values_list("cleaned_text", flat=True).first()
+            if text is None:
+                continue
             looked += 1
-            sponsor = async_to_sync(afind_company)(text or "")
+            sponsor = async_to_sync(afind_company)(text)
             if sponsor is None:
                 continue
             sources[sponsor.source] += 1
             if options["apply"]:
                 linked = link_sponsor(pk, sponsor)
+                if linked is None:
+                    continue
                 key, name = ("on the list", str(linked.pk)), linked.name
             else:
                 company = match_sponsor(sponsor)

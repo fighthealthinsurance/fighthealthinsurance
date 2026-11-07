@@ -10,11 +10,10 @@ its EIN, and the line that says so.
 Nothing it says is taken on trust. An answer is used only when:
 
 * the line it quotes is in the document, word for word (spacing and case
-  aside);
-* the company's name is in the document;
+  aside), and names the company in full;
 * the name is a company, not an insurer from our catalog or a phrase;
-* an EIN is nine digits and is in the document (otherwise it is dropped and
-  the company kept).
+* an EIN is nine digits and sits in that line or just after it, before
+  another party is named (otherwise it is dropped and the company kept).
 
 An answer that fails a check counts as no answer and the next model is
 asked; when none passes, the fixed patterns get their turn. Only internal
@@ -34,10 +33,11 @@ from typing import Optional
 from loguru import logger
 
 from fighthealthinsurance.plan_sponsors import (
+    _OTHER_PARTY,
+    EIN_WINDOW_CHARS,
     SOURCE_MODEL,
     Sponsor,
     good_name,
-    normalize_name,
 )
 
 #: How much of a document the model reads: the opening pages, the closing
@@ -48,6 +48,8 @@ HEAD_CHARS = 6_000
 TAIL_CHARS = 3_000
 WINDOW_CHARS = 700
 MAX_EXCERPT_CHARS = 14_000
+#: The quoted line kept as evidence, at most.
+EVIDENCE_CHARS = 300
 #: Words near which a sponsor is named.
 _PARTY_WORDS = re.compile(
     r"sponsor|employer\s+identification|\bEIN\b|plan\s+administrator"
@@ -85,39 +87,29 @@ Excerpts:
 
 def excerpt(text: str) -> str:
     """The parts of ``text`` the model reads, in document order, joined by
-    "..." where something was left out."""
+    "..." where something was left out: the head and the tail always, then
+    the passages around party words in between, as far as the budget goes."""
     if len(text) <= MAX_EXCERPT_CHARS:
         return text
-    spans = [(0, HEAD_CHARS), (len(text) - TAIL_CHARS, len(text))]
-    for match in _PARTY_WORDS.finditer(text):
-        spans.append((max(0, match.start() - WINDOW_CHARS), match.end() + WINDOW_CHARS))
-    spans.sort()
-    merged: list[list[int]] = []
-    for start, end in spans:
-        if merged and start <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], end)
+    head_end, tail_start = HEAD_CHARS, len(text) - TAIL_CHARS
+    room = MAX_EXCERPT_CHARS - HEAD_CHARS - TAIL_CHARS
+    windows: list[list[int]] = []
+    for match in _PARTY_WORDS.finditer(text, head_end, tail_start):
+        start = max(head_end, match.start() - WINDOW_CHARS)
+        end = min(tail_start, match.end() + WINDOW_CHARS)
+        if windows and start <= windows[-1][1]:
+            windows[-1][1] = max(windows[-1][1], end)
         else:
-            merged.append([start, end])
-    parts: list[str] = []
-    used = 0
-    # The head and tail first, then the windows in order, within the budget.
-    order = sorted(
-        range(len(merged)),
-        key=lambda i: (0 if merged[i][0] == 0 or merged[i][1] >= len(text) else 1, i),
-    )
-    keep = []
-    for i in order:
-        start, end = merged[i]
-        room = MAX_EXCERPT_CHARS - used
+            windows.append([start, end])
+    keep = [(0, head_end)]
+    for start, end in windows:
         if room <= 0:
             break
         end = min(end, start + room)
         keep.append((start, end))
-        used += end - start
-    keep.sort()
-    for start, end in keep:
-        parts.append(text[start:end].strip())
-    return "\n...\n".join(parts)
+        room -= end - start
+    keep.append((tail_start, len(text)))
+    return "\n...\n".join(text[start:end].strip() for start, end in keep)
 
 
 def _squash(s: str) -> str:
@@ -160,7 +152,11 @@ def checked_sponsor(
     data = _parse(answer)
     if data is None:
         return None
-    raw = data.get("sponsor")
+    if "sponsor" not in data:
+        # An answer without the field isn't an answer; only an explicit
+        # null says the document names no sponsor.
+        return None
+    raw = data["sponsor"]
     if raw is None or (
         isinstance(raw, str) and raw.strip().lower() in ("", "null", "none")
     ):
@@ -176,26 +172,55 @@ def checked_sponsor(
     name = good_name(_PLAN_WORDS_AT_END.sub("", raw.strip()).strip(" ,.;:-"), insurers)
     if not name:
         return None
-    # The name itself must be in the document, punctuation aside, and in
-    # the line it quotes, so the line is about this company.
-    if _letters(name) not in _letters(text) or normalize_name(name).split()[
-        0
-    ] not in _letters(evidence):
+    # The whole name must be in the line it quotes, punctuation aside, so
+    # the line is about this company and not another that shares a word.
+    if _words(name) not in _words(evidence):
         return None
-    ein = ""
-    raw_ein = data.get("ein")
-    if isinstance(raw_ein, str):
-        digits = re.sub(r"\D", "", raw_ein)
-        if len(digits) == 9 and re.search(
-            rf"(?<!\d){digits[:2]}-?{digits[2:]}(?!\d)", text
-        ):
-            ein = f"{digits[:2]}-{digits[2:]}"
     return Sponsor(
         name=name[:300],
-        ein=ein,
-        evidence=re.sub(r"\s+", " ", evidence).strip()[:500],
+        ein=_sponsors_ein(data.get("ein"), evidence, text),
+        evidence=_kept_evidence(evidence),
         source=SOURCE_MODEL,
     )
+
+
+def _words(s: str) -> str:
+    """``s`` as space-padded words, so one name matches only whole words."""
+    return f" {_letters(s)} "
+
+
+def _sponsors_ein(raw_ein: object, evidence: str, text: str) -> str:
+    """The EIN the model gave, when the document gives it as the sponsor's:
+    in the quoted line, or on the lines just after it (as in "Plan Sponsor:
+    ... / Employer Identification Number: ..."), before another party is
+    named. An EIN elsewhere may be another party's, so it is dropped."""
+    if not isinstance(raw_ein, str):
+        return ""
+    digits = re.sub(r"\D", "", raw_ein)
+    if len(digits) != 9:
+        return ""
+    ein = re.compile(rf"(?<!\d){digits[:2]}-?{digits[2:]}(?!\d)")
+    if ein.search(evidence):
+        return f"{digits[:2]}-{digits[2:]}"
+    # The quoted line where it sits in the document, spacing and case aside.
+    line = re.compile(
+        r"\s+".join(re.escape(word) for word in evidence.split()), re.IGNORECASE
+    )
+    for found in line.finditer(text):
+        end = found.end() + EIN_WINDOW_CHARS
+        other = _OTHER_PARTY.search(text, found.end(), end)
+        if ein.search(text, found.end(), other.start() if other else end):
+            return f"{digits[:2]}-{digits[2:]}"
+    return ""
+
+
+def _kept_evidence(evidence: str) -> str:
+    """The quoted line as stored and shown to staff. The model reads the
+    text before personal details are taken out, so the line is cleaned the
+    same way the stored text is."""
+    from fighthealthinsurance.plan_document_scrub import scrub
+
+    return scrub(re.sub(r"\s+", " ", evidence).strip())[:EVIDENCE_CHARS]
 
 
 async def aread_sponsor(text: str) -> tuple[Optional[Sponsor], bool]:
