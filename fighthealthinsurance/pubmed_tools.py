@@ -63,11 +63,13 @@ T = TypeVar("T")
 # How long building one denial's research context waits for Jev's article
 # judgments (ml/research_judging.py) before going on with the articles as
 # they are; judgments that landed in time are stored either way.
-JUDGING_BUDGET_SECONDS = 15.0
+JUDGING_BUDGET_SECONDS = 20.0
 # What judging leaves of a caller's budget for summarizing the articles
-# that have no summary yet (each summary is cut at the budget, and its
-# article goes on with its abstract).
-_SUMMARY_RESERVE_SECONDS = 5.0
+# that have no summary yet, or, when one entry per article is too long, for
+# summarizing them together (each summary is cut at the budget, and its
+# article goes on with its abstract). The appeal step's 10 seconds more for
+# this whole build (50, was 40) go to judging and this reserve, 5 each.
+_SUMMARY_RESERVE_SECONDS = 10.0
 # The most those summaries take without a caller's budget, and how many are
 # written at once (the same backends write appeals).
 _SUMMARY_BUDGET_SECONDS = 20.0
