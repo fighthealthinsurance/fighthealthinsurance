@@ -5150,6 +5150,39 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         blank=True,
         related_name="policy_documents",
     )
+    # How the company was found: our model ("model"), the fixed patterns
+    # ("rules") or staff ("staff"); and the document's own line that names
+    # it, so staff can check it without opening the file. A company counts
+    # as soon as it's linked; a check is optional and never holds it up.
+    plan_sponsor_source = models.CharField(
+        max_length=10,
+        blank=True,
+        default="",
+        db_default="",
+        choices=(
+            ("model", "Our model"),
+            ("rules", "Fixed patterns"),
+            ("staff", "Staff"),
+        ),
+        verbose_name="company found by",
+    )
+    plan_sponsor_evidence = models.TextField(
+        blank=True,
+        default="",
+        db_default="",
+        verbose_name="where the document names it",
+    )
+    plan_sponsor_checked_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="company checked at"
+    )
+    plan_sponsor_checked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name="company checked by",
+    )
     # Shared uploads only: a keyed SHA-256 of the file, so repeats can be counted.
     fingerprint = models.CharField(db_default="", max_length=64, blank=True)
     # Shared links only: the page's address, checked on the way in

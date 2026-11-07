@@ -4,10 +4,11 @@ A plan through work names its sponsor, the employer: a Summary Plan
 Description has to give the sponsor's name and its Employer Identification
 Number (29 CFR 2520.102-3(b) and (d)), and its title is often the company's
 name, as in "Crumpler Cooperative Welfare Benefit Plan". identify_sponsor
-reads both from a document's text with fixed patterns, no model, and only
-when the text reads like an employer's plan: an insurer's medical policy
-names an insurer, not an employer, and an insurer named as the sponsor is
-left out (the InsuranceCompany catalog).
+reads both from a document's text with fixed patterns, and only when the
+text reads like an employer's plan: an insurer's medical policy names an
+insurer, not an employer, and an insurer named as the sponsor is left out
+(the InsuranceCompany catalog). The reading asks our own model first
+(plan_sponsor_reader) and uses these patterns when no model answers.
 
 link_sponsor finds the company on the running list (PlanSponsor) by its
 EIN, then by its name with the punctuation and "LLC", "Inc." and the like
@@ -45,7 +46,10 @@ _EIN_RULE = re.compile(
     rf"[^\n\d]{{0,40}}\n?[^\n\d]{{0,20}}{_EIN}",
     re.IGNORECASE,
 )
-_NAME_CHARS = r"[A-Z0-9][A-Za-z0-9&.,'()/ -]{1,90}?"
+# The first character is matched case-sensitively, inside patterns that
+# ignore case otherwise: a name starts with a capital or a digit, so a word
+# ending ("...ed by Google") is never taken for one.
+_NAME_CHARS = r"(?-i:[A-Z0-9])[A-Za-z0-9&.,'()/ -]{1,90}?"
 # A line that starts another party's block: an EIN after it is theirs.
 _OTHER_PARTY = re.compile(
     rf"^{_SP}*(?:(?:third{_SP}*-?{_SP}*party{_SP}+|claims{_SP}+|plan{_SP}+)?administrator"
@@ -57,6 +61,8 @@ _OTHER_PARTY = re.compile(
 _SPONSOR_RULE = re.compile(
     rf"\b(?:plan{_SP}+sponsor|name{_SP}+of{_SP}+(?:the{_SP}+)?(?:plan{_SP}+)?"
     rf"sponsor|employer{_SP}*/{_SP}*plan{_SP}+sponsor|sponsoring{_SP}+employer)"
+    # Whole words only: "plan sponsored by" is a sentence, not a label.
+    rf"(?![A-Za-z])"
     # The rest of a header such as "Plan Sponsor Name and Address", read
     # whole so none of it is taken for the name.
     rf"(?:{_SP}*(?:[/,&]|and)?{_SP}*(?:name|address)\b)*"
@@ -115,9 +121,18 @@ _SUFFIXES = {
 }
 
 
+#: Where a document's company came from (PolicyDocument.plan_sponsor_source).
+SOURCE_MODEL = "model"
+SOURCE_RULES = "rules"
+SOURCE_STAFF = "staff"
+
+
 class Sponsor(NamedTuple):
     name: str
     ein: str
+    #: The document's own line that names the company, when one was quoted.
+    evidence: str = ""
+    source: str = SOURCE_RULES
 
 
 def normalize_name(name: str) -> str:
@@ -141,28 +156,40 @@ def _clean_name(raw: str) -> str:
     return name.strip(" ,.;:-")
 
 
-def _is_insurer(normalized: str) -> bool:
-    if not normalized:
-        return False
+def known_insurers() -> frozenset[str]:
+    """Every insurer name and alternate name in the catalog, normalized."""
+    names = set()
     for name, alt_names in InsuranceCompany.objects.values_list("name", "alt_names"):
         for known in [name, *(alt_names or "").splitlines()]:
             known_normalized = normalize_name(known)
-            if known_normalized and (
-                normalized == known_normalized
-                or normalized.startswith(known_normalized + " ")
-            ):
-                return True
+            if known_normalized:
+                names.add(known_normalized)
+    return frozenset(names)
+
+
+def _is_insurer(normalized: str, insurers: Optional[frozenset[str]] = None) -> bool:
+    if not normalized:
+        return False
+    for known_normalized in known_insurers() if insurers is None else insurers:
+        if normalized == known_normalized or normalized.startswith(
+            known_normalized + " "
+        ):
+            return True
     return False
 
 
-def _good_name(raw: str) -> Optional[str]:
+def good_name(raw: str, insurers: Optional[frozenset[str]] = None) -> Optional[str]:
+    """``raw`` cleaned into a company name, or None when it isn't one: too
+    short, a phrase such as "the" or "summary", or an insurer we know.
+    ``insurers`` is known_insurers(), given when the caller can't read the
+    database itself (async code); without it the catalog is read here."""
     name = _clean_name(raw)
     normalized = normalize_name(name)
     if (
         len(normalized) < 2
         or normalized.split()[0] in _NOT_A_NAME
         or not re.search(r"[a-z]", normalized)
-        or _is_insurer(normalized)
+        or _is_insurer(normalized, insurers)
     ):
         return None
     return name
@@ -176,8 +203,9 @@ def identify_sponsor(text: str) -> Optional[Sponsor]:
     part = text[:HEAD_CHARS] + "\n" + text[-TAIL_CHARS:]
     if not _EMPLOYER_SIGNAL.search(part):
         return None
+    insurers = known_insurers()
     for match in _SPONSOR_RULE.finditer(part):
-        name = _good_name(match.group("name"))
+        name = good_name(match.group("name"), insurers)
         if name:
             # Only an EIN right after the sponsor's own lines is its EIN.
             end = match.end() + EIN_WINDOW_CHARS
@@ -188,7 +216,7 @@ def identify_sponsor(text: str) -> Optional[Sponsor]:
             return Sponsor(name=name[:300], ein=near.group("ein") if near else "")
     # A plan title names the company but not whose EIN is where.
     for match in _PLAN_TITLE_RULE.finditer(part):
-        name = _good_name(match.group("name"))
+        name = good_name(match.group("name"), insurers)
         if name:
             return Sponsor(name=name[:300], ein="")
     return None
@@ -240,6 +268,8 @@ def link_sponsor(doc_id: Union[str, uuid.UUID], sponsor: Sponsor) -> PlanSponsor
                 if company is None:
                     raise
         PolicyDocument.objects.filter(pk=doc_id, plan_sponsor__isnull=True).update(
-            plan_sponsor=company
+            plan_sponsor=company,
+            plan_sponsor_source=sponsor.source,
+            plan_sponsor_evidence=sponsor.evidence,
         )
     return company
