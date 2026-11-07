@@ -24,7 +24,7 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("name", models.CharField(max_length=300)),
-                ("normalized_name", models.CharField(max_length=300, unique=True)),
+                ("normalized_name", models.CharField(db_index=True, max_length=300)),
                 (
                     "ein",
                     models.CharField(
@@ -50,6 +50,13 @@ class Migration(migrations.Migration):
             ],
             options={
                 "ordering": ["name"],
+                "constraints": [
+                    models.UniqueConstraint(
+                        condition=models.Q(("ein__isnull", True)),
+                        fields=("normalized_name",),
+                        name="plan_sponsor_one_without_ein_per_name",
+                    )
+                ],
             },
         ),
         migrations.AddField(

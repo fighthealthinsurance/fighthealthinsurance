@@ -1396,11 +1396,44 @@ class AuditLogAdmin(admin.ModelAdmin):
         return False
 
 
+class PlanSponsorForm(forms.ModelForm):
+    """A company's name and EIN, refused here rather than at the database
+    when the list already has that name with no EIN and this has none."""
+
+    class Meta:
+        model = PlanSponsor
+        fields = ["name", "ein"]
+
+    def clean_ein(self):
+        # Blank is no EIN, so two companies without one don't clash on "".
+        return (self.cleaned_data.get("ein") or "").strip() or None
+
+    def clean(self):
+        from fighthealthinsurance.plan_sponsors import normalize_name
+
+        cleaned = super().clean()
+        normalized = normalize_name(cleaned.get("name") or "")
+        if "name" in cleaned and not normalized:
+            self.add_error("name", "Give the company's name.")
+        elif normalized and not cleaned.get("ein"):
+            same = PlanSponsor.objects.filter(
+                normalized_name=normalized, ein__isnull=True
+            ).exclude(pk=self.instance.pk)
+            if same.exists():
+                self.add_error(
+                    "name",
+                    f"{same.first()} is already on the list with no EIN. "
+                    "Use that one, or give this one its EIN.",
+                )
+        return cleaned
+
+
 @admin.register(PlanSponsor)
 class PlanSponsorAdmin(admin.ModelAdmin):
     """The running list of companies behind shared plan documents. Staff fix
     a name or EIN here, or add a company to link a document to by hand."""
 
+    form = PlanSponsorForm
     list_display = ("name", "ein", "documents", "created_at")
     search_fields = ("name", "normalized_name", "ein")
     readonly_fields = ("normalized_name", "first_document", "created_at")
@@ -1559,9 +1592,10 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         # year and premium answer.
         from fighthealthinsurance.shared_plan_documents import share_counts
 
+        # Potential spam stays out of these totals, as out of every count.
         shared = PolicyDocument.objects.filter(
             source__in=PolicyDocument.SHARED_FILE_SOURCES
-        )
+        ).exclude(processing_status=PolicyDocument.PROCESSING_SPAM)
         extra_context = {
             **(extra_context or {}),
             "share_counts": share_counts(timezone.localdate()),
@@ -1573,6 +1607,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
             "shared_links": PolicyDocument.objects.filter(
                 source=PolicyDocument.SOURCE_SHARED_LINK
             )
+            .exclude(processing_status=PolicyDocument.PROCESSING_SPAM)
             .exclude(shared_link="")
             .count(),
         }

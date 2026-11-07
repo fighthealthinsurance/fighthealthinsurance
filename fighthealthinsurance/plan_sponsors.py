@@ -11,7 +11,8 @@ left out (the InsuranceCompany catalog).
 
 link_sponsor finds the company on the running list (PlanSponsor) by its
 EIN, then by its name with the punctuation and "LLC", "Inc." and the like
-taken off, and adds it when it isn't there. The share page's goal counts the
+taken off (never one with a different EIN), and adds it when it isn't
+there. The share page's goal counts the
 companies on the list, each once (shared_plan_documents.plan_shares).
 Sharers never have to name a company: a document that names none stays
 unlinked, and staff can link it in the admin.
@@ -29,6 +30,9 @@ from fighthealthinsurance.models import InsuranceCompany, PlanSponsor, PolicyDoc
 #: first pages, or in the plan information section near the end.
 HEAD_CHARS = 60_000
 TAIL_CHARS = 40_000
+#: How far past the sponsor's name its EIN may sit to be taken as its own:
+#: an EIN elsewhere may be another organization's.
+EIN_WINDOW_CHARS = 400
 
 _SP = r"[ \t]"
 _EIN = r"(?P<ein>\d{2}-\d{7})(?!\d)"
@@ -46,7 +50,9 @@ _NAME_CHARS = r"[A-Z0-9][A-Za-z0-9&.,'()/ -]{1,90}?"
 _SPONSOR_RULE = re.compile(
     rf"\b(?:plan{_SP}+sponsor|name{_SP}+of{_SP}+(?:the{_SP}+)?(?:plan{_SP}+)?"
     rf"sponsor|employer{_SP}*/{_SP}*plan{_SP}+sponsor|sponsoring{_SP}+employer)"
-    rf"(?:{_SP}+(?:and{_SP}+)?(?:name|address|name{_SP}+and{_SP}+address))?"
+    # The rest of a header such as "Plan Sponsor Name and Address", read
+    # whole so none of it is taken for the name.
+    rf"(?:{_SP}*(?:[/,&]|and)?{_SP}*(?:name|address)\b)*"
     rf"{_SP}*(?::|is\b)?{_SP}*\n?{_SP}*(?P<name>{_NAME_CHARS})(?=\n|,{_SP}*\d|{_SP}{{2,}}|$)",
     re.IGNORECASE | re.MULTILINE,
 )
@@ -163,51 +169,63 @@ def identify_sponsor(text: str) -> Optional[Sponsor]:
     part = text[:HEAD_CHARS] + "\n" + text[-TAIL_CHARS:]
     if not _EMPLOYER_SIGNAL.search(part):
         return None
-    ein_match = _EIN_RULE.search(part)
-    ein = ein_match.group("ein") if ein_match else ""
-    for rule in (_SPONSOR_RULE, _PLAN_TITLE_RULE):
-        for match in rule.finditer(part):
-            name = _good_name(match.group("name"))
-            if name:
-                return Sponsor(name=name[:300], ein=ein)
+    for match in _SPONSOR_RULE.finditer(part):
+        name = _good_name(match.group("name"))
+        if name:
+            # Only an EIN right after the sponsor's own lines is its EIN.
+            near = _EIN_RULE.search(part, match.start(), match.end() + EIN_WINDOW_CHARS)
+            return Sponsor(name=name[:300], ein=near.group("ein") if near else "")
+    # A plan title names the company but not whose EIN is where.
+    for match in _PLAN_TITLE_RULE.finditer(part):
+        name = _good_name(match.group("name"))
+        if name:
+            return Sponsor(name=name[:300], ein="")
     return None
 
 
-def _find(ein: str, normalized: str) -> Optional[PlanSponsor]:
-    company = PlanSponsor.objects.filter(ein=ein).first() if ein else None
-    return company or PlanSponsor.objects.filter(normalized_name=normalized).first()
+def match_sponsor(sponsor: Sponsor) -> Optional[PlanSponsor]:
+    """The company already on the list for ``sponsor``, changing nothing:
+    the one with its EIN; failing that one with its name, but never one
+    whose EIN is a different number. Two employers can share a name; their
+    EINs tell them apart."""
+    normalized = normalize_name(sponsor.name)
+    if sponsor.ein:
+        company = PlanSponsor.objects.filter(ein=sponsor.ein).first()
+        if company is not None:
+            return company
+        return (
+            PlanSponsor.objects.filter(normalized_name=normalized, ein__isnull=True)
+            .order_by("pk")
+            .first()
+        )
+    return PlanSponsor.objects.filter(normalized_name=normalized).order_by("pk").first()
 
 
 def link_sponsor(doc_id: Union[str, uuid.UUID], sponsor: Sponsor) -> PlanSponsor:
-    """The company on the running list for ``sponsor``, added when it isn't
-    there, linked to the document ``doc_id`` if that has no company yet."""
-    normalized = normalize_name(sponsor.name)
+    """The company on the running list for ``sponsor`` (match_sponsor),
+    added when it isn't there, linked to the document ``doc_id`` if that
+    has no company yet."""
     with transaction.atomic():
-        company = None
-        if sponsor.ein:
-            company = PlanSponsor.objects.filter(ein=sponsor.ein).first()
-        if company is None:
-            company = PlanSponsor.objects.filter(normalized_name=normalized).first()
-            if company is not None and sponsor.ein and not company.ein:
-                company.ein = sponsor.ein
-                try:
-                    with transaction.atomic():
-                        company.save(update_fields=["ein"])
-                except IntegrityError:
-                    company.refresh_from_db()
+        company = match_sponsor(sponsor)
+        if company is not None and sponsor.ein and not company.ein:
+            company.ein = sponsor.ein
+            try:
+                with transaction.atomic():
+                    company.save(update_fields=["ein"])
+            except IntegrityError:
+                company.refresh_from_db()
         if company is None:
             try:
                 with transaction.atomic():
                     company = PlanSponsor.objects.create(
                         name=sponsor.name,
-                        normalized_name=normalized,
+                        normalized_name=normalize_name(sponsor.name),
                         ein=sponsor.ein or None,
                         first_document_id=doc_id,
                     )
             except IntegrityError:
-                # Added at the same moment by another reading, or the name
-                # is on the list under a different EIN.
-                company = _find(sponsor.ein, normalized)
+                # Added at the same moment by another reading.
+                company = match_sponsor(sponsor)
                 if company is None:
                     raise
         PolicyDocument.objects.filter(pk=doc_id, plan_sponsor__isnull=True).update(

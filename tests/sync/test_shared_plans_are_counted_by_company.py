@@ -90,6 +90,24 @@ class FindingTheCompanyTest(TestCase):
     def test_a_line_of_test_text_names_no_company(self):
         self.assertIsNone(identify_sponsor("g"))
 
+    def test_a_whole_header_is_not_taken_for_the_name(self):
+        text = (
+            "Summary Plan Description\nPlan Sponsor Name Address\n"
+            "Crumpler Cooperative\n12 Mill Road, Crumpler, NC\n"
+        ) + ("Covered services. " * 40)
+        self.assertEqual(identify_sponsor(text).name, "Crumpler Cooperative")
+
+    def test_an_ein_far_from_the_sponsor_is_not_taken_as_its_own(self):
+        text = (
+            "Summary Plan Description\nPlan Sponsor: Crumpler Cooperative\n"
+            + ("Covered services and what the plan pays. " * 40)
+            + "\nClaims administrator Fraser Mills Benefits, "
+            "Employer Identification Number 98-7654321\n"
+        )
+        self.assertEqual(
+            identify_sponsor(text), Sponsor(name="Crumpler Cooperative", ein="")
+        )
+
     def test_names_match_without_punctuation_or_legal_form(self):
         self.assertEqual(
             normalize_name("The Crumpler Cooperative, L.L.C."),
@@ -131,6 +149,18 @@ class TheCompanyListTest(TestCase):
         linked(SPD_NAME_ONLY)
         linked(SPD_NAME_ONLY)
         self.assertEqual(PlanSponsor.objects.count(), 1)
+
+    def test_two_employers_with_one_name_but_two_eins_stay_apart(self):
+        linked(SPD_WITH_EIN)
+        linked(SPD_WITH_EIN.replace("12-3456789", "98-7654321"))
+        self.assertEqual(PlanSponsor.objects.count(), 2)
+
+    def test_a_name_first_seen_without_an_ein_takes_the_ein_later(self):
+        linked(SPD_WITH_EIN.replace("Employer Identification Number (EIN): 12-3456789\n", ""))
+        linked(SPD_WITH_EIN)
+        self.assertEqual(
+            list(PlanSponsor.objects.values_list("ein", flat=True)), ["12-3456789"]
+        )
 
     def test_a_document_staff_linked_keeps_its_company(self):
         mine = PlanSponsor.objects.create(name="Fraser Mills", normalized_name="fraser mills")
@@ -195,8 +225,31 @@ class LinkingDocumentsReadBeforeTest(TestCase):
             (0, True),
         )
 
+    def test_the_list_counts_one_ein_under_two_names_as_one_company(self):
+        shared_row(SPD_WITH_EIN)
+        shared_row(SPD_WITH_EIN.replace("Crumpler Cooperative, LLC", "Crumpler Co-op"))
+        out = StringIO()
+        call_command("link_plan_sponsors", stdout=out)
+        self.assertIn("2 would be linked to 1 company", out.getvalue())
+
     def test_it_links_with_apply(self):
         doc = shared_row(SPD_WITH_EIN)
         call_command("link_plan_sponsors", "--apply", stdout=StringIO())
         doc.refresh_from_db()
         self.assertEqual(doc.plan_sponsor.ein, "12-3456789")
+
+
+class TheCompanyFormTest(TestCase):
+    def test_a_second_company_by_a_name_already_listed_without_an_ein_is_refused(self):
+        from fighthealthinsurance.admin import PlanSponsorForm
+
+        PlanSponsor.objects.create(name="Fraser Mills", normalized_name="fraser mills")
+        form = PlanSponsorForm(data={"name": "Fraser Mills, Inc.", "ein": ""})
+        self.assertIn("name", form.errors)
+
+    def test_the_same_name_with_its_own_ein_is_taken(self):
+        from fighthealthinsurance.admin import PlanSponsorForm
+
+        PlanSponsor.objects.create(name="Fraser Mills", normalized_name="fraser mills")
+        form = PlanSponsorForm(data={"name": "Fraser Mills", "ein": "98-7654321"})
+        self.assertTrue(form.is_valid(), form.errors)

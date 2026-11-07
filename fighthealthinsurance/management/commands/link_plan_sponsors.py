@@ -17,7 +17,12 @@ from typing import Any
 from django.core.management.base import BaseCommand
 
 from fighthealthinsurance.models import PolicyDocument
-from fighthealthinsurance.plan_sponsors import identify_sponsor, link_sponsor
+from fighthealthinsurance.plan_sponsors import (
+    identify_sponsor,
+    link_sponsor,
+    match_sponsor,
+    normalize_name,
+)
 
 
 class Command(BaseCommand):
@@ -34,7 +39,10 @@ class Command(BaseCommand):
             processing_status=PolicyDocument.PROCESSING_READY,
             plan_sponsor__isnull=True,
         ).only("pk", "cleaned_text")
-        found: Counter[str] = Counter()
+        # Each company once, by the same matching the linking uses
+        # (match_sponsor): by its EIN, then its name.
+        found: Counter[tuple[str, str]] = Counter()
+        names: dict[tuple[str, str], str] = {}
         looked = 0
         for row in rows.iterator(chunk_size=50):
             looked += 1
@@ -43,13 +51,22 @@ class Command(BaseCommand):
                 continue
             if options["apply"]:
                 company = link_sponsor(row.pk, sponsor)
-                found[company.name] += 1
+                key, name = ("on the list", str(company.pk)), company.name
             else:
-                found[sponsor.name] += 1
+                company = match_sponsor(sponsor)
+                if company is not None:
+                    key, name = ("on the list", str(company.pk)), company.name
+                elif sponsor.ein:
+                    key, name = ("new", sponsor.ein), f"{sponsor.name} (new)"
+                else:
+                    key = ("new", normalize_name(sponsor.name))
+                    name = f"{sponsor.name} (new)"
+            found[key] += 1
+            names.setdefault(key, name)
         verb = "linked" if options["apply"] else "would be linked"
         self.stdout.write(
             f"{looked} document(s) looked at, {sum(found.values())} {verb} "
             f"to {len(found)} compan{'y' if len(found) == 1 else 'ies'}"
         )
-        for name, count in sorted(found.items()):
-            self.stdout.write(f"  {name}: {count}")
+        for key, count in sorted(found.items(), key=lambda item: names[item[0]]):
+            self.stdout.write(f"  {names[key]}: {count}")

@@ -4723,8 +4723,9 @@ class PlanSponsor(models.Model):
     or fix one in the admin."""
 
     name = models.CharField(max_length=300)
-    # The name to match on (plan_sponsors.normalize_name).
-    normalized_name = models.CharField(max_length=300, unique=True)
+    # The name to match on (plan_sponsors.normalize_name). Two employers
+    # can share a name, so only one without an EIN per name is kept.
+    normalized_name = models.CharField(max_length=300, db_index=True)
     ein = models.CharField(
         max_length=10,
         unique=True,
@@ -4744,6 +4745,13 @@ class PlanSponsor(models.Model):
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["normalized_name"],
+                condition=models.Q(ein__isnull=True),
+                name="plan_sponsor_one_without_ein_per_name",
+            )
+        ]
 
     def __str__(self) -> str:
         return self.name
