@@ -1244,6 +1244,12 @@ class ChooseAppealHelper:
                     kept, dropped = research_judging.order(
                         articles, judgments, pmid_of=lambda a: a.pmid or ""
                     )
+                    # What the letter's context set aside beside enough on
+                    # topic (research_judging.focus) is offered unticked too.
+                    kept, set_aside = research_judging.focus(
+                        kept, judgments, pmid_of=lambda a: a.pmid or ""
+                    )
+                    dropped = set_aside + dropped
                     for article in dropped:
                         setattr(article, "judged_drop", True)
                     articles = kept + dropped

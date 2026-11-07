@@ -1213,12 +1213,13 @@ class PubMedTools(object):
                 logger.debug(f"Writing back selected pmids {selected_pmids}")
                 await self._this_letter(denial).aupdate(pubmed_ids_json=selected_pmids)
 
+        off_topic: set[str] = set()
         if articles:
             judging_budget = JUDGING_BUDGET_SECONDS
             if budget is not None:
                 left = budget - (asyncio.get_running_loop().time() - started)
                 judging_budget = min(judging_budget, left - _SUMMARY_RESERVE_SECONDS)
-            articles = await self._judged_for_context(
+            articles, off_topic = await self._judged_for_context(
                 denial,
                 articles,
                 searched=searched,
@@ -1230,11 +1231,19 @@ class PubMedTools(object):
         if articles:
             logger.debug("Making single context input")
             joined_contexts = "\n".join(
-                self.format_article_short(article) for article in articles
+                self.format_article_short(
+                    article, probably_off_topic=article.pmid in off_topic
+                )
+                for article in articles
             )
             if len(joined_contexts) < 100:
                 logger.debug("Not much input, skpping summary step.")
                 return joined_contexts
+            # The summary merges the articles into prose, which can lose the
+            # per-article note, so the note goes after it as well.
+            off_topic_trailer = self.off_topic_trailer(
+                [a for a in articles if a.pmid in off_topic]
+            )
             summary_budget = None
             if budget is not None:
                 # Leave a moment before the caller's own cut.
@@ -1256,7 +1265,7 @@ class PubMedTools(object):
             if r is None:
                 return joined_contexts
             else:
-                return r
+                return f"{r}\n{off_topic_trailer}" if off_topic_trailer else r
         else:
             return ""
 
@@ -1300,20 +1309,24 @@ class PubMedTools(object):
         searched: bool,
         selected: Optional[list[str]] = None,
         budget: float = JUDGING_BUDGET_SECONDS,
-    ) -> list[PubMedArticleSummarized]:
+    ) -> tuple[list[PubMedArticleSummarized], set[str]]:
         """The articles to quote, ordered by how strongly Jev finds each
-        supports the treatment. Articles our search found that Jev finds off
-        topic or against the treatment are left out, and the row's article
-        list is rewritten to match; a selection already on the row (possibly
-        the person's own) is only reordered, never cut. ``selected`` is the
-        list written to the row for this build: an id in it whose article
-        was not fetched in time (the fetch is cut by the timeout) was never
-        judged, so it stays on the row. Waits at most ``budget`` seconds
-        (none left: no judging); past that, or on any failure, the articles
-        go on as they are."""
+        supports the treatment, and the PMIDs of those among them Jev finds
+        probably off topic (the letter's model is told so, see
+        format_article_short). Articles our search found that Jev finds off
+        topic or against the treatment are left out, and so, once at least
+        research_judging.FOCUS_MIN_ON_TOPIC are plainly on topic, are the
+        rest (research_judging.focus); the row's article list is rewritten
+        to match. A selection already on the row (possibly the person's own)
+        is only reordered, never cut. ``selected`` is the list written to
+        the row for this build: an id in it whose article was not fetched in
+        time (the fetch is cut by the timeout) was never judged, so it stays
+        on the row. Waits at most ``budget`` seconds (none left: no
+        judging); past that, or on any failure, the articles go on as they
+        are."""
         if budget <= 0:
             logger.debug("article judging skipped: no time left")
-            return articles
+            return articles, set()
         try:
             judgments = await asyncio.wait_for(
                 self.judge_articles(denial, articles),
@@ -1323,14 +1336,20 @@ class PubMedTools(object):
             raise
         except Exception as e:
             logger.debug(f"article judging skipped: {type(e).__name__}")
-            return articles
+            return articles, set()
         if not judgments:
-            return articles
-        kept, dropped = research_judging.order(
-            articles, judgments, pmid_of=lambda a: a.pmid or ""
-        )
+            return articles, set()
+
+        def pmid_of(article: PubMedArticleSummarized) -> str:
+            return article.pmid or ""
+
+        kept, dropped = research_judging.order(articles, judgments, pmid_of=pmid_of)
         if not searched:
-            return kept + dropped
+            ordered = kept + dropped
+            return ordered, research_judging.probably_off_topic(
+                ordered, judgments, pmid_of=pmid_of
+            )
+        kept, set_aside = research_judging.focus(kept, judgments, pmid_of=pmid_of)
         selection = list(
             dict.fromkeys(
                 pmid
@@ -1341,23 +1360,54 @@ class PubMedTools(object):
             )
         )
         kept_pmids = [a.pmid for a in kept]
-        judged = set(kept_pmids) | {a.pmid for a in dropped}
+        judged = (
+            set(kept_pmids) | {a.pmid for a in dropped} | {a.pmid for a in set_aside}
+        )
         # The kept articles first, then the selected ids no article was
         # fetched for: dropping those would lose them from the row for good.
         rewritten = kept_pmids + [pmid for pmid in selection if pmid not in judged]
         if rewritten != selection:
-            if dropped:
+            if dropped or set_aside:
                 logger.debug(
                     f"PubMed context for denial {denial.denial_id}: left out "
                     f"{len(dropped)} article(s) judged off topic or against "
-                    "the treatment"
+                    f"the treatment and {len(set_aside)} probably off topic or "
+                    "unjudged beside enough on topic"
                 )
             await self._this_letter(denial).aupdate(pubmed_ids_json=rewritten)
-        return kept
+        return kept, research_judging.probably_off_topic(
+            kept, judgments, pmid_of=pmid_of
+        )
 
     @staticmethod
-    def format_article_short(article: PubMedArticleSummarized) -> str:
-        """Helper function to format an article for context with full citation metadata."""
+    def off_topic_trailer(articles: list[PubMedArticleSummarized]) -> str:
+        """One line naming the ``articles`` judged probably off topic, with
+        what the letter's model should make of that; "" for none."""
+        named = [
+            f"PMID {a.pmid}" + (f" ({a.title})" if a.title else "")
+            for a in articles
+            if a.pmid
+        ]
+        if not named:
+            return ""
+        return (
+            "Relevance note: "
+            + "; ".join(named)
+            + (" was" if len(named) == 1 else " were")
+            + " judged "
+            + research_judging.PROBABLY_OFF_TOPIC_NOTE.replace(
+                "cite it", "cite it" if len(named) == 1 else "cite one"
+            )
+            + "."
+        )
+
+    @staticmethod
+    def format_article_short(
+        article: PubMedArticleSummarized, probably_off_topic: bool = False
+    ) -> str:
+        """Helper function to format an article for context with full
+        citation metadata, and, when it was judged ``probably_off_topic``,
+        a note saying so (research_judging.PROBABLY_OFF_TOPIC_NOTE)."""
         summary = None
         if article.basic_summary:
             summary = article.basic_summary
@@ -1381,6 +1431,10 @@ class PubMedTools(object):
             parts.append(f"URL: {article.article_url}")
         if summary:
             parts.append(f"Summary: {summary}")
+        if probably_off_topic:
+            parts.append(
+                f"Relevance note: judged {research_judging.PROBABLY_OFF_TOPIC_NOTE}"
+            )
 
         return "; ".join(parts)
 
