@@ -251,6 +251,10 @@ citations to an appeal ([`ml/web_search_context.py`](../fighthealthinsurance/ml/
   best general-purpose model. Pages judged off topic or against the treatment are
   dropped, and so are pages nobody could judge in time. At most three are
   kept, strongest support first, and added after the CMS citations.
+- **The Appeal Arena too.** Its synthetic cases get the same judged web
+  pages as evidence beside their PubMed articles, marked "web page" for
+  voters, with the verdict that kept them (`CHOOSER_WEB_SEARCH`, see
+  [chooser.md](chooser.md)).
 - **Settings.** `OPENROUTER_WEB_SEARCH_ENABLED=false` turns it off;
   `OPENROUTER_WEB_SEARCH_ENGINE` picks OpenRouter's search engine (`exa`,
   `native`, `parallel`, ...; OpenRouter chooses when unset);

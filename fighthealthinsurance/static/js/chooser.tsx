@@ -86,6 +86,8 @@ interface EvidenceItem {
   title?: string;
   url?: string;
   summary?: string;
+  // "web" for a page a web search found; PubMed articles carry a PMID.
+  source?: string;
   judgment?: EvidenceJudgment;
 }
 
@@ -908,9 +910,10 @@ const VerdictBadge: React.FC<{ item: EvidenceItem }> = ({ item }) => {
   );
 };
 
-// One article on file: its title (linked), its PMID, the reviewer's verdict
-// when there is one, and the summary the drafts were given, clamped to a
-// few lines until opened; opened, the reviewer's numbers too.
+// One article or web page on file: its title (linked), its PMID (or "web
+// page"), the reviewer's verdict when there is one, and the summary the
+// drafts were given, clamped to a few lines until opened; opened, the
+// reviewer's numbers too.
 const EvidenceRow: React.FC<{ item: EvidenceItem }> = ({ item }) => {
   const [open, setOpen] = useState(false);
   const judgment = item.judgment;
@@ -932,6 +935,11 @@ const EvidenceRow: React.FC<{ item: EvidenceItem }> = ({ item }) => {
         <Text span size="xs" c="dimmed">
           {" "}
           (PMID {item.pmid}){" "}
+        </Text>
+      ) : item.source === "web" ? (
+        <Text span size="xs" c="dimmed">
+          {" "}
+          (web page){" "}
         </Text>
       ) : null}
       <VerdictBadge item={item} />
@@ -1047,7 +1055,7 @@ const AppealCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
           A draft may cite only what is listed here, and claim no more for a
           study than it found. Anything else is a foul.
           {reviewed
-            ? " Each verdict is an automated reviewer's reading of the abstract: whether the study is about this treatment for this condition, and whether it supports it. The drafts saw the summaries, not the verdicts. A hint, not a ruling: open the study when it matters."
+            ? " Each verdict is an automated reviewer's reading of the abstract (for a web page, the excerpt the search returned): whether it is about this treatment for this condition, and whether it supports it. The drafts saw the summaries, not the verdicts. A hint, not a ruling: open the study when it matters."
             : ""}
         </Text>
       </Box>

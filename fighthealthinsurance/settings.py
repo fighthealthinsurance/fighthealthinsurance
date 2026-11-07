@@ -357,6 +357,12 @@ class Base(Configuration):
         os.getenv("CHOOSER_PUBMED_SEARCH_TIMEOUT", "20")
     )
     CHOOSER_SIMULATED_QA = os.getenv("CHOOSER_SIMULATED_QA", "true").lower() != "false"
+    # Whether a case's evidence also gets a web search (OpenRouter's, when
+    # OPENROUTER_API_KEY is set), each page judged relevant before it joins.
+    CHOOSER_WEB_SEARCH = os.getenv("CHOOSER_WEB_SEARCH", "true").lower() != "false"
+    CHOOSER_WEB_SEARCH_TIMEOUT = _env_float(
+        "CHOOSER_WEB_SEARCH_TIMEOUT", 25.0, minimum=1.0, maximum=25.0
+    )
     # Whether a synthetic chat draft's lookups (a PubMed search, the
     # Medicaid directory, ...) are run and shown to the voter beside it
     # (chooser_chat_tools); off, a draft is kept as the model wrote it.
@@ -1285,6 +1291,8 @@ class _TestBase(Dev):
     # its simulated interview reach the question generators' backends.
     CHOOSER_PUBMED_LIVE_SEARCH = False
     CHOOSER_SIMULATED_QA = False
+    # Nor may it search the web (OpenRouter).
+    CHOOSER_WEB_SEARCH = False
     # Nor may a chat draft's lookups reach PubMed or the other public
     # services; a test that runs them mocks the tools and turns this on.
     CHOOSER_CHAT_TOOLS = False

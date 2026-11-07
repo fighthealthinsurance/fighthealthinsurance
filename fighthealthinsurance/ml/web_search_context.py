@@ -35,7 +35,7 @@ text.
 
 import asyncio
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -212,9 +212,19 @@ def cited(result: WebCitation) -> str:
     return f"{result} (web page excerpt: {excerpt})"
 
 
-async def _search_and_judge(denial: Denial, budget_seconds: float) -> List[str]:
+# One kept result and the judgment that kept it.
+JudgedResult = Tuple[WebCitation, research_judging.Judgment]
+
+
+async def _search_and_judge(
+    procedure: Optional[str],
+    diagnosis: Optional[str],
+    budget_seconds: float,
+    may_ask_jev: Callable[[], Awaitable[bool]],
+    label: str,
+) -> List[JudgedResult]:
     started = time.monotonic()
-    question = build_question(denial.procedure, denial.diagnosis)
+    question = build_question(procedure, diagnosis)
     if question is None:
         _count("skipped")
         return []
@@ -235,11 +245,9 @@ async def _search_and_judge(denial: Denial, budget_seconds: float) -> List[str]:
     if left < _MIN_JUDGE_SECONDS:
         _count("unjudged", len(results))
         return []
-    may_ask_jev = await _consent_allows(denial)
+    jev_allowed = await may_ask_jev()
     left = budget_seconds - (time.monotonic() - started)
-    judgments = await _judge_all(
-        results, denial.procedure, denial.diagnosis, left - 0.5, may_ask_jev
-    )
+    judgments = await _judge_all(results, procedure, diagnosis, left - 0.5, jev_allowed)
     kept, dropped = research_judging.order(
         [r for r in results if r.url in judgments],
         judgments,
@@ -250,38 +258,63 @@ async def _search_and_judge(denial: Denial, budget_seconds: float) -> List[str]:
     _count("dropped", len(dropped))
     _count("kept", min(len(kept), MAX_KEPT))
     logger.debug(
-        f"Web search for denial {denial.denial_id}: {len(results)} found, "
-        f"{len(kept)} kept, {len(dropped)} judged off topic or against, "
-        f"{unjudged} unjudged"
+        f"Web search for {label}: {len(results)} found, {len(kept)} kept, "
+        f"{len(dropped)} judged off topic or against, {unjudged} unjudged"
     )
-    return [cited(r) for r in kept[:MAX_KEPT]]
+    return [(r, judgments[r.url]) for r in kept[:MAX_KEPT]]
+
+
+async def _never() -> bool:
+    return False
+
+
+async def judged_web_results(
+    procedure: Optional[str],
+    diagnosis: Optional[str],
+    *,
+    budget_seconds: float = DEFAULT_BUDGET_SECONDS,
+    may_ask_jev: Callable[[], Awaitable[bool]] = _never,
+    label: str = "a case",
+) -> List[JudgedResult]:
+    """The pages a web search on the procedure and diagnosis found, each
+    with the judgment that kept it (on topic, not against the treatment),
+    strongest support first, at most MAX_KEPT, within ``budget_seconds``;
+    [] when there is no web search, no procedure, nothing relevant, or no
+    time. ``may_ask_jev`` is awaited once there is something to judge, and
+    says whether Jev may judge it. Never raises (cancellation aside).
+    ``label`` names the work in the log lines, never the terms."""
+    budget = min(float(budget_seconds), DEFAULT_BUDGET_SECONDS)
+    if budget <= 0:
+        return []
+    try:
+        return await asyncio.wait_for(
+            _search_and_judge(procedure, diagnosis, budget, may_ask_jev, label),
+            budget,
+        )
+    except asyncio.CancelledError:
+        raise
+    except asyncio.TimeoutError:
+        _count("failed")
+        logger.debug(f"Web search for {label} ran out of its {budget:.0f}s")
+        return []
+    except Exception as e:
+        _count("failed")
+        logger.warning(f"Web search for {label} failed ({type(e).__name__})")
+        return []
 
 
 async def web_search_citations(
     denial: Denial, budget_seconds: float = DEFAULT_BUDGET_SECONDS
 ) -> List[str]:
     """Citations from a web search on the denial's treatment, each judged
-    relevant and not against it, within ``budget_seconds``; [] when there
-    is no web search, no procedure, nothing relevant, or no time. Never raises (cancellation aside).
-    """
-    budget = min(float(budget_seconds), DEFAULT_BUDGET_SECONDS)
-    if budget <= 0:
-        return []
-    try:
-        return await asyncio.wait_for(_search_and_judge(denial, budget), budget)
-    except asyncio.CancelledError:
-        raise
-    except asyncio.TimeoutError:
-        _count("failed")
-        logger.debug(
-            f"Web search for denial {getattr(denial, 'denial_id', None)} "
-            f"ran out of its {budget:.0f}s"
-        )
-        return []
-    except Exception as e:
-        _count("failed")
-        logger.warning(
-            f"Web search for denial {getattr(denial, 'denial_id', None)} "
-            f"failed ({type(e).__name__})"
-        )
-        return []
+    relevant and not against it, within ``budget_seconds`` (see
+    judged_web_results); Jev may judge them only with the person's
+    external-models consent. Never raises (cancellation aside)."""
+    kept = await judged_web_results(
+        denial.procedure,
+        denial.diagnosis,
+        budget_seconds=budget_seconds,
+        may_ask_jev=lambda: _consent_allows(denial),
+        label=f"denial {getattr(denial, 'denial_id', None)}",
+    )
+    return [cited(result) for result, _judgment in kept]
