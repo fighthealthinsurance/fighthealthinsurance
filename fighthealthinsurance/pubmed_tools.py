@@ -74,6 +74,12 @@ _SUMMARY_BUDGET_SECONDS = 20.0
 _SUMMARY_CONCURRENCY = 3
 # The longest summary an article goes into the letter's context with.
 _ARTICLE_SUMMARY_CHARS = 800
+# The longest the context of one entry per article may be (about 1,500
+# tokens). Past it, the articles judged relevant are summarized together
+# instead (PubMedTools._condensed_context), the summarizer reading at most
+# _CONDENSED_INPUT_CHARS of their entries.
+PUBMED_CONTEXT_MAX_CHARS = 6_000
+_CONDENSED_INPUT_CHARS = 20_000
 
 
 def judgment_rows(
@@ -1238,20 +1244,108 @@ class PubMedTools(object):
         # own summary and its own relevance note. (A summary of all of them
         # together was cut to the summarizer's input cap, so it read only the
         # first article or two, and merged away which one a note was about.)
+        # Only when that is too long (PUBMED_CONTEXT_MAX_CHARS) does it fall
+        # back to one summary of the relevant articles (_condensed_context).
         if not articles:
             return ""
+        loop = asyncio.get_running_loop()
         summary_budget = _SUMMARY_BUDGET_SECONDS
         if budget is not None:
             # Leave a moment before the caller's own cut.
-            elapsed = asyncio.get_running_loop().time() - started
-            summary_budget = min(summary_budget, budget - elapsed - 0.5)
-        await self._summarize_unsummarized(articles, summary_budget)
-        return "\n".join(
-            self.format_article_short(
-                article, probably_off_topic=article.pmid in off_topic
-            )
-            for article in articles
+            summary_budget = min(summary_budget, budget - (loop.time() - started) - 0.5)
+        summary_deadline = loop.time() + summary_budget
+
+        def entries() -> list[str]:
+            return [
+                self.format_article_short(
+                    article, probably_off_topic=article.pmid in off_topic
+                )
+                for article in articles
+            ]
+
+        # Already too long with what is on file: the summary of the
+        # summaries reads the abstracts as they are, so the time goes to it
+        # rather than to summarizing each article first.
+        if len("\n".join(entries())) <= PUBMED_CONTEXT_MAX_CHARS:
+            await self._summarize_unsummarized(articles, summary_budget)
+        per_article = entries()
+        if len("\n".join(per_article)) <= PUBMED_CONTEXT_MAX_CHARS:
+            return "\n".join(per_article)
+        return await self._condensed_context(
+            articles, per_article, off_topic, summary_deadline - loop.time()
         )
+
+    @staticmethod
+    async def _condensed_context(
+        articles: list[PubMedArticleSummarized],
+        per_article: list[str],
+        off_topic: set[str],
+        budget: float,
+    ) -> str:
+        """The PubMed context when one entry per article (``per_article``,
+        in the order of ``articles``) is too long: one summary of the
+        entries of the articles not judged probably off topic (those are
+        left out of it entirely), then a short list of those articles' ids
+        so a citation can still name and be checked against one. Without a
+        summary in ``budget`` seconds (none to read, no time, a failure),
+        as many whole entries as fit in PUBMED_CONTEXT_MAX_CHARS, at least
+        one: the relevant ones first, strongest first (``articles`` is in
+        that order), then the probably off-topic ones."""
+        relevant = [
+            (article, entry)
+            for article, entry in zip(articles, per_article)
+            if article.pmid not in off_topic
+        ]
+        summary: Optional[str] = None
+        if relevant and budget > 0:
+            text = "\n".join(entry for _, entry in relevant)
+            try:
+                summary = await asyncio.wait_for(
+                    ml_router.summarize(
+                        title="Published studies on the denied treatment",
+                        text=text,
+                        literature=True,
+                        max_input_chars=min(len(text), _CONDENSED_INPUT_CHARS),
+                    ),
+                    timeout=budget,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug(
+                    f"Summary of the article summaries failed ({type(e).__name__})"
+                )
+        if (summary or "").strip():
+            references = "; ".join(
+                f"PMID {a.pmid}"
+                + (f" ({(a.title or '').strip()})" if (a.title or "").strip() else "")
+                + (f", DOI {a.doi}" if a.doi else "")
+                for a, _ in relevant
+                if a.pmid
+            )
+            logger.debug(
+                f"PubMed context too long; summarized {len(relevant)} of "
+                f"{len(articles)} article(s), leaving out {len(off_topic)} "
+                "judged probably off topic"
+            )
+            condensed = (summary or "").strip()
+            return (
+                f"{condensed}\nArticles summarized above: {references}"
+                if references
+                else condensed
+            )
+        # The relevant ones get the room first.
+        off = [e for a, e in zip(articles, per_article) if a.pmid in off_topic]
+        kept: list[str] = []
+        for entry in [e for _, e in relevant] + off:
+            if kept and len("\n".join([*kept, entry])) > PUBMED_CONTEXT_MAX_CHARS:
+                break
+            kept.append(entry)
+        logger.debug(
+            f"PubMed context too long and not summarized; kept {len(kept)} of "
+            f"{len(per_article)} article(s)"
+        )
+        return "\n".join(kept)
 
     @staticmethod
     async def _summarize_unsummarized(

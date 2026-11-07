@@ -572,6 +572,50 @@ class TestJudgeArticlesForADenial:
         )
         assert f"Summary: {ABSTRACT}" in context
 
+    def _too_long(self, summarize, cap=150):
+        with patch("fighthealthinsurance.pubmed_tools.PUBMED_CONTEXT_MAX_CHARS", cap):
+            return self._context(
+                [_article("1"), _article("2"), _article("3")],
+                {"Title 1": 0.9, "Title 2": 0.45, "Title 3": 0.8},
+                summarize,
+            )
+
+    def test_too_long_falls_back_to_one_summary_of_the_relevant_articles(self):
+        summarize = AsyncMock(return_value="Two trials found MRI helped.")
+        context = self._too_long(summarize)
+        assert context.startswith("Two trials found MRI helped.\n")
+        assert "PMID 1 (Title 1)" in context and "PMID 3 (Title 3)" in context
+
+    def test_the_summary_of_summaries_leaves_out_the_probably_off_topic_one(self):
+        summarize = AsyncMock(return_value="Two trials found MRI helped.")
+        context = self._too_long(summarize)
+        summarize.assert_awaited_once()
+        text = summarize.await_args.kwargs["text"]
+        assert "PMID: 1" in text and "PMID: 3" in text and "PMID: 2" not in text
+        assert "PMID 2" not in context and "Title 2" not in context
+
+    def test_the_summary_of_summaries_reads_all_of_its_input(self):
+        summarize = AsyncMock(return_value="Two trials found MRI helped.")
+        self._too_long(summarize)
+        kwargs = summarize.await_args.kwargs
+        assert kwargs["max_input_chars"] >= len(kwargs["text"])
+
+    def test_too_long_without_a_summary_keeps_whole_entries_relevant_first(self):
+        context = self._too_long(AsyncMock(return_value=None), cap=300)
+        entries = context.split("\n")
+        assert len(context) <= 300 or len(entries) == 1
+        assert all(e.startswith("Title: ") for e in entries)
+        assert "PMID: 2" not in context
+
+    def test_under_the_cap_there_is_no_summary_of_summaries(self):
+        summarize = AsyncMock(return_value="A summary.")
+        self._context(
+            [_article("1"), _article("2")], {"Title 1": 0.9, "Title 2": 0.9}, summarize
+        )
+        assert all(
+            c.kwargs["title"].startswith("Title ") for c in summarize.await_args_list
+        )
+
     def test_selected_articles_not_fetched_in_time_stay_on_the_row(self):
         # The search selected three; the fetch was cut after two. Judging
         # drops one of the two it saw, and the third, never judged, stays.
