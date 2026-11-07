@@ -46,6 +46,13 @@ _EIN_RULE = re.compile(
     re.IGNORECASE,
 )
 _NAME_CHARS = r"[A-Z0-9][A-Za-z0-9&.,'()/ -]{1,90}?"
+# A line that starts another party's block: an EIN after it is theirs.
+_OTHER_PARTY = re.compile(
+    rf"^{_SP}*(?:(?:third{_SP}*-?{_SP}*party{_SP}+|claims{_SP}+|plan{_SP}+)?administrator"
+    rf"|named{_SP}+fiduciary|trustees?|insurer|insurance{_SP}+company|issuer"
+    rf"|agent{_SP}+for{_SP}+(?:service|legal)|service{_SP}+provider|recordkeeper)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
 # "Plan Sponsor: Crumpler Cooperative" or the name on the next line.
 _SPONSOR_RULE = re.compile(
     rf"\b(?:plan{_SP}+sponsor|name{_SP}+of{_SP}+(?:the{_SP}+)?(?:plan{_SP}+)?"
@@ -173,7 +180,11 @@ def identify_sponsor(text: str) -> Optional[Sponsor]:
         name = _good_name(match.group("name"))
         if name:
             # Only an EIN right after the sponsor's own lines is its EIN.
-            near = _EIN_RULE.search(part, match.start(), match.end() + EIN_WINDOW_CHARS)
+            end = match.end() + EIN_WINDOW_CHARS
+            other = _OTHER_PARTY.search(part, match.end(), end)
+            near = _EIN_RULE.search(
+                part, match.start(), other.start() if other else end
+            )
             return Sponsor(name=name[:300], ein=near.group("ein") if near else "")
     # A plan title names the company but not whose EIN is where.
     for match in _PLAN_TITLE_RULE.finditer(part):

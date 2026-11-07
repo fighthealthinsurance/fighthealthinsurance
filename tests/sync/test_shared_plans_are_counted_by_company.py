@@ -108,6 +108,25 @@ class FindingTheCompanyTest(TestCase):
             identify_sponsor(text), Sponsor(name="Crumpler Cooperative", ein="")
         )
 
+    def test_an_ein_in_the_next_partys_block_is_not_the_sponsors(self):
+        text = (
+            "Summary Plan Description\nPlan Sponsor: Crumpler Cooperative\n"
+            "Plan Administrator: Fraser Mills Benefits\n"
+            "Employer Identification Number: 98-7654321\n"
+        ) + ("Covered services. " * 40)
+        self.assertEqual(
+            identify_sponsor(text), Sponsor(name="Crumpler Cooperative", ein="")
+        )
+
+    def test_the_sponsors_own_ein_before_the_next_party_is_kept(self):
+        text = (
+            "Summary Plan Description\nPlan Sponsor: Crumpler Cooperative\n"
+            "Employer Identification Number: 12-3456789\n"
+            "Plan Administrator: Fraser Mills Benefits\n"
+            "Employer Identification Number: 98-7654321\n"
+        ) + ("Covered services. " * 40)
+        self.assertEqual(identify_sponsor(text).ein, "12-3456789")
+
     def test_names_match_without_punctuation_or_legal_form(self):
         self.assertEqual(
             normalize_name("The Crumpler Cooperative, L.L.C."),
@@ -156,14 +175,20 @@ class TheCompanyListTest(TestCase):
         self.assertEqual(PlanSponsor.objects.count(), 2)
 
     def test_a_name_first_seen_without_an_ein_takes_the_ein_later(self):
-        linked(SPD_WITH_EIN.replace("Employer Identification Number (EIN): 12-3456789\n", ""))
+        linked(
+            SPD_WITH_EIN.replace(
+                "Employer Identification Number (EIN): 12-3456789\n", ""
+            )
+        )
         linked(SPD_WITH_EIN)
         self.assertEqual(
             list(PlanSponsor.objects.values_list("ein", flat=True)), ["12-3456789"]
         )
 
     def test_a_document_staff_linked_keeps_its_company(self):
-        mine = PlanSponsor.objects.create(name="Fraser Mills", normalized_name="fraser mills")
+        mine = PlanSponsor.objects.create(
+            name="Fraser Mills", normalized_name="fraser mills"
+        )
         doc = shared_row(SPD_WITH_EIN)
         PolicyDocument.objects.filter(pk=doc.pk).update(plan_sponsor=mine)
         link_sponsor(doc.pk, identify_sponsor(SPD_WITH_EIN))
@@ -253,3 +278,18 @@ class TheCompanyFormTest(TestCase):
         PlanSponsor.objects.create(name="Fraser Mills", normalized_name="fraser mills")
         form = PlanSponsorForm(data={"name": "Fraser Mills", "ein": "98-7654321"})
         self.assertTrue(form.is_valid(), form.errors)
+
+    def test_an_ein_typed_without_its_dash_is_stored_as_documents_give_it(self):
+        from fighthealthinsurance.admin import PlanSponsorForm
+
+        for typed in ("123456789", "12 3456789", " 12-3456789 "):
+            form = PlanSponsorForm(data={"name": "Crumpler Cooperative", "ein": typed})
+            self.assertTrue(form.is_valid(), form.errors)
+            self.assertEqual(form.cleaned_data["ein"], "12-3456789")
+
+    def test_an_ein_that_is_not_nine_digits_is_refused(self):
+        from fighthealthinsurance.admin import PlanSponsorForm
+
+        for typed in ("12-345678", "1234567890", "12-34567AB"):
+            form = PlanSponsorForm(data={"name": "Crumpler Cooperative", "ein": typed})
+            self.assertIn("ein", form.errors)

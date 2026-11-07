@@ -1405,8 +1405,15 @@ class PlanSponsorForm(forms.ModelForm):
         fields = ["name", "ein"]
 
     def clean_ein(self):
-        # Blank is no EIN, so two companies without one don't clash on "".
-        return (self.cleaned_data.get("ein") or "").strip() or None
+        # Stored as 12-3456789, the form documents give, so the two match;
+        # blank is no EIN, so two companies without one don't clash on "".
+        digits = "".join(c for c in (self.cleaned_data.get("ein") or "") if c.isdigit())
+        typed = (self.cleaned_data.get("ein") or "").strip()
+        if not typed:
+            return None
+        if len(digits) != 9 or any(c not in "0123456789- " for c in typed):
+            raise forms.ValidationError("An EIN is nine digits, as 12-3456789.")
+        return f"{digits[:2]}-{digits[2:]}"
 
     def clean(self):
         from fighthealthinsurance.plan_sponsors import normalize_name
