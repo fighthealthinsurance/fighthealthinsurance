@@ -200,7 +200,10 @@ and on every pull request.
 Not in CI: the `prettier` env, pyright, and Python 3.11/3.12
 test runs. [`update-browserslist-db.yml`](.github/workflows/update-browserslist-db.yml)
 refreshes the browser data (`caniuse-lite` and `baseline-browser-mapping`) once a month (or by hand) and opens a
-pull request.
+pull request. [`update-plan-documents.yml`](.github/workflows/update-plan-documents.yml)
+moves `plan_documents.lock` to the latest release of the public plan-document
+corpus once a month (or by hand) and opens a pull request
+([docs/plan-document-corpus.md](docs/plan-document-corpus.md)).
 
 ## Repository map
 
@@ -230,6 +233,7 @@ pull request.
 | `tests/` | One directory per tox env, plus `tests/js/` (node harnesses run from the sync suite). |
 | `scripts/` | Dev, CI and deploy scripts. The `*pg*`, `cutover-*` and `rollback-*` scripts act on the production database; leave them to a human. |
 | `k8s/` | Deploy manifests, the web `Dockerfile`, `ray/` and `temporal/`. |
+| `plan_documents.lock`, `plan_documents/` | The pinned release of the public plan-document corpus, and where `scripts/fetch_plan_documents.sh` puts its zip for the web image (gitignored; [docs/plan-document-corpus.md](docs/plan-document-corpus.md)). |
 | `conf/` | uvicorn logging and nginx config. |
 | `docs/` | Design notes and runbooks. |
 
@@ -418,7 +422,7 @@ and how to update it: [docs/geoip.md](docs/geoip.md).
 | [docs/geoip.md](docs/geoip.md) | The GeoIP database |
 | [docs/ray-actors.md](docs/ray-actors.md) | Ray actors: health endpoint, relaunching |
 | [docs/chat-pipeline.md](docs/chat-pipeline.md) | How the chat works, and its failure modes |
-| [docs/plan-document-corpus.md](docs/plan-document-corpus.md) | The public plan-document corpus: the bundle contract and importer (JSON or the llm-internal exporter's zip), how a denial is matched to its plan documents, and the prompt section |
+| [docs/plan-document-corpus.md](docs/plan-document-corpus.md) | The public plan-document corpus: where it comes from (the public-plan-document-collection release pinned in `plan_documents.lock`, imported on deploy), the bundle contract and importer, how a denial is matched to its plan documents, and the prompt section |
 | [docs/back-link-references.md](docs/back-link-references.md) | Why back links carry an encrypted reference |
 | [docs/metrics-endpoint-access.md](docs/metrics-endpoint-access.md) | Why `/metrics` is cluster-internal |
 | [docs/llm-usage-metrics.md](docs/llm-usage-metrics.md) | LLM requests and tokens by surface, task and network, and what is never stored |

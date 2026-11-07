@@ -1,11 +1,12 @@
 """Load a plan-document bundle into PublicPlanDocument (plan_document_bundle).
 
-The bundle comes from the plan-document pipeline in
-healthinsurance-llm-internal (``python -m dataset_tools.plan_document_export``
-writes a zip). Read it from a file, or from stdin with ``--source -`` so it
-can be piped into a pod without landing on disk::
+The corpus bundle is the zip a public-plan-document-collection release
+publishes; the web-plan-documents-import deploy Job imports the one pinned in
+plan_documents.lock (docs/plan-document-corpus.md). Read a bundle from a file,
+or from stdin with ``--source -`` so it can be piped into a pod without
+landing on disk::
 
-    python manage.py import_plan_documents --source plan-docs.zip --dry-run
+    python manage.py import_plan_documents --source plan_documents/plan-docs.zip --dry-run
     python manage.py import_plan_documents --source bundle.json --dry-run
     kubectl exec -i <pod> -- python manage.py import_plan_documents --source - < plan-docs.zip
 

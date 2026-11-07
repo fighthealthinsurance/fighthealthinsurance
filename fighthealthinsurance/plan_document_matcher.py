@@ -1,8 +1,9 @@
 """Match a denial to the public plan documents we fetched.
 
 The corpus is :class:`PublicPlanDocument`: Evidence of Coverage, Summary of
-Benefits and Coverage and other plan documents the pipeline in
-healthinsurance-llm-internal fetched and ``import_plan_documents`` loaded.
+Benefits and Coverage and other plan documents found on carriers' public
+websites, published by the public-plan-document-collection repository and
+loaded by ``import_plan_documents``.
 Given a denial, this decides which of them, if any, are the member's own
 plan documents, and hands the appeal prompt the passages that matter.
 

@@ -22,11 +22,15 @@ employer name, the letter or a document's text.
 Code: `fighthealthinsurance/plan_document_bundle.py` (the bundle contract and
 the importer), `fighthealthinsurance/management/commands/import_plan_documents.py`
 (the command), `fighthealthinsurance/plan_document_matcher.py` (matching, the
-passages, the prompt section). The pipeline that writes bundles lives in the
-private `healthinsurance-llm-internal` repo
-(`python -m dataset_tools.plan_document_export`, which writes a zip); its
-exporter mirrors `plan_document_bundle.py`, whose record fields and limits are
-the contract, and checks the mirror against an FHI checkout in a test.
+passages, the prompt section). The documents themselves live in their own
+public repository,
+[`fighthealthinsurance/public-plan-document-collection`](https://github.com/fighthealthinsurance/public-plan-document-collection),
+which publishes each version as a release carrying one zip in this bundle
+format. FHI pins one release in `plan_documents.lock`, ships it in the web
+image and imports it on deploy (see "Where the corpus comes from" below).
+`plan_document_bundle.py`'s record fields and limits are the contract; the
+corpus repository's CI runs this importer against FHI's `main` on every
+change, so a record FHI would refuse fails there first.
 
 ## What the corpus is, and is not
 
@@ -78,7 +82,7 @@ always among the stored rows, whatever their rank.
 
 A bundle is a JSON array of records, an object
 `{"bundle_version": 1, "documents": [...]}` (other top-level keys, such as the
-exporter's provenance, are ignored, except `defaults`), or JSON Lines with one
+release builder's provenance, are ignored, except `defaults`), or JSON Lines with one
 record per line;
 any of these may also arrive inside a zip archive (Zip bundles, below). Problems with the bundle as a whole are refused before anything is
 written: more than `MAX_BUNDLE_BYTES` (256 MiB) of UTF-8 text, more than
@@ -149,10 +153,10 @@ bytes are a zip's, or with `--format zip`. The archive holds:
 
 | Member | Meaning |
 |---|---|
-| `bundle.json` | The bundle object, with the exporter's provenance keys beside `documents`: `generated_at`, `generator`, `source_commit`, `extractor` (the PDF reader and its version), `pipeline_version`. Or `bundle.jsonl`, for a hand-built archive, which carries no provenance. Exactly one of the two, at the root |
+| `bundle.json` | The bundle object, with the builder's provenance keys beside `documents` (the corpus release writes `generator`, `source_commit` and `generated_at`). Or `bundle.jsonl`, for a hand-built archive, which carries no provenance. Exactly one of the two, at the root |
 | `files/<document_key><ext>` | Optional originals, flat, with a `.pdf`, `.docx` or `.txt` extension; a record names one in its `file` field |
 | `files/` | An optional directory entry |
-| `SHA256SUMS` | Optional (the exporter always writes it): coreutils `sha256sum` lines over every other member. When present, every member must be listed and match, and every listed path must be a member, before anything is written |
+| `SHA256SUMS` | Optional (the corpus release always writes it): coreutils `sha256sum` lines over every other member. When present, every member must be listed and match, and every listed path must be a member, before anything is written |
 
 Anything else refuses the whole archive, naming the members: another name or
 directory, a name that is not plain printable ASCII, a member given twice,
@@ -242,37 +246,105 @@ The third record's `plan_name` resolves only when the carrier already has an
 leaves the plan blank, and the document still matches on its line of business
 and keywords.
 
-## Producing bundles in llm-internal
+## Where the corpus comes from
 
-The bundle is written in llm-internal from the git-ignored `plan_documents/`
-tree (one directory per plan, the tree `plan_document_reviews` reads) and the
-committed sources files under `dataset_tools/data/plan_document_sources/`
-(every record field but the text, plus `file`, the document's path in the
-tree):
+**The corpus repository.** The documents are kept in the public
+[`fighthealthinsurance/public-plan-document-collection`](https://github.com/fighthealthinsurance/public-plan-document-collection)
+repository, organised by plan year and document type
+(`sources/<plan_year|undated>/<insurer>.json` for the records,
+`files/<plan_year|undated>/<insurer>/<document_type>/<document_key>.pdf` for
+the PDFs, in Git LFS). Only documents found automatically on a carrier's own
+public website are published: every record carries the finder that proposed
+it, an https `source_url` on one of the carrier's listed domains, when it was
+fetched and the hash of its bytes, and the repository's `validate` refuses a
+record or a file without that provenance, so nothing can be added by hand.
+Discovery only writes drafts; reviewers promote a draft through a pull
+request there, and every published document is fetched again monthly. That
+repository's README covers the layout, discovery, review, the variant rule
+and takedown requests.
 
-```bash
-python -m dataset_tools.plan_document_export plan_documents/ \
-    --sources dataset_tools/data/plan_document_sources/kaiser-norcal.json --check
-python -m dataset_tools.plan_document_export plan_documents/ \
-    --sources dataset_tools/data/plan_document_sources/kaiser-norcal.json \
-    --out plan_document_bundles/plan-docs-2026-11-06.zip
+**The release.** Each merge to that repository's `main` that touches its
+records or PDFs publishes a release tagged `corpus-YYYYMMDD-<sha7>` with
+exactly two assets: `plan-docs.zip` (one deterministic zip in this bundle
+format, holding every published record of every carrier: `bundle.json`, the
+flat `files/<document_key>.pdf` members and `SHA256SUMS`) and
+`plan-docs.zip.sha256` (one coreutils line, `<sha256>  plan-docs.zip`). The
+records carry only the fields above; repository-only fields are stripped
+(the finder's name moves into `notes`).
+
+**The pin.** `plan_documents.lock` at the FHI repository root names the
+release this checkout ships:
+
+```json
+{
+  "repo": "fighthealthinsurance/public-plan-document-collection",
+  "tag": "corpus-20261107-abc1234",
+  "asset": "plan-docs.zip",
+  "sha256": "<64 hex>"
+}
 ```
 
-The exporter mirrors this module's limits, so a bundle it writes is one the
-import accepts, and it writes `pages` with one entry per physical page.
-Inline pages are the default because FHI parses a `file` record itself, in a
-child process capped at 30 seconds per PDF (`MAX_PDF_SECONDS`), and skips the
-record when that runs out. `--include-files` copies the originals FHI reads the
-same way (`.pdf`, `.docx`, a `.txt` without `[Page N]` lines) into `files/`
-as `file` records, for a `--store-file` run; HTML documents and page-marked
-`.txt` files stay inline. Pick one text mode per corpus: switching re-reads
-the text with the other reader, which changes `text_sha256`, deletes the
-documents' match rows and re-matches the carrier's denials. For the same
-reason export with PyMuPDF installed (FHI's reader; the exporter records which
-reader it used as `extractor`).
+An empty `tag` means no corpus is pinned, and everything below is a logged
+no-op. The `Update Plan Documents` workflow
+(`.github/workflows/update-plan-documents.yml`, monthly and on demand) reads
+the corpus repository's latest release through the GitHub API, takes the
+digest from `plan-docs.zip.sha256`, downloads `plan-docs.zip` and checks it
+against that digest, then opens a pull request that changes only the lock.
+Nothing the release says is trusted: the tag must match the corpus format
+and reaches the shell only through `env:`.
 
-`python -m dataset_tools.plan_document_discovery` finds candidate documents
-to add to the tree; see llm-internal's README.
+**The build.** `scripts/build.sh` runs `scripts/fetch_plan_documents.sh` in
+its build branch (not under `--no-build`). The script downloads the pinned
+asset from `https://github.com/<repo>/releases/download/<tag>/<asset>` (https
+only, redirects included, at most 2 GiB), checks it against the lock's
+`sha256` and writes it atomically to `plan_documents/plan-docs.zip`
+(git-ignored). A file already there with the pinned digest is kept without a
+download; a file that does not match is removed first, and any failure stops
+the build, so the image never carries a corpus other than the pinned one.
+`FHI_PLAN_DOCUMENTS_TEST_BASE_URL` (a `file://` URL in place of
+`https://github.com`) exists only so the tests can serve a release from a
+temporary directory; never set it for a build.
+`k8s/Dockerfile` copies `plan_documents/` into the web image only (the folder
+always exists through a committed `.gitkeep`; the Ray images do not carry
+it).
+
+**The deploy.** `k8s/deploy.yaml`'s Job `web-plan-documents-import` runs the
+web image with `IMPORT_PLAN_DOCUMENTS=1`. `scripts/start-server.sh` then
+exits 0 with a log line when the image has no zip; otherwise it waits (about
+20 minutes at most) for `manage.py migrate --check` to pass, since the
+`web-migrations` Job is applied in the same `kubectl apply`, loads the
+`plan_source` and `insurance_companies` fixtures (idempotent) so insurer
+names resolve, and runs
+
+```bash
+python manage.py import_plan_documents --source plan_documents/plan-docs.zip \
+    --store-file --deactivate-missing
+```
+
+exiting with its status. The Job has `backoffLimit: 1`,
+`activeDeadlineSeconds: 5400` (the first import parses every PDF; later ones
+reuse the text of unchanged files) and `ttlSecondsAfterFinished: 3600` so its
+log can be read after the deploy; `build.sh` deletes the previous run before
+the apply, since a Job cannot be changed in place.
+
+**What it takes to ship a new corpus.** Merge the lock pull request, then
+bump `FHI_VERSION`: `build_django.sh` skips the image build when the version's
+tag already exists, so a merged lock bump alone never reaches production.
+After the deploy, read the Job's log (`kubectl -n totallylegitco logs
+job/web-plan-documents-import`): the summary's `skipped=` count and the
+`Skipped record` lines name records whose insurer did not resolve against
+production's `InsuranceCompany` rows, which can differ from the fixtures the
+corpus repository's CI imports against.
+
+**The corpus owns its carriers.** The import runs with
+`--deactivate-missing` over one bundle that holds every carrier's complete
+published set, so for each carrier the corpus names, active documents the
+release does not list are retired, including documents a staff member
+imported by hand or added in the admin. Carriers the corpus does not name
+are never touched. To keep a document for such a carrier, publish it in the
+corpus repository instead.
+
+### Writing records
 
 **Stable keys.** `document_key` is the document's identity for every later
 import: one key per document and plan year (`kaiser-norcal-eoc-2025-hmo`),
@@ -324,8 +396,9 @@ medically necessary medical center`) and warns when it matches, or refuses the
 record under `--strict`. The probe catches only this case; check new keyword
 and regex lists against a few made-up letters before shipping them.
 
-**Per-carrier bundles and `--deactivate-missing`.** Write one bundle per
-carrier holding that carrier's complete current set. `--deactivate-missing`
+**Complete sets and `--deactivate-missing`.** A bundle run with the flag
+must hold each carrier's complete current set; the corpus release always
+does, since it packs the whole collection. `--deactivate-missing`
 retires the active documents of the carriers the bundle names whose keys it
 does not carry (a key whose record was refused still counts as carried, so
 a typo in one record never retires its document), and touches no other
@@ -348,9 +421,10 @@ python manage.py import_plan_documents --source bundle.json --dry-run
 # For real, with a label for the rows this run writes
 python manage.py import_plan_documents --source bundle.json --batch kaiser-2025-01
 
-# The exporter's zip, checked first, then for real
-python manage.py import_plan_documents --source plan-docs-2026-11-06.zip --dry-run
-python manage.py import_plan_documents --source plan-docs-2026-11-06.zip
+# The corpus release's zip, checked first, then for real (the deploy Job
+# runs the second line with --store-file --deactivate-missing)
+python manage.py import_plan_documents --source plan_documents/plan-docs.zip --dry-run
+python manage.py import_plan_documents --source plan_documents/plan-docs.zip
 
 # A zip carrying its originals, piped into a pod, the originals kept
 kubectl exec -i <pod> -- python manage.py import_plan_documents --source - --store-file < plan-docs-files.zip
@@ -753,6 +827,13 @@ updated, and the first 3,000,000 characters.
 
 ## Operations
 
+**Ship a corpus release.** Merge the `Update Plan Documents` pull request
+(or edit `plan_documents.lock` by hand to a release's tag and the hash in its
+`plan-docs.zip.sha256`), bump `FHI_VERSION` and deploy; read the
+`web-plan-documents-import` Job's log afterwards. To fix or remove a
+document, change it in the corpus repository, not here: a hand edit to a
+carrier the corpus names is undone by the next deploy's import.
+
 **Re-import a carrier.** Run the new bundle with `--dry-run`, read the
 skipped and warning lines, then run it for real (with `--deactivate-missing`
 when the bundle is the carrier's complete set). Rows with the same key are
@@ -800,7 +881,8 @@ read until the flag comes back; the importer and the admin keep working.
 - **A chat tool over the corpus.** No MCP or chat tool searches the corpus,
   and there is no full-text or trigram search over `text`.
 - **Token auth for a push endpoint.** The REST API is session-authenticated
-  only, so the pipeline cannot push a bundle; it is piped in, as JSON or as a
+  only, so nothing can push a bundle; the corpus arrives with the image, and
+  other bundles are piped in, as JSON or as a
   zip.
 - **The refresh in the chat research path.** The chat and the speculative
   precompute read the rows the wizard's extraction and appeal steps leave

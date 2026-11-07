@@ -1,8 +1,10 @@
-"""The plan-document bundle: what the pipeline hands FHI, and how it lands.
+"""The plan-document bundle: what the corpus hands FHI, and how it lands.
 
-A bundle is what the plan-document pipeline in healthinsurance-llm-internal
-exports (``python -m dataset_tools.plan_document_export``; keep it in step
-with this module: the record fields and their limits are the contract).
+A bundle is what a public-plan-document-collection release publishes (its
+``plan-docs.zip``, pinned in plan_documents.lock and imported on deploy;
+docs/plan-document-corpus.md). The record fields and their limits in this
+module are the contract; that repository's CI runs this importer against
+FHI's main, so keep the two in step.
 ``import_plan_documents`` reads one from a JSON or JSON Lines file, from
 stdin, or from a zip archive (:class:`BundleArchive`: ``bundle.json``, the
 originals under ``files/`` and a ``SHA256SUMS``), read in place; the admin's add form runs one record's worth through the
@@ -406,7 +408,7 @@ class BundleArchive:
     """A zip bundle, read in place: never extracted to disk.
 
     The archive holds exactly one bundle file at its root (``bundle.json``,
-    the exporter's, or ``bundle.jsonl``), optional originals as flat
+    as a corpus release writes it, or ``bundle.jsonl``), optional originals as flat
     ``files/<document_key><ext>`` members, optional ``files/`` directory
     entries and an optional coreutils ``SHA256SUMS``. Anything else refuses
     the archive. Every check on names, flags, compression and declared
