@@ -216,7 +216,11 @@ refused by LunaRoute and fails over the same way.
 
 OpenCode supplies the free `deepseek-v4.1-flash-free` endpoint under the same
 friendly name as DeepInfra's DeepSeek V4.1 Flash. The router orders the free
-OpenCode instance first and then uses DeepInfra as the provider fallback.
+OpenCode instance first and DeepInfra's paid copy second, so a call OpenCode
+cannot take (no token, a submit error, no futures) goes to DeepInfra instead.
+Once OpenCode has accepted a call, its futures are awaited like any other
+backend's: an inference that fails after that fails over to the other models
+in the fan-out, not to DeepInfra's copy of the same model.
 
 **Fallback keys.** Every key above except LunaRoute's can be paired with a
 second key for the same provider, set as `SECONDARY_<name>` (`SECONDARY_ANTHROPIC_API_KEY`,

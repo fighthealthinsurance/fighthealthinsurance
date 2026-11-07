@@ -527,7 +527,7 @@ async def ask(
             ValueError,
         ) as e:
             last_error = e
-            if not is_premium and premium_token:
+            if not is_premium and len(attempts) > 1:
                 logger.warning(
                     f"OpenCode Jev unavailable ({type(e).__name__}); "
                     "falling through to TypeSafe"
