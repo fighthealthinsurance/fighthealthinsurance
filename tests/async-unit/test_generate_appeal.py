@@ -1070,6 +1070,70 @@ class TestDualCallContextBudget:
             )
         assert result == [call]
 
+    @staticmethod
+    def _web_citation(i, excerpt="x" * 290):
+        from fighthealthinsurance.ml.ml_models import WebCitation
+        from fighthealthinsurance.ml.web_search_context import cited
+
+        return cited(WebCitation(f"Page {i}", f"https://a.org/{i}", excerpt))
+
+    def _proactive(self, call, ml_context):
+        rebuilt = []
+
+        def rebuild(**kwargs):
+            rebuilt.append(kwargs)
+            return "REBUILT_PROMPT"
+
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"fhi-internal": [_backend_with_context(8000)]},
+        ):
+            result = _add_proactive_shed_variants(
+                [call],
+                open_prompt_kwargs={
+                    "pubmed_context": call["pubmed_context"],
+                    "ml_context": ml_context,
+                },
+                rebuild_prompt=rebuild,
+                original_open_prompt="ORIGINAL",
+                denial_id=1,
+            )
+        return result, rebuilt
+
+    def test_too_long_from_web_pages_sheds_them_and_keeps_pubmed(self):
+        web = [self._web_citation(i) for i in range(100)]
+        citations = ["Smith 2020 PMID 1", *web]
+        call = _make_call(
+            prompt="ORIGINAL", pubmed_context="pubmed refs", ml_citations_context=citations
+        )
+        result, rebuilt = self._proactive(call, "\n".join(citations))
+        sibling = result[1]
+        assert (sibling["pubmed_context"], sibling["ml_citations_context"]) == (
+            "pubmed refs",
+            ["Smith 2020 PMID 1"],
+        )
+        # The rebuilt prompt keeps PubMed and the other citations too.
+        web_only = next(kw for kw in rebuilt if kw.get("pubmed_context"))
+        assert web_only["ml_context"] == "Smith 2020 PMID 1"
+
+    def test_too_long_even_without_web_pages_sheds_everything(self):
+        big = "x" * (8000 * 4)
+        citations = ["Smith 2020 PMID 1", self._web_citation(1)]
+        call = _make_call(
+            prompt="ORIGINAL", pubmed_context=big, ml_citations_context=citations
+        )
+        result, _ = self._proactive(call, "\n".join(citations))
+        sibling = result[1]
+        assert (sibling["pubmed_context"], sibling["ml_citations_context"]) == (
+            None,
+            None,
+        )
+
+    def test_web_only_shed_without_web_pages_changes_nothing(self):
+        call = _make_call(ml_citations_context=["Smith 2020 PMID 1"])
+        _, changed = _shed_context([call], tier=1, web_only=True)
+        assert changed == []
+
     def test_blank_call_dict_context_is_not_reported_as_shed(self):
         _, changed = _shed_context(
             [_make_call(pubmed_context="   ", ml_citations_context=[])], tier=1

@@ -69,6 +69,7 @@ from fighthealthinsurance.letter_openings import (
     strip_letter_preamble,
 )
 from fighthealthinsurance.ml import llm_usage
+from fighthealthinsurance.ml.web_search_context import is_web_citation
 from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
 from fighthealthinsurance.context_utils import (
@@ -1090,6 +1091,19 @@ def _apply_tier2_truncations(
             changed.add(f"{label}{key}(truncated)")
 
 
+def _without_web_citations(value: Any) -> Any:
+    """``value`` (a citation list, or the prompt's rendering of one: one
+    citation per line) less the web search's citations
+    (web_search_context.is_web_citation); anything else as it is."""
+    if isinstance(value, list):
+        return [c for c in value if not is_web_citation(c)]
+    if isinstance(value, str):
+        return "\n".join(
+            line for line in value.split("\n") if not is_web_citation(line)
+        )
+    return value
+
+
 def _shed_context(
     calls: list[dict],
     tier: int,
@@ -1098,8 +1112,16 @@ def _shed_context(
     rebuild_prompt: Optional[Callable[..., Optional[str]]] = None,
     original_open_prompt: Optional[str] = None,
     other_open_prompts: Sequence[Tuple[str, Callable[..., Optional[str]]]] = (),
+    web_only: bool = False,
 ) -> tuple[list[dict], list[str]]:
     """Return (new_calls, changed_names) with context reduced by tier.
+
+    ``web_only`` (with tier 1) is the lightest shed: only the web search's
+    citations leave the citation list, on both surfaces, and the PubMed
+    references and every other context stay. Tried first when a prompt is
+    too long (``_add_proactive_shed_variants``): published literature is
+    worth more to an appeal than a web page. Its calls are stamped as tier-1
+    shed, a partial one.
 
     Tier 1 nulls the enrichment contexts on both surfaces: in the
     re-rendered prompt (when ``open_prompt_kwargs`` + ``rebuild_prompt`` +
@@ -1130,7 +1152,20 @@ def _shed_context(
     ]
     # (open prompt as built, its shed re-render) for each rebuilt layout.
     swaps: list[tuple[str, str]] = []
-    if tier >= 1 and open_prompt_kwargs is not None and builds:
+    if web_only and open_prompt_kwargs is not None and builds:
+        shed_kwargs = dict(open_prompt_kwargs)
+        ml_context = shed_kwargs.get("ml_context")
+        lighter = _without_web_citations(ml_context)
+        if isinstance(ml_context, str) and lighter != ml_context:
+            shed_kwargs["ml_context"] = (
+                lighter if not is_blank_context(lighter) else None
+            )
+            changed.add("prompt.ml_context(web)")
+            for built, rebuild in builds:
+                shed_prompt = rebuild(**shed_kwargs)
+                if built and shed_prompt is not None:
+                    swaps.append((built, shed_prompt))
+    elif tier >= 1 and open_prompt_kwargs is not None and builds:
         shed_kwargs = dict(open_prompt_kwargs)
         prompt_changed_before = len(changed)
         for key in _PROMPT_TIER1_NULLS:
@@ -1181,14 +1216,20 @@ def _shed_context(
                 if prompt.startswith(built):
                     new["prompt"] = shed_prompt + prompt[len(built) :]
                     break
-        if tier >= 1:
+        if web_only:
+            citations = new.get("ml_citations_context")
+            lighter = _without_web_citations(citations)
+            if lighter != citations:
+                new["ml_citations_context"] = lighter
+                changed.add("ml_citations_context(web)")
+        elif tier >= 1:
             for key in _SHEDDABLE_TIER1:
                 # A blank context sends nothing, so nulling it is no
                 # reduction and must not count as one.
                 if not is_blank_context(new.get(key)):
                     new[key] = None
                     changed.add(key)
-        if tier >= 2:
+        if tier >= 2 and not web_only:
             _apply_tier2_truncations(new, _TIER2_TRUNCATIONS, changed, label="")
         # Stamp the shed level so each produced appeal records the tier it came
         # from (tier 0 leaves the inherited "full" level untouched).
@@ -1345,8 +1386,11 @@ def _add_proactive_shed_variants(
     other_open_prompts: Sequence[Tuple[str, Callable[..., Optional[str]]]] = (),
     denial_id: Any = None,
 ) -> List[dict]:
-    """Return ``calls`` plus a tier-1 context-shed sibling for each call whose
-    estimated footprint exceeds its model's fuzzy context window.
+    """Return ``calls`` plus a context-shed sibling for each call whose
+    estimated footprint exceeds its model's fuzzy context window: the
+    web-only shed (``_shed_context(web_only=True)``: the web search's
+    citations go, the PubMed references stay) where that alone brings the
+    call within the window, else the full tier-1 shed.
 
     This is the proactive half of the dual-call: rather than waiting for the
     primary+backup cycle to fail before shedding, fan out a shed variant
@@ -1361,14 +1405,29 @@ def _add_proactive_shed_variants(
     over_budget_calls = _calls_over_context_budget(calls)
     if not over_budget_calls:
         return calls
-    variants, changed = _shed_context(
-        over_budget_calls,
-        tier=1,
+    shed_args: dict = dict(
         open_prompt_kwargs=open_prompt_kwargs,
         rebuild_prompt=rebuild_prompt,
         original_open_prompt=original_open_prompt,
         other_open_prompts=other_open_prompts,
     )
+    variants, changed = _shed_context(over_budget_calls, tier=1, **shed_args)
+    web_variants, web_changed = _shed_context(
+        over_budget_calls, tier=1, web_only=True, **shed_args
+    )
+    if web_changed:
+        # Where dropping the web pages alone is enough, the PubMed
+        # references (and the rest) stay.
+        still_over = {id(c) for c in _calls_over_context_budget(web_variants)}
+        lighter = [id(v) not in still_over for v in web_variants]
+        if any(lighter):
+            variants = [
+                web if light else full
+                for web, full, light in zip(web_variants, variants, lighter)
+            ]
+            changed = sorted(
+                set(web_changed) | (set(changed) if not all(lighter) else set())
+            )
 
     # _shed_context stamps context_level on every variant, so compare on the
     # shed-relevant content (everything but the level) to detect no-op variants

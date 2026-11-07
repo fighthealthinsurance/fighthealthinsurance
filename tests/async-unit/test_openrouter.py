@@ -29,6 +29,11 @@ SUPPORTS = research_judging.Judgment(on_topic=0.9, supports=0.9, undermines=0.1)
 WEAKLY_SUPPORTS = research_judging.Judgment(on_topic=0.9, supports=0.5, undermines=0.1)
 OFF_TOPIC = research_judging.Judgment(on_topic=0.1, supports=0.9, undermines=0.0)
 AGAINST = research_judging.Judgment(on_topic=0.9, supports=0.1, undermines=0.9)
+# On topic only probably not: kept, with a note, unless enough is plainly on
+# topic (research_judging.focus).
+PROBABLY_OFF_TOPIC = research_judging.Judgment(
+    on_topic=0.45, supports=0.9, undermines=0.0
+)
 
 
 class _Response:
@@ -397,6 +402,32 @@ class TestWebSearchCitations:
         ]
 
     @pytest.mark.asyncio
+    async def test_probably_off_topic_result_is_kept_with_a_note_when_alone(self):
+        self.backend.web_search.return_value = _results(
+            "https://a.org/maybe", "https://a.org/good"
+        )
+        self.judgments = {
+            "https://a.org/maybe": PROBABLY_OFF_TOPIC,
+            "https://a.org/good": SUPPORTS,
+        }
+        cited = await web_search_context.web_search_citations(_denial(), 10)
+        noted = [c for c in cited if "probably off topic" in c]
+        assert len(cited) == 2 and len(noted) == 1 and "a.org/maybe" in noted[0]
+
+    @pytest.mark.asyncio
+    async def test_probably_off_topic_result_is_left_out_beside_two_on_topic(self):
+        self.backend.web_search.return_value = _results(
+            "https://a.org/maybe", "https://a.org/good", "https://a.org/also"
+        )
+        self.judgments = {
+            "https://a.org/maybe": PROBABLY_OFF_TOPIC,
+            "https://a.org/good": SUPPORTS,
+            "https://a.org/also": WEAKLY_SUPPORTS,
+        }
+        cited = await web_search_context.web_search_citations(_denial(), 10)
+        assert not any("a.org/maybe" in c for c in cited) and len(cited) == 2
+
+    @pytest.mark.asyncio
     async def test_keeps_at_most_max_kept(self):
         urls = [f"https://a.org/{i}" for i in range(5)]
         self.backend.web_search.return_value = _results(*urls)
@@ -573,6 +604,25 @@ class TestConsent:
             await web_search_context._consent_allows(_denial(use_external=False))
             is False
         )
+
+
+class TestIsWebCitation:
+    @pytest.mark.parametrize(
+        "judgment", [None, SUPPORTS, PROBABLY_OFF_TOPIC], ids=["none", "on", "off"]
+    )
+    @pytest.mark.parametrize("excerpt", ["About it", ""], ids=["excerpt", "bare"])
+    def test_every_cited_result_is_recognised(self, judgment, excerpt):
+        page = WebCitation("Page", "https://a.org/x", excerpt)
+        assert web_search_context.is_web_citation(
+            web_search_context.cited(page, judgment)
+        )
+
+    @pytest.mark.parametrize(
+        "citation",
+        ["Smith J. Lumbar MRI. JAMA 2020. PMID 123", "CMS NCD 220.2", "", None],
+    )
+    def test_other_citations_are_not(self, citation):
+        assert not web_search_context.is_web_citation(citation)
 
 
 class TestCitationStepAppendsWebResults:

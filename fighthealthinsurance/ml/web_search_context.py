@@ -20,7 +20,10 @@ judging is on and otherwise by our own best general-purpose model. A
 result judged off topic or against the treatment is dropped, and so is one
 nobody could judge (no excerpt to read, the judges down or out of time):
 unlike a PubMed article, an unjudged web page does not keep its place.
-What is kept goes in order of how strongly it supports the treatment.
+What is kept goes in order of how strongly it supports the treatment. With
+at least two plainly on topic, the ones only probably on topic are left out
+too; with fewer, they are kept and labelled probably off topic, for the
+letter's model to weigh (research_judging.focus).
 
 Data protection: the search is sent the denial's procedure and diagnosis
 only, never the letter, the history or anything about the person: the same
@@ -34,6 +37,7 @@ text.
 """
 
 import asyncio
+import re
 import time
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -66,7 +70,8 @@ _MIN_JUDGE_SECONDS = 2.0
 JEV_SHARE_OF_JUDGING = 0.5
 
 # Counts, for tests and the shell: searches, results found, kept, dropped
-# (judged off topic or against) and unjudged (dropped too).
+# (judged off topic or against), set aside (probably off topic, beside
+# enough on topic: research_judging.focus) and unjudged (dropped too).
 outcomes: Dict[str, int] = {
     "searched": 0,
     "skipped": 0,
@@ -74,6 +79,7 @@ outcomes: Dict[str, int] = {
     "found": 0,
     "kept": 0,
     "dropped": 0,
+    "set_aside": 0,
     "unjudged": 0,
 }
 
@@ -224,14 +230,32 @@ async def _judge_all(
     return judgments
 
 
-def cited(result: WebCitation) -> str:
+# Every citation ``cited`` writes carries this right after its title and URL,
+# so a stored citation list (Denial.ml_citation_context, plain strings) can
+# still tell the web search's citations from the rest: when a prompt is too
+# long, they go before the PubMed references do (generate_appeal's
+# proactive shed).
+WEB_CITATION_MARKER = " (web page"
+_WEB_CITATION_RE = re.compile(re.escape(WEB_CITATION_MARKER) + r"(?: excerpt: |\)|; )")
+
+
+def is_web_citation(citation: Any) -> bool:
+    """Whether ``citation`` is one ``cited`` wrote."""
+    return isinstance(citation, str) and bool(_WEB_CITATION_RE.search(citation))
+
+
+def cited(
+    result: WebCitation, judgment: Optional[research_judging.Judgment] = None
+) -> str:
     """The citation a kept result goes into the letter's context as: its
     title and URL, then the start of the page's excerpt, labelled as what
-    it is."""
+    it is, and, when ``judgment`` finds it probably off topic, a note
+    saying so (research_judging.PROBABLY_OFF_TOPIC_NOTE)."""
     excerpt = result.excerpt[:CITED_EXCERPT_CHARS].strip()
-    if not excerpt:
-        return str(result)
-    return f"{result} (web page excerpt: {excerpt})"
+    label = f"web page excerpt: {excerpt}" if excerpt else "web page"
+    if judgment is not None and judgment.probably_off_topic:
+        label = f"{label}; relevance note: judged {research_judging.PROBABLY_OFF_TOPIC_NOTE}"
+    return f"{result} ({label})"
 
 
 # One kept result and the judgment that kept it.
@@ -275,13 +299,18 @@ async def _search_and_judge(
         judgments,
         pmid_of=lambda r: r.url,
     )
+    # With enough plainly on topic, the probably off-topic ones are left out
+    # rather than offered with a note (research_judging.focus).
+    kept, set_aside = research_judging.focus(kept, judgments, pmid_of=lambda r: r.url)
     unjudged = len(results) - len(judgments)
     _count("unjudged", unjudged)
     _count("dropped", len(dropped))
+    _count("set_aside", len(set_aside))
     _count("kept", min(len(kept), MAX_KEPT))
     logger.debug(
         f"Web search for {label}: {len(results)} found, {len(kept)} kept, "
-        f"{len(dropped)} judged off topic or against, {unjudged} unjudged"
+        f"{len(dropped)} judged off topic or against, {len(set_aside)} "
+        f"probably off topic beside enough on topic, {unjudged} unjudged"
     )
     return [(r, judgments[r.url]) for r in kept[:MAX_KEPT]]
 
@@ -339,4 +368,4 @@ async def web_search_citations(
         may_ask_jev=lambda: _consent_allows(denial),
         label=f"denial {getattr(denial, 'denial_id', None)}",
     )
-    return [cited(result) for result, _judgment in kept]
+    return [cited(result, judgment) for result, judgment in kept]
