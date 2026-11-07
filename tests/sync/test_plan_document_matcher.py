@@ -1443,3 +1443,101 @@ class LogHygieneTests(_CorpusMixin, TransactionTestCase):
         self.assertNotIn("san francisco", lowered)
         for keyword in self.norcal_eoc.match_keywords:
             self.assertNotIn(keyword, lowered)
+
+
+# Names the region, so both small-group variants below score the same
+# (keyword, state, year, EOC, medical) unless the plan id tells them apart.
+SMALL_GROUP_LETTER = (
+    "Kaiser Permanente Northern California denied an MRI as not medically "
+    "necessary."
+)
+
+
+class _VariantMixin(_CorpusMixin):
+    """Two small-group EOCs with the same metadata, told apart only by their
+    plan codes; every other document of the corpus is inactive."""
+
+    def build_variants(self):
+        self.build_corpus()
+        PublicPlanDocument.objects.update(is_active=False)
+        self.variant_a = self.document(
+            "kaiser-norcal-small-group-a-eoc-2025",
+            title="Kaiser Permanente Northern California Small Group A EOC",
+            region="Northern California",
+            match_keywords=["northern california"],
+            plan_id_prefixes=["AB1"],
+        )
+        self.variant_b = self.document(
+            "kaiser-norcal-small-group-b-eoc-2025",
+            title="Kaiser Permanente Northern California Small Group B EOC",
+            region="Northern California",
+            match_keywords=["northern california"],
+            plan_id_prefixes=["XY9"],
+        )
+
+
+class PlanCodeVariantTests(_VariantMixin, TestCase):
+    def setUp(self):
+        self.build_variants()
+
+    def test_a_letter_with_variant_a_code_selects_variant_a_only(self):
+        outcome = match_documents(self.denial(SMALL_GROUP_LETTER, plan_id="AB1-0042"))
+        self.assertEqual(self.selected_ids(outcome), [self.variant_a.id])
+        self.assertEqual(outcome.rivals, [])
+        self.assertEqual(outcome.tie_break_candidates, [])
+
+    def test_a_letter_with_no_code_selects_neither_and_goes_to_the_tie_break(self):
+        outcome = match_documents(self.denial(SMALL_GROUP_LETTER))
+        self.assertEqual(outcome.selected, [])
+        self.assertEqual(
+            [s.candidate.id for s in outcome.tie_break_candidates],
+            [self.variant_a.id, self.variant_b.id],
+        )
+
+    def test_variants_with_identical_prefixes_ride_together(self):
+        self.variant_b.plan_id_prefixes = ["AB1"]
+        self.variant_b.save()
+        outcome = match_documents(self.denial(SMALL_GROUP_LETTER))
+        self.assertEqual(
+            self.selected_ids(outcome), [self.variant_a.id, self.variant_b.id]
+        )
+
+    def test_variants_with_different_match_regexes_conflict(self):
+        for doc, pattern in (
+            (self.variant_a, r"\bgold\s+hmo\b"),
+            (self.variant_b, r"\bsilver\s+hmo\b"),
+        ):
+            doc.plan_id_prefixes = []
+            doc.match_regex = pattern
+            doc.save()
+        outcome = match_documents(
+            self.denial(SMALL_GROUP_LETTER + " Your Gold HMO plan.")
+        )
+        self.assertEqual(self.selected_ids(outcome), [self.variant_a.id])
+        self.assertEqual(outcome.rivals, [])
+
+
+class PlanCodeVariantRefreshTests(_VariantMixin, TransactionTestCase):
+    def setUp(self):
+        self.build_variants()
+
+    def refresh(self, denial, **mocks):
+        with _no_models(**mocks) as models:
+            found = asyncio.run(arefresh_match(denial))
+        return found, models
+
+    def test_a_letter_with_no_code_selects_neither_without_a_model_answer(self):
+        denial = self.denial(SMALL_GROUP_LETTER)
+        found, models = self.refresh(denial, tie_break_answer=None)
+        self.assertFalse(found)
+        models.infer.assert_awaited_once()
+        self.assertEqual(self.rows(denial), [])
+        self.assertEqual(get_plan_document_context_for_denial(denial), "")
+
+    def test_the_tie_break_prompt_shows_each_variants_plan_codes(self):
+        denial = self.denial(SMALL_GROUP_LETTER)
+        _, models = self.refresh(denial, tie_break_answer="0")
+        prompt = models.infer.await_args.kwargs["prompt"]
+        self.assertIn(f"1. {self.variant_a.title}", prompt)
+        self.assertIn("plan codes: AB1", prompt)
+        self.assertIn("plan codes: XY9", prompt)

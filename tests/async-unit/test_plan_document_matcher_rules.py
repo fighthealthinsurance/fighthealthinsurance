@@ -583,6 +583,61 @@ class TestConflicts:
         assert not conflicts(candidate(**left), candidate(**right))
 
 
+class TestPlanCodeVariants:
+    """Two EOCs with the same metadata, told apart only by the plan codes
+    (or the pattern) they key on: the Anthem small-group case."""
+
+    @staticmethod
+    def variant(id: int, prefix: str) -> Candidate:
+        return candidate(id=id, plan_id_prefixes=(prefix,))
+
+    def test_disjoint_plan_id_prefixes_conflict(self):
+        assert conflicts(self.variant(1, "AB1"), self.variant(2, "XY9"))
+
+    def test_identical_plan_id_prefixes_do_not_conflict(self):
+        assert not conflicts(self.variant(1, "AB1"), self.variant(2, "AB1"))
+
+    def test_overlapping_plan_id_prefixes_do_not_conflict(self):
+        assert not conflicts(
+            candidate(id=1, plan_id_prefixes=("AB1", "AB2")),
+            candidate(id=2, plan_id_prefixes=("AB2",)),
+        )
+
+    def test_prefixes_on_one_side_only_do_not_conflict(self):
+        assert not conflicts(self.variant(1, "AB1"), candidate(id=2))
+
+    def test_different_match_regex_patterns_conflict(self):
+        assert conflicts(
+            candidate(id=1, match_regex=regex(r"\bgold\s+ppo\b")),
+            candidate(id=2, match_regex=regex(r"\bsilver\s+ppo\b")),
+        )
+
+    def test_the_same_match_regex_pattern_does_not_conflict(self):
+        assert not conflicts(
+            candidate(id=1, match_regex=regex(r"\bgold\s+ppo\b")),
+            candidate(id=2, match_regex=regex(r"\bgold\s+ppo\b")),
+        )
+
+    def test_a_match_regex_on_one_side_only_does_not_conflict(self):
+        assert not conflicts(
+            candidate(id=1, match_regex=regex(r"\bgold\s+ppo\b")), candidate(id=2)
+        )
+
+    def test_a_letter_with_one_variants_code_selects_that_variant_only(self):
+        a, b = self.variant(1, "AB1"), self.variant(2, "XY9")
+        f = facts(plan_id_text="ab1-00042")
+        selected, rivals = select([score_candidate(a, f), score_candidate(b, f)])
+        assert [s.candidate.id for s in selected] == [1]
+        assert rivals == []
+
+    def test_a_letter_with_no_code_selects_neither_and_leaves_a_rival(self):
+        a, b = self.variant(1, "AB1"), self.variant(2, "XY9")
+        f = facts()
+        selected, rivals = select([score_candidate(a, f), score_candidate(b, f)])
+        assert selected == []
+        assert [s.candidate.id for s in rivals] == [2]
+
+
 class TestCompanions:
     def test_the_pick_leads_and_the_documents_that_do_not_conflict_follow(self):
         hmo = scored(candidate(id=1, plan_year=2024), 44)

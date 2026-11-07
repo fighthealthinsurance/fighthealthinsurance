@@ -25,7 +25,9 @@ How a match is made:
    matches every letter of its carrier.
 4. Selection (``select``). The best candidate wins; documents that do not
    conflict with it (the same plan's SBC beside its EOC) ride along, up to
-   ``MAX_SELECTED``. A conflicting candidate within ``MARGIN`` points makes
+   ``MAX_SELECTED``. Plan-code variants (the same metadata, disjoint
+   ``plan_id_prefixes`` or different ``match_regex``) conflict too
+   (``conflicts``). A conflicting candidate within ``MARGIN`` points makes
    the match ambiguous: one of our own models may break the tie
    (``tie_break``), and with no answer nothing is selected. Fail closed.
 5. Relevance (``build_relevance``). The selected documents go through
@@ -572,10 +574,30 @@ def score_candidate(c: Candidate, facts: DenialFacts) -> Optional[Scored]:
 
 def conflicts(a: Candidate, b: Candidate) -> bool:
     """Whether two documents cannot both be the member's: another plan,
-    state, region, year or employer, another specific line of business, or
-    dental coverage against medical."""
+    state, region, year or employer, another specific line of business,
+    dental coverage against medical, or another plan-code variant.
+
+    Variants are documents with the same metadata told apart only by the
+    plan codes or the pattern they key on (two small-group EOCs of one
+    carrier): disjoint ``plan_id_prefixes``, or different ``match_regex``
+    patterns, both sides set. Without this they would ride along together.
+    With it, a letter carrying one variant's code wins by the prefix (or
+    regex) points, which clear MARGIN, and a letter carrying neither goes
+    to the tie-break, which selects nothing without an answer."""
     dental = PublicPlanDocument.COVERAGE_KIND_DENTAL
     if (a.coverage_kind == dental) != (b.coverage_kind == dental):
+        return True
+    if (
+        a.plan_id_prefixes
+        and b.plan_id_prefixes
+        and not set(a.plan_id_prefixes) & set(b.plan_id_prefixes)
+    ):
+        return True
+    if (
+        a.match_regex is not None
+        and b.match_regex is not None
+        and a.match_regex.pattern != b.match_regex.pattern
+    ):
         return True
     if (
         a.insurance_plan_id
@@ -828,7 +850,8 @@ def _tie_break_prompt(denial_text: str, candidates: Sequence[Scored]) -> str:
             f"{number}. {c.title}; plan: {c.plan_name or '-'}; region: "
             f"{c.region or '-'}; state: {c.state or 'national'}; year: "
             f"{c.plan_year or '-'}; line of business: {c.line_of_business}; "
-            f"coverage: {c.coverage_kind}; employer: {c.employer_name or '-'}"
+            f"coverage: {c.coverage_kind}; employer: {c.employer_name or '-'}; "
+            f"plan codes: {', '.join(c.plan_id_prefixes) or '-'}"
         )
     excerpt = truncate_at_boundary(denial_text, 2000)
     return (
