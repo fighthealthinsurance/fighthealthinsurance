@@ -31,8 +31,8 @@ from fighthealthinsurance.shared_plan_documents import render_token
 
 User = get_user_model()
 
-PDF = b"%PDF-1.4 Summary Plan Description for Crumpler Cooperative" + b" x" * 200
-TXT = b"Evidence of Coverage, plan year 2026, Lee Crumpler Health Plan."
+PDF = b"%PDF-1.4 Summary Plan Description for Crumpler Cooperative" + b" x" * 600
+TXT = b"Evidence of Coverage, plan year 2026, Lee Crumpler Health Plan. " * 20
 EMAIL = "Rebecca.Crumpler@example.com"
 
 

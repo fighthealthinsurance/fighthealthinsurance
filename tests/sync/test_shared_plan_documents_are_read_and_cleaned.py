@@ -369,7 +369,7 @@ class ReadingStartsOnceTheRowsCommitTest(TestCase):
                 response = self.client.post(
                     reverse("share_plan_documents"),
                     {
-                        "plan_documents": [upload("a.txt", b"$1,500"), upload("b.txt", b"$30")],
+                        "plan_documents": [upload("a.txt", b"$1,500 " * 200), upload("b.txt", b"$30 " * 300)],
                         "agree": "on",
                         "rendered": render_token(at=time.time() - 60),
                     },

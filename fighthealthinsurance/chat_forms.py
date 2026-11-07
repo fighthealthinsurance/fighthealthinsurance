@@ -53,11 +53,22 @@ UNREADABLE_PDF_MESSAGE = (
 )
 
 
+#: The smallest file kept for research: below a short rate sheet saved as
+#: text, above a line of test text, which would make the share page's count
+#: say plans arrived that never did.
+MIN_SHARED_FILE_BYTES = 256
+TOO_SMALL_MESSAGE = (
+    "This file is too small to be a plan document. Please share the full "
+    "document as a PDF, Word (.docx) or text file."
+)
+
+
 def validate_shared_document(file: UploadedFile) -> None:
     """validate_policy_document, then a closer look, for a file we keep:
     a .docx must be a Word document with no macros or locked parts, a .txt
     must be text, and a PDF must open in a separate process without a
-    password, within MAX_SHARED_PDF_PAGES pages. Leaves the file rewound."""
+    password, within MAX_SHARED_PDF_PAGES pages; and the file must be at least
+    MIN_SHARED_FILE_BYTES. Leaves the file rewound."""
     ext = policy_document_extension(file.name or "")
     file.seek(0)
     if ext == ".docx" and file.read(4) == _OLE_MAGIC:
@@ -78,6 +89,9 @@ def validate_shared_document(file: UploadedFile) -> None:
             _check_pdf(file.read())
     finally:
         file.seek(0)
+    # Last, so a file that is the wrong kind hears why first.
+    if file.size is not None and file.size < MIN_SHARED_FILE_BYTES:
+        raise forms.ValidationError(TOO_SMALL_MESSAGE)
 
 
 def _check_docx(file: UploadedFile) -> None:

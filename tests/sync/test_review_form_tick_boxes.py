@@ -1,8 +1,9 @@
-"""The review form's two pick-several fields are tick boxes.
+"""The review form's pick-several field is tick boxes.
 
-Type of denial and how the person gets their insurance used to be
-<select multiple> boxes, which take a modifier key to pick more than one.
-Each choice is now a tick box with its label beside it.
+Type of denial used to be a <select multiple> box, which takes a modifier
+key to pick more than one. Each choice is now a tick box with its label
+beside it. How the person gets their insurance is asked in two steps instead
+(test_plan_source_picker.py).
 """
 
 from bs4 import BeautifulSoup
@@ -15,7 +16,6 @@ from fighthealthinsurance.models import DenialTypes, PlanSource
 # field name -> (the model behind it, the label that names the group)
 PICKERS = {
     "denial_type": (DenialTypes, "Type of denial"),
-    "plan_source": (PlanSource, "How do you get your insurance?"),
 }
 
 
@@ -67,13 +67,8 @@ class TheReviewFormPicksWithTickBoxesTest(TestCase):
 
     def test_what_we_already_know_starts_ticked(self):
         denial_type = DenialTypes.objects.order_by("pk").first()
-        plan_source = PlanSource.objects.order_by("pk").last()
-        page = _page(
-            PostInferedForm(
-                initial={"denial_type": [denial_type], "plan_source": [plan_source]}
-            )
-        )
-        chosen_by_field = {"denial_type": denial_type, "plan_source": plan_source}
+        page = _page(PostInferedForm(initial={"denial_type": [denial_type]}))
+        chosen_by_field = {"denial_type": denial_type}
         for name, chosen in chosen_by_field.items():
             with self.subTest(field=name):
                 ticked = [
@@ -84,6 +79,8 @@ class TheReviewFormPicksWithTickBoxesTest(TestCase):
                 self.assertEqual(ticked, [str(chosen.pk)])
 
     def test_several_ticked_boxes_come_back_as_several_choices(self):
+        # Several plan sources still come back as several from a post that
+        # names them directly, as the REST API does.
         two_types = list(DenialTypes.objects.order_by("pk")[:2])
         two_sources = list(PlanSource.objects.order_by("pk")[:2])
         form = PostInferedForm(

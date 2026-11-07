@@ -16,6 +16,8 @@ from asgiref.sync import sync_to_async
 
 from loguru import logger
 
+from fighthealthinsurance.keep_your_care import keep_your_care_chat_note
+
 from .base_tool import BaseTool
 from .patterns import MEDICAID_ELIGIBILITY_REGEX, MEDICAID_INFO_REGEX
 
@@ -185,6 +187,7 @@ class MedicaidInfoTool(BaseTool):
                     f"Here's the official Medicaid information for {state_name}:\n\n"
                     f"{medicaid_info}\n\n"
                     f" -- use it to answer the question {current_message_for_llm}"
+                    f"\n\n{keep_your_care_chat_note(state)}"
                     f"\n\n{self._build_eligibility_handoff(state)}"
                 )
 
@@ -503,6 +506,12 @@ class MedicaidEligibilityTool(BaseTool):
                 target_year=target_year,
                 timeline=timeline,
             )
+            # Someone who qualifies today but faces the work requirement in
+            # the year being checked is exactly who Keep Your Care helps.
+            # Gated on eligible_base like work_req_note: when the income or
+            # category test is what fails, keeping coverage isn't the issue.
+            if work_req_applies and eligible_base:
+                info_text += "\n\n" + keep_your_care_chat_note(loaded.get("state"))
             if parsed_summary:
                 info_text += "\n\n" + parsed_summary
 
@@ -519,9 +528,12 @@ class MedicaidEligibilityTool(BaseTool):
                 (
                     f"If the {target_year} work "
                     "requirement is the barrier, suggest ways to reach 80 "
-                    "qualifying hours a month (work, school, volunteering, or "
-                    "caregiving) and remind them to keep good records -- with "
-                    "empathy, since this is stressful and unfair. "
+                    "qualifying hours a month (work, job training, school, or "
+                    "volunteering) and remind them to keep good records -- "
+                    "with empathy, since this is stressful and unfair. "
+                    "Caregiving is not qualifying hours: caring for a child 13 "
+                    "or younger or a disabled person is an exemption, so ask "
+                    "about it rather than counting care hours. "
                 )
                 if work_req_applies
                 else ""

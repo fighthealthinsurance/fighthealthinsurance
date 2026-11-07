@@ -18,6 +18,7 @@ Word files are read by word_text (tests/sync/test_word_text.py).
 """
 
 import datetime
+import hashlib
 import io
 import re
 import time
@@ -46,7 +47,7 @@ from fighthealthinsurance.shared_plan_documents import (
 User = get_user_model()
 
 REPO = Path(__file__).resolve().parents[2]
-TXT = b"Summary of Benefits and Coverage for the Crumpler Cooperative plan."
+TXT = b"Summary of Benefits and Coverage for the Crumpler Cooperative plan. " * 20
 
 
 def txt(name="sbc.txt", content=TXT):
@@ -113,7 +114,8 @@ def pdf_bytes(
     else:
         data = document.tobytes()
     document.close()
-    return data
+    # A one-line page is smaller than any plan document the share keeps.
+    return data + b"%" + b" " * 1024 + b"\n"
 
 
 class _ShareTestCase(TestCase):
@@ -167,13 +169,13 @@ class OneUploadFitsUnderTheProxyLimitTest(_ShareTestCase):
                 )
 
     def test_files_that_add_up_to_too_much_are_refused(self):
-        with patch.object(SharePlanDocumentsForm, "MAX_TOTAL_BYTES", 100):
-            response = self.share([txt(content=b"a" * 60), txt(content=b"b" * 60)])
+        with patch.object(SharePlanDocumentsForm, "MAX_TOTAL_BYTES", 2000):
+            response = self.share([txt(content=b"a" * 1200), txt(content=b"b" * 1200)])
         self.assertRefused(response, "add up to more than")
 
     def test_files_that_fit_are_stored(self):
-        with patch.object(SharePlanDocumentsForm, "MAX_TOTAL_BYTES", 120):
-            response = self.share([txt(content=b"a" * 60), txt(content=b"b" * 60)])
+        with patch.object(SharePlanDocumentsForm, "MAX_TOTAL_BYTES", 2400):
+            response = self.share([txt(content=b"a" * 1200), txt(content=b"b" * 1200)])
         self.assertStored(response, count=2)
 
     def test_the_count_stays_at_ten_files(self):
@@ -309,7 +311,9 @@ class EveryFileGetsACloserLookTest(_ShareTestCase):
 
     def test_a_pdf_the_strict_reader_trips_on_is_still_taken(self):
         # pypdf gives up on files the reader used for analysis can still open.
-        self.assertStored(self.share([SimpleUploadedFile("eoc.pdf", b"%PDF-1.4 x")]))
+        self.assertStored(
+            self.share([SimpleUploadedFile("eoc.pdf", b"%PDF-1.4 x" + b" x" * 600)])
+        )
 
     def test_a_pdf_that_takes_too_long_to_open_is_refused(self):
         with patch.object(chat_forms, "_PDF_CHECK_SECONDS", 0):
@@ -342,11 +346,11 @@ class DailyBudgetsTest(_ShareTestCase):
         self.assertStored(self.share([txt(), txt()]), count=2)
         self.assertRefused(self.share([txt()]), "share the rest tomorrow", count=2)
 
-    @override_settings(SHARED_PLAN_DOCUMENTS_SESSION_DAILY_BYTES=100)
+    @override_settings(SHARED_PLAN_DOCUMENTS_SESSION_DAILY_BYTES=3000)
     def test_one_visitor_has_a_budget_in_bytes_too(self):
-        self.assertStored(self.share([txt(content=b"a" * 80)]))
+        self.assertStored(self.share([txt(content=b"a" * 2400)]))
         self.assertRefused(
-            self.share([txt(content=b"b" * 30)]), "share the rest tomorrow", count=1
+            self.share([txt(content=b"b" * 1200)]), "share the rest tomorrow", count=1
         )
 
     @override_settings(SHARED_PLAN_DOCUMENTS_DAILY_FILES=1)
@@ -507,7 +511,11 @@ class OneAddressSharesTenTimesADayTest(_ShareTestCase):
         self.share_from()
         (row,) = self.address_rows()
         self.assertRegex(row.name, r"^[0-9a-f]{64}$")
-        self.assertNotIn("203", row.name)
+        # Not assertNotIn("203", ...): a random 64-hex digest contains that
+        # substring about 1.5% of the time, which failed this test at random.
+        self.assertNotIn(ADDRESS, row.name)
+        # Keyed: not a plain hash anyone could brute-force back to the address.
+        self.assertNotEqual(row.name, hashlib.sha256(ADDRESS.encode()).hexdigest())
         self.assertEqual(row.count, 1)
 
 
@@ -532,7 +540,7 @@ class StaffReadSharedFilesAsTextTest(_ShareTestCase):
         response = self.read_as_text(doc, self.staff())
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "text/plain; charset=utf-8")
-        self.assertIn(TXT.decode(), response.content.decode())
+        self.assertIn(TXT.decode().strip(), response.content.decode())
 
     def test_staff_read_a_pdf_page_by_page(self):
         doc = self.shared(SimpleUploadedFile("eoc.pdf", pdf_bytes(pages=2)))
@@ -558,7 +566,7 @@ class StaffReadSharedFilesAsTextTest(_ShareTestCase):
         self.assertIn("Summary Plan Description for the Crumpler Cooperative", text)
 
     def test_markup_in_a_file_is_shown_as_text_that_runs_nothing(self):
-        doc = self.shared(txt(content=b"<script>alert('Crumpler')</script>"))
+        doc = self.shared(txt(content=b"<script>alert('Crumpler')</script>" + b" " * 1024))
         response = self.read_as_text(doc, self.staff())
         self.assertEqual(response["Content-Type"], "text/plain; charset=utf-8")
         self.assertEqual(response["X-Content-Type-Options"], "nosniff")

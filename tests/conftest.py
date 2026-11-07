@@ -409,3 +409,16 @@ def _fresh_spend_ledger():
     yield
     spend._ledger.reset_for_tests()
     typesafe.reset_cooldown_for_tests()
+    # The worker is a daemon thread with no way to stop it: once a test
+    # starts it (FHI_SPEND_BACKGROUND=True without stubbing _ensure_worker),
+    # it keeps ticking for the rest of the process, under every later test.
+    # So report it on every test after, where a rerun can't make it pass:
+    # the first test to fail this way is the one that started it.
+    worker = spend._ledger._thread
+    if worker is not None and worker.is_alive():
+        pytest.fail(
+            "The ml/spend.py ledger worker thread is running. A test turned "
+            "on FHI_SPEND_BACKGROUND without patching "
+            "spend._Ledger._ensure_worker; the first test to fail this way "
+            "started it."
+        )

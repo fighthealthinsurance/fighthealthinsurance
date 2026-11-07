@@ -130,7 +130,8 @@ class _DashboardTestCase(TestCase):
         self.minutes += 1
         when = at or self.this_week + datetime.timedelta(minutes=self.minutes)
         batch = uuid.uuid4()
-        status = facts.pop("processing_status", PolicyDocument.PROCESSING_RECEIVED)
+        status = facts.pop("processing_status", PolicyDocument.PROCESSING_READY)
+        text = facts.pop("cleaned_text", "Summary Plan Description. " * 40)
         rows = []
         for digest in files:
             rows.append(
@@ -140,6 +141,7 @@ class _DashboardTestCase(TestCase):
                     shared_at=when,
                     fingerprint=digest,
                     processing_status=status,
+                    cleaned_text=text,
                     **facts,
                 )
             )
@@ -285,7 +287,7 @@ class SharesAreCountedTest(_DashboardTestCase):
 
 class TheReadingIsCountedTest(_DashboardTestCase):
     def test_shared_files_by_where_their_reading_is(self):
-        self.share(files=["a", "b"])
+        self.share(files=["a", "b"], processing_status=PolicyDocument.PROCESSING_RECEIVED)
         self.share(files=["c"], processing_status=PolicyDocument.PROCESSING_READY)
         self.share(files=["d"], processing_status=PolicyDocument.PROCESSING_UNREADABLE)
         self.share(files=["e"], processing_status=PolicyDocument.PROCESSING_REMOVED)
