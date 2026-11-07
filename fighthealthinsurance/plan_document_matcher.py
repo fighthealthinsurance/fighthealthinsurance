@@ -698,6 +698,9 @@ def _inputs_hash(
         "answers": [
             [
                 c.id,
+                # The plan link as trusted now: a plan moved to another
+                # insurer drops out here, so the selection is redone.
+                c.insurance_plan_id,
                 b.negative_hit,
                 b.regex_hit,
                 b.keyword_hits,

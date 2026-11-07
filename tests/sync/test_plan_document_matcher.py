@@ -432,6 +432,13 @@ class MatchDocumentsTests(_CorpusMixin, TestCase):
         scored = self.scored_by_id(outcome)
         self.assertNotIn("same_plan", scored[self.senior_advantage_eoc.id].signals)
 
+    def test_moving_a_plan_to_another_insurer_changes_the_inputs_hash(self):
+        denial = self.denial(SENIOR_ADVANTAGE_LETTER, insurance_plan_obj=self.ma_plan)
+        before = current_hashes(denial)[0]
+        self.ma_plan.insurance_company = self.aetna
+        self.ma_plan.save(update_fields=["insurance_company"])
+        self.assertNotEqual(current_hashes(denial)[0], before)
+
     def test_a_dental_document_found_only_by_the_letters_words_goes_to_the_model(self):
         # No medical document is in the running, so there is no rival; the
         # dental document still is not selected by the rules alone.
