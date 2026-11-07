@@ -6886,8 +6886,11 @@ class AppealsBackendHelper:
             # the citation barrier watches both; the refresh then hands the
             # inline generate_citations call a warm in-memory denial, and
             # that helper applies its own candidate->main freshness/promotion.
-            # How long an inline context fetch is waited for.
-            inline_timeout = 40
+            # How long an inline context fetch is waited for. 50 rather than
+            # 40 since relevance judging and per-article summaries were
+            # added: PubMed's extra 10 seconds go to those
+            # (pubmed_tools.JUDGING_BUDGET_SECONDS, _SUMMARY_RESERVE_SECONDS).
+            inline_timeout = 50
 
             def warmed_context(
                 readiness_fields,
