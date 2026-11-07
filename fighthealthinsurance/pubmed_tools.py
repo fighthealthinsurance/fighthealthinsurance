@@ -65,8 +65,15 @@ T = TypeVar("T")
 # they are; judgments that landed in time are stored either way.
 JUDGING_BUDGET_SECONDS = 15.0
 # What judging leaves of a caller's budget for summarizing the articles
-# (the summary itself is cut at the budget, keeping the articles unsummarized).
+# that have no summary yet (each summary is cut at the budget, and its
+# article goes on with its abstract).
 _SUMMARY_RESERVE_SECONDS = 5.0
+# The most those summaries take without a caller's budget, and how many are
+# written at once (the same backends write appeals).
+_SUMMARY_BUDGET_SECONDS = 20.0
+_SUMMARY_CONCURRENCY = 3
+# The longest summary an article goes into the letter's context with.
+_ARTICLE_SUMMARY_CHARS = 800
 
 
 def judgment_rows(
@@ -1227,47 +1234,77 @@ class PubMedTools(object):
                 budget=judging_budget,
             )
 
-        # Format the articles for context
-        if articles:
-            logger.debug("Making single context input")
-            joined_contexts = "\n".join(
-                self.format_article_short(
-                    article, probably_off_topic=article.pmid in off_topic
-                )
-                for article in articles
-            )
-            if len(joined_contexts) < 100:
-                logger.debug("Not much input, skpping summary step.")
-                return joined_contexts
-            # The summary merges the articles into prose, which can lose the
-            # per-article note, so the note goes after it as well.
-            off_topic_trailer = self.off_topic_trailer(
-                [a for a in articles if a.pmid in off_topic]
-            )
-            summary_budget = None
-            if budget is not None:
-                # Leave a moment before the caller's own cut.
-                elapsed = asyncio.get_running_loop().time() - started
-                summary_budget = max(budget - elapsed - 0.5, 0.0)
-            try:
-                r: Optional[str] = await asyncio.wait_for(
-                    ml_router.summarize(
-                        title="Combined contexts",
-                        text=joined_contexts,
-                        literature=True,
-                    ),
-                    timeout=summary_budget,
-                )
-            except asyncio.TimeoutError:
-                logger.debug("Summary ran out of time; using the articles as is")
-                return joined_contexts
-            logger.debug("Summarized combined contexts")
-            if r is None:
-                return joined_contexts
-            else:
-                return f"{r}\n{off_topic_trailer}" if off_topic_trailer else r
-        else:
+        # Each article goes to the letter's model as its own entry, with its
+        # own summary and its own relevance note. (A summary of all of them
+        # together was cut to the summarizer's input cap, so it read only the
+        # first article or two, and merged away which one a note was about.)
+        if not articles:
             return ""
+        summary_budget = _SUMMARY_BUDGET_SECONDS
+        if budget is not None:
+            # Leave a moment before the caller's own cut.
+            elapsed = asyncio.get_running_loop().time() - started
+            summary_budget = min(summary_budget, budget - elapsed - 0.5)
+        await self._summarize_unsummarized(articles, summary_budget)
+        return "\n".join(
+            self.format_article_short(
+                article, probably_off_topic=article.pmid in off_topic
+            )
+            for article in articles
+        )
+
+    @staticmethod
+    async def _summarize_unsummarized(
+        articles: list[PubMedArticleSummarized], budget: float
+    ) -> None:
+        """Give each of ``articles`` without a summary one of its own
+        (ml_router.summarize, as do_article_summary does), a few at once,
+        within ``budget`` seconds, storing it on the row for the next case
+        about it. Articles not summarized in time, or whose summary failed,
+        go on with the start of their abstract (format_article_short).
+        Never raises (cancellation aside)."""
+        missing = [
+            a
+            for a in articles
+            if not (a.basic_summary or "").strip()
+            and ((a.abstract or "").strip() or (a.text or "").strip())
+        ]
+        if not missing or budget <= 0:
+            return
+        gate = asyncio.Semaphore(_SUMMARY_CONCURRENCY)
+
+        async def one(article: PubMedArticleSummarized) -> None:
+            async with gate:
+                summary = await ml_router.summarize(
+                    title=article.title or "",
+                    abstract=article.abstract,
+                    text=article.text,
+                    literature=True,
+                )
+            if not (summary or "").strip():
+                return
+            article.basic_summary = summary
+            if article.pk is not None:
+                await PubMedArticleSummarized.objects.filter(
+                    pk=article.pk, basic_summary__isnull=True
+                ).aupdate(basic_summary=summary)
+
+        tasks = [asyncio.ensure_future(one(a)) for a in missing]
+        try:
+            await asyncio.wait(tasks, timeout=budget)
+        finally:
+            unfinished = [t for t in tasks if not t.done()]
+            for task in unfinished:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        failed = sum(
+            1 for t in tasks if not t.cancelled() and t.exception() is not None
+        )
+        if unfinished or failed:
+            logger.debug(
+                f"Article summaries: {len(unfinished)} ran out of time and "
+                f"{failed} failed of {len(missing)}; those use their abstracts"
+            )
 
     async def judge_articles(
         self, denial: Denial, articles: list[PubMedArticleSummarized]
@@ -1380,28 +1417,6 @@ class PubMedTools(object):
         )
 
     @staticmethod
-    def off_topic_trailer(articles: list[PubMedArticleSummarized]) -> str:
-        """One line naming the ``articles`` judged probably off topic, with
-        what the letter's model should make of that; "" for none."""
-        named = [
-            f"PMID {a.pmid}" + (f" ({a.title})" if a.title else "")
-            for a in articles
-            if a.pmid
-        ]
-        if not named:
-            return ""
-        return (
-            "Relevance note: "
-            + "; ".join(named)
-            + (" was" if len(named) == 1 else " were")
-            + " judged "
-            + research_judging.PROBABLY_OFF_TOPIC_NOTE.replace(
-                "cite it", "cite it" if len(named) == 1 else "cite one"
-            )
-            + "."
-        )
-
-    @staticmethod
     def format_article_short(
         article: PubMedArticleSummarized, probably_off_topic: bool = False
     ) -> str:
@@ -1409,8 +1424,9 @@ class PubMedTools(object):
         citation metadata, and, when it was judged ``probably_off_topic``,
         a note saying so (research_judging.PROBABLY_OFF_TOPIC_NOTE)."""
         summary = None
-        if article.basic_summary:
-            summary = article.basic_summary
+        own_summary = (article.basic_summary or "").strip()
+        if own_summary:
+            summary = truncate_at_boundary(own_summary, _ARTICLE_SUMMARY_CHARS)
         elif article.abstract:
             summary = truncate_at_boundary(article.abstract, 500)
 

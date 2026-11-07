@@ -348,14 +348,13 @@ class TestPubMedRelevanceNote:
     def test_an_on_topic_article_has_no_note(self):
         assert "Relevance note" not in PubMedTools.format_article_short(self._article())
 
-    def test_the_trailer_names_each_article_by_pmid(self):
-        trailer = PubMedTools.off_topic_trailer(
-            [self._article("1", "One"), self._article("2", "Two")]
-        )
-        assert "PMID 1 (One); PMID 2 (Two) were judged probably off topic" in trailer
-
-    def test_no_articles_no_trailer(self):
-        assert PubMedTools.off_topic_trailer([]) == ""
+    def test_an_articles_own_summary_is_used_and_capped(self):
+        article = self._article()
+        article.basic_summary = "This study found MRI helped. " * 100
+        text = PubMedTools.format_article_short(article)
+        summary = text.split("Summary: ", 1)[1]
+        assert summary.startswith("This study found MRI helped.")
+        assert len(summary) <= 800
 
 
 def _denial(use_external=True, **fields):
@@ -508,10 +507,8 @@ class TestJudgeArticlesForADenial:
         )
         assert (sorted(kept), off_topic, row) == (["1", "2", "3"], {"2"}, ["1", "2", "3"])
 
-    def test_the_summarized_context_still_names_the_probably_off_topic_one(self):
+    def _context(self, articles, on_topic, summarize):
         denial = _denial()
-        articles = [_article("1"), _article("2")]
-        on_topic = {"Title 1": 0.9, "Title 2": 0.45}
 
         async def fake_post(state, questions, timeout):
             title = next(t for t in on_topic if t in state)
@@ -524,12 +521,56 @@ class TestJudgeArticlesForADenial:
             "find_pubmed_articles_for_denial",
             new=AsyncMock(return_value=articles),
         ), patch(
-            "fighthealthinsurance.pubmed_tools.ml_router.summarize",
-            new=AsyncMock(return_value="Both studies looked at MRI."),
+            "fighthealthinsurance.pubmed_tools.ml_router.summarize", new=summarize
         ):
-            context = async_to_sync(PubMedTools().find_context_for_denial)(denial)
-        assert context.startswith("Both studies looked at MRI.\n")
-        assert "PMID 2 (Title 2) was judged probably off topic" in context
+            return async_to_sync(PubMedTools().find_context_for_denial)(denial)
+
+    def test_each_article_is_its_own_entry_with_its_own_note(self):
+        context = self._context(
+            [_article("1"), _article("2")],
+            {"Title 1": 0.9, "Title 2": 0.45},
+            AsyncMock(side_effect=lambda **kw: f"Summary of {kw['title']}."),
+        )
+        one, two = context.split("\n")
+        assert "PMID: 1" in one and "Summary of Title 1." in one
+        assert "Relevance note" not in one
+        assert "PMID: 2" in two and "Summary of Title 2." in two
+        assert two.endswith(f"Relevance note: judged {rj.PROBABLY_OFF_TOPIC_NOTE}")
+
+    def test_articles_are_summarized_one_at_a_time_never_together(self):
+        summarize = AsyncMock(return_value="A summary.")
+        self._context(
+            [_article("1"), _article("2")], {"Title 1": 0.9, "Title 2": 0.9}, summarize
+        )
+        assert sorted(c.kwargs["title"] for c in summarize.await_args_list) == [
+            "Title 1",
+            "Title 2",
+        ]
+
+    def test_a_new_summary_is_stored_on_the_article(self):
+        self._context(
+            [_article("1")], {"Title 1": 0.9}, AsyncMock(return_value="Stored one.")
+        )
+        assert PubMedArticleSummarized.objects.get(pmid="1").basic_summary == (
+            "Stored one."
+        )
+
+    def test_a_stored_summary_is_not_written_again(self):
+        article = _article("1")
+        PubMedArticleSummarized.objects.filter(pk=article.pk).update(
+            basic_summary="Already here."
+        )
+        article.refresh_from_db()
+        summarize = AsyncMock(return_value="New.")
+        context = self._context([article], {"Title 1": 0.9}, summarize)
+        summarize.assert_not_awaited()
+        assert "Already here." in context
+
+    def test_a_failed_summary_falls_back_to_the_abstract(self):
+        context = self._context(
+            [_article("1")], {"Title 1": 0.9}, AsyncMock(side_effect=RuntimeError)
+        )
+        assert f"Summary: {ABSTRACT}" in context
 
     def test_selected_articles_not_fetched_in_time_stay_on_the_row(self):
         # The search selected three; the fetch was cut after two. Judging

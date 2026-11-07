@@ -451,10 +451,14 @@ class PubMedToolsAsyncTest(TransactionTestCase):
             pubmed_tools = PubMedTools()
             context = await pubmed_tools.find_context_for_denial(self.test_denial)
 
-            # Verify summarize was called with context including our article
-            mock_summarize.assert_called_once()
-            # Return value from the mock
-            self.assertEqual(context, "Mock summarized text with article information")
+            # The article goes in as its own entry, with the summary it
+            # already has: nothing is summarized again, or merged.
+            mock_summarize.assert_not_called()
+            self.assertIn("PMID: 12345678", context)
+            self.assertIn(
+                "Summary: Summary about physical therapy for rheumatoid arthritis",
+                context,
+            )
 
         # Run the async test in a sync context
         async_to_sync(run_test)()
@@ -648,9 +652,14 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
 
             context = await tools.find_context_for_denial(self.denial)
 
-            # Context should be the summarized string
-            self.assertEqual(context, "Summarized PubMed context for appeal")
-            mock_summarize.assert_called()
+            # One entry per article, each with its own stored summary; the
+            # articles are not summarized again, or together.
+            lines = context.split("\n")
+            self.assertEqual(len(lines), len(set(article_pmids)))
+            for pmid in article_pmids:
+                self.assertIn(f"PMID: {pmid}", context)
+                self.assertIn(f"Summary: Summary for article {pmid}:", context)
+            mock_summarize.assert_not_called()
 
             # --- Step 3: Verify cache is used on repeat call ---
             mock_pmids.reset_mock()
@@ -797,7 +806,11 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             await sync_to_async(self.denial.refresh_from_db)()
 
             context = await tools.find_context_for_denial(self.denial)
-            self.assertEqual(context, "Summarized context with microsite articles")
+            # One entry per article, each carrying its own PMID.
+            lines = context.split("\n")
+            self.assertGreater(len(lines), 0)
+            for line in lines:
+                self.assertIn("PMID: ", line)
 
         async_to_sync(run_test)()
 
