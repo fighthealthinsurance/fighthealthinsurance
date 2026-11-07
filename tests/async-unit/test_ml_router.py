@@ -9,6 +9,7 @@ from typing import Optional
 
 from fighthealthinsurance import env_utils
 from fighthealthinsurance.ml import ml_models, spend
+from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.ml_router import (
     MLRouter,
     _EXTERNAL_GENERALIST,
@@ -1983,15 +1984,23 @@ class TestNemotronLeadsOutsideWriters(unittest.TestCase):
             gemma = DeepInfra(model=GEMMA)
             kimi = DeepInfra(model="moonshotai/Kimi-K3")
         self.assertEqual(gemma._request_extras(GEMMA), {})
-        self.assertEqual(
-            kimi._request_extras("moonshotai/Kimi-K3"), {"max_tokens": 3000}
-        )
+        # The chat caps apply to chat calls only (see DeepInfra._request_extras).
+        with ml_call_purpose("chat"):
+            self.assertEqual(
+                kimi._request_extras("moonshotai/Kimi-K3"), {"max_tokens": 3000}
+            )
 
     def test_it_leads_the_deepinfra_writers(self):
         router = self._router({"DEEPINFRA_API": "test-key"})
         self.assertEqual(
             self._best(router),
-            [NEMOTRON, "deepseek-ai/DeepSeek-V4-Pro-0813", GEMMA],
+            # The 1017 Flash (quality 82) is a general model too, so it
+            # outranks Gemma (80).
+            [
+                NEMOTRON,
+                "deepseek-ai/DeepSeek-V4-Pro-0813",
+                "deepseek-ai/DeepSeek-V4.1-Flash-1017",
+            ],
         )
 
     def test_it_ties_the_frontier_tier_and_cost_breaks_the_tie(self):
