@@ -16,7 +16,7 @@
       border-bottom: 2px solid #0056b3;
       padding-bottom: 10px;
     }
-    .card {
+    .signup-card {
       background: #ffffff;
       padding: 20px;
       border: 1px solid #dddddd;
@@ -87,7 +87,7 @@
     <div class="notice">✅ {{ notice }} A note was replied to the signup's notification thread.</div>
   {% endif %}
 
-  <div class="card">
+  <div class="signup-card">
     <h2>Signup #{{ pro.id }}</h2>
     <table class="info">
       <tr><th>Name</th><td>{% if pro.name %}{{ pro.name }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
@@ -100,7 +100,7 @@
     </table>
   </div>
 
-  <div class="card">
+  <div class="signup-card">
     {% if block_reason %}
       <div class="blocked">ℹ️ {{ block_reason }}</div>
     {% elif action == "thankyou" %}
