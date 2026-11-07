@@ -240,24 +240,11 @@ def match_sponsor(sponsor: Sponsor) -> Optional[PlanSponsor]:
     return PlanSponsor.objects.filter(normalized_name=normalized).order_by("pk").first()
 
 
-def link_sponsor(
-    doc_id: Union[str, uuid.UUID], sponsor: Sponsor
-) -> Optional[PlanSponsor]:
+def link_sponsor(doc_id: Union[str, uuid.UUID], sponsor: Sponsor) -> PlanSponsor:
     """The company on the running list for ``sponsor`` (match_sponsor),
     added when it isn't there, linked to the document ``doc_id`` if that
-    has no company yet. None, with nothing written, when the document is
-    gone or was removed while it was being read: the row is locked first,
-    so a removal can't land between the check and the write."""
+    has no company yet and wasn't removed while it was being read."""
     with transaction.atomic():
-        doc = (
-            PolicyDocument.objects.select_for_update()
-            .filter(pk=doc_id)
-            .exclude(processing_status=PolicyDocument.PROCESSING_REMOVED)
-            .only("pk")
-            .first()
-        )
-        if doc is None:
-            return None
         company = match_sponsor(sponsor)
         if company is not None and sponsor.ein and not company.ein:
             company.ein = sponsor.ein

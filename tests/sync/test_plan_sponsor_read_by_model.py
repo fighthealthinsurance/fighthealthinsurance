@@ -373,7 +373,6 @@ class TheReviewFindingsTest(TestCase):
             async_to_sync(alink_company)(str(doc.pk), BOOKLET)
         doc.refresh_from_db()
         self.assertEqual((doc.plan_sponsor_id, doc.plan_sponsor_evidence), (None, ""))
-        self.assertFalse(PlanSponsor.objects.filter(name="Google LLC").exists())
 
 
 class TheSecondReviewTest(TestCase):

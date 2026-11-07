@@ -61,8 +61,6 @@ class Command(BaseCommand):
                 continue
             if options["apply"]:
                 linked = link_sponsor(pk, sponsor)
-                if linked is None:
-                    continue
                 key, name = ("on the list", str(linked.pk)), linked.name
             else:
                 company = match_sponsor(sponsor)
