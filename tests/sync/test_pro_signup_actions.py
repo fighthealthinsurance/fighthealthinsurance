@@ -229,6 +229,42 @@ class BlockActionTest(_StaffCase):
         self.client.post(self.url("block"))
         self.assertFalse(ScheduledEmail.objects.filter(to_email=self.EMAIL).exists())
 
+    def _queue_intro(self):
+        InterestedProfessional.objects.filter(pk=self.pro.pk).update(
+            proconnector_attempted=True, proconnector_email_body="Queued intro."
+        )
+        ScheduledEmail.objects.create(
+            to_email=self.EMAIL,
+            template_name="proconnector_intro",
+            purpose="proconnector_intro",
+        )
+
+    def test_cancelled_queued_intro_can_be_queued_again_after_unblock(self):
+        self._queue_intro()
+        self.client.post(self.url("block"))
+        InterestedProfessional.objects.filter(pk=self.pro.pk).update(blocked=False)
+        self.pro.refresh_from_db()
+        self.assertIsNone(proconnector.quick_intro_block_reason(self.pro))
+
+    def test_delivered_intro_keeps_its_record(self):
+        sent_at = timezone.now()
+        InterestedProfessional.objects.filter(pk=self.pro.pk).update(
+            proconnector_attempted=True,
+            proconnector_sent_at=sent_at,
+            proconnector_email_body="Sent intro.",
+        )
+        ScheduledEmail.objects.create(
+            to_email=self.EMAIL,
+            template_name="proconnector_intro",
+            purpose="proconnector_intro",
+        )
+        self.client.post(self.url("block"))
+        self.pro.refresh_from_db()
+        self.assertEqual(
+            (self.pro.proconnector_attempted, self.pro.proconnector_email_body),
+            (True, "Sent intro."),
+        )
+
     def test_replies_to_the_notification_thread(self):
         self.client.post(self.url("block"))
         self.assertIn(f"Ada Admin blocked {self.EMAIL}", self.thread_notes()[0].body)

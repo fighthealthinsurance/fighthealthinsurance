@@ -126,7 +126,9 @@ def block_address(pro: InterestedProfessional) -> int:
     """Block every lead with ``pro``'s email (any case); returns how many.
 
     Also drops any email still queued to the address, such as an introduction
-    waiting for business hours. ``0`` means it was already blocked.
+    waiting for business hours. A cancelled introduction is put back as never
+    attempted, so unblocking the address lets staff queue it again; a
+    delivered one keeps its record. ``0`` means it was already blocked.
     """
     email = (pro.email or "").strip()
     with transaction.atomic():
@@ -134,5 +136,13 @@ def block_address(pro: InterestedProfessional) -> int:
             email__iexact=email, blocked=False
         ).update(blocked=True, blocked_at=timezone.now())
         if blocked:
-            ScheduledEmail.objects.filter(to_email__iexact=email, sent=False).delete()
+            pending = ScheduledEmail.objects.filter(to_email__iexact=email, sent=False)
+            cancelled_intro = pending.filter(purpose="proconnector_intro").exists()
+            pending.delete()
+            if cancelled_intro:
+                InterestedProfessional.objects.filter(
+                    email__iexact=email,
+                    proconnector_attempted=True,
+                    proconnector_sent_at__isnull=True,
+                ).update(proconnector_attempted=False, proconnector_email_body=None)
     return blocked
