@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0258_chooservote_review_insights"),
+        ("fighthealthinsurance", "0259_denial_other_insurance"),
     ]
 
     operations = [
