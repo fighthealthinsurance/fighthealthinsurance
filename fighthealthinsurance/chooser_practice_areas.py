@@ -156,6 +156,7 @@ _PRACTICE_AREA_TERMS = {
         "gender confirming",
         "gender confirmation",
         "gender dysphoria",
+        "f64",
         "gender incongruence",
         "gender identity",
         "gender reassignment",
@@ -174,6 +175,8 @@ _PRACTICE_AREA_TERMS = {
         "estradiol",
         "estrogen",
         "testosterone",
+        "spironolactone",
+        "cyproterone",
         "puberty blocker",
         "puberty blockers",
         "puberty suppression",
@@ -314,6 +317,36 @@ _PRACTICE_AREA_TERMS = {
 }
 
 
+# Vocabulary that rules text out of an area even when one of its terms
+# matches. Gender-affirming care shares treatment and hormone words with
+# other specialties ("mastectomy", "estrogen", "testosterone"), so without
+# this a mastectomy for estrogen-receptor-positive breast cancer, or
+# testosterone for hypogonadism, would pass as gender-affirming care.
+_PRACTICE_AREA_EXCLUDED_TERMS = {
+    "gender-affirming-care": (
+        "cancer",
+        "carcinoma",
+        "malignan*",
+        "tumor",
+        "tumour",
+        "metasta*",
+        "hypogonad*",
+        "low testosterone",
+        "testosterone deficiency",
+    ),
+}
+
+
+def _has_any_term(terms: tuple, tokens: set, normalized: str) -> bool:
+    for term in terms:
+        if term.endswith("*"):
+            if any(token.startswith(term[:-1]) for token in tokens):
+                return True
+        elif f" {term} " in normalized:
+            return True
+    return False
+
+
 def practice_area_text_matches(raw_area: object, text: object) -> bool:
     """Whether generated text contains vocabulary for the requested area."""
     area = normalize_practice_area(raw_area)
@@ -322,13 +355,9 @@ def practice_area_text_matches(raw_area: object, text: object) -> bool:
     words = re.findall(r"[a-z0-9]+", text.casefold())
     tokens = set(words)
     normalized = f" {' '.join(words)} "
-    for term in _PRACTICE_AREA_TERMS[area]:
-        if term.endswith("*"):
-            if any(token.startswith(term[:-1]) for token in tokens):
-                return True
-        elif f" {term} " in normalized:
-            return True
-    return False
+    if _has_any_term(_PRACTICE_AREA_EXCLUDED_TERMS.get(area, ()), tokens, normalized):
+        return False
+    return _has_any_term(_PRACTICE_AREA_TERMS[area], tokens, normalized)
 
 
 def normalize_practice_area(raw: object) -> Optional[str]:

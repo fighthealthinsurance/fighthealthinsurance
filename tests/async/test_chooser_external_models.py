@@ -756,16 +756,22 @@ def test_gender_affirming_care_matching_covers_treatments_and_diagnoses():
     assert practice_area_text_matches(area, "My insurer denied my top surgery")
     assert practice_area_text_matches(area, "I'm a trans woman on estradiol")
     assert practice_area_text_matches(area, "Puberty blockers")
+    assert practice_area_text_matches(area, "F64.0")
+    assert practice_area_text_matches(area, "Spironolactone")
 
 
 def test_practice_area_wildcard_terms_are_single_words():
     # A wildcard is matched against one token at a time, so a prefix with a
     # space in it ("puberty blocker*") could never match anything.
-    from fighthealthinsurance.chooser_practice_areas import _PRACTICE_AREA_TERMS
+    from fighthealthinsurance.chooser_practice_areas import (
+        _PRACTICE_AREA_EXCLUDED_TERMS,
+        _PRACTICE_AREA_TERMS,
+    )
 
     multiword_wildcards = [
         term
-        for terms in _PRACTICE_AREA_TERMS.values()
+        for vocabulary in (_PRACTICE_AREA_TERMS, _PRACTICE_AREA_EXCLUDED_TERMS)
+        for terms in vocabulary.values()
         for term in terms
         if term.endswith("*") and " " in term
     ]
@@ -776,6 +782,14 @@ def test_gender_affirming_care_matching_skips_transplants_and_transfusions():
     area = "gender-affirming-care"
     assert not practice_area_text_matches(area, "Kidney transplant")
     assert not practice_area_text_matches(area, "Blood transfusion for anemia")
+
+
+def test_gender_affirming_care_matching_skips_cancer_and_hypogonadism():
+    area = "gender-affirming-care"
+    assert not practice_area_text_matches(
+        area, "Estrogen-receptor-positive breast cancer"
+    )
+    assert not practice_area_text_matches(area, "Male hypogonadism (low testosterone)")
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
