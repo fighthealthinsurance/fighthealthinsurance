@@ -362,10 +362,12 @@ class InterestedProfessionalAdmin(admin.ModelAdmin):
         "email",
         "paid",
         "signup_date",
+        "thankyou_email_sent",
+        "blocked",
         "submissions",
     )
     search_fields = ("name", "email", "business_name")
-    list_filter = ("paid", "signup_date", "mod_date")
+    list_filter = ("paid", "blocked", "thankyou_email_sent", "signup_date", "mod_date")
     ordering = ("-signup_date",)
     readonly_fields = ("submissions",)
 

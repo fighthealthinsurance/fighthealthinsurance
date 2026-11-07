@@ -1085,21 +1085,25 @@ def mailable_interested_professionals() -> "QuerySet[InterestedProfessional]":
     Addresses can repeat (duplicate signups), so callers sending mail must
     dedupe -- see ``dedupe_recipients_by_email``.
     """
-    return _exclude_filtered(InterestedProfessional.objects.filter(unsubscribed=False))
+    return _exclude_filtered(
+        InterestedProfessional.objects.filter(unsubscribed=False, blocked=False)
+    )
 
 
 def processable_queryset() -> "QuerySet[InterestedProfessional]":
     """Interested professionals eligible for pro-connector processing.
 
-    Excludes already attempted/skipped records, filtered test/spam signups, and
-    anyone who has unsubscribed -- an opt-out covers the introduction email too,
-    not just the broadcast that carried the unsubscribe link.
+    Excludes already attempted/skipped records, filtered test/spam signups,
+    addresses staff blocked, and anyone who has unsubscribed -- an opt-out
+    covers the introduction email too, not just the broadcast that carried the
+    unsubscribe link.
     """
     return _exclude_filtered(
         InterestedProfessional.objects.filter(
             proconnector_attempted=False,
             proconnector_skipped=False,
             unsubscribed=False,
+            blocked=False,
         )
     )
 
@@ -1115,6 +1119,8 @@ def quick_intro_block_reason(pro: InterestedProfessional) -> Optional[str]:
     around the queue's rules (an internal test account, an unsubscribed
     professional, a double send).
     """
+    if pro.blocked:
+        return "This address was blocked, so the introduction cannot be sent."
     if pro.proconnector_attempted:
         if pro.proconnector_sent_at:
             return (
@@ -1196,7 +1202,7 @@ def claim_email_for_send(email: str) -> int:
     ``proconnector_attempted`` and gets a non-zero count; a concurrent caller
     sees ``0`` and must skip. The same conditional guards against an
     unsubscribe landing while the record sits open in a staff tab: an
-    unsubscribed address can't be claimed, so the send never happens. Released
+    unsubscribed (or blocked) address can't be claimed, so the send never happens. Released
     via :func:`release_email_claim` if the subsequent send/queue fails. Returns
     the number of rows claimed.
     """
@@ -1205,6 +1211,7 @@ def claim_email_for_send(email: str) -> int:
         proconnector_attempted=False,
         proconnector_skipped=False,
         unsubscribed=False,
+        blocked=False,
     ).update(proconnector_attempted=True)
 
 

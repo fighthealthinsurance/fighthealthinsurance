@@ -276,6 +276,17 @@ class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"
     unsubscribed = models.BooleanField(default=False)
     unsubscribed_at = models.DateTimeField(null=True, blank=True)
 
+    # Staff review of a new signup (see pro_signup_actions.py). The thank-you
+    # email waits for staff to act from the team notification; "block address"
+    # sets these so nothing more goes to the address and later submissions
+    # from it are logged and dropped.
+    blocked = models.BooleanField(default=False, db_default=False)
+    blocked_at = models.DateTimeField(null=True, blank=True)
+    # The team notification's subject, so staff-action replies thread under it.
+    notification_subject = models.CharField(
+        max_length=300, default="", blank=True, db_default=""
+    )
+
     def __str__(self):
         return self.email
 
@@ -297,6 +308,7 @@ class ProfessionalInquiry(models.Model):
         CAPPED = "capped", "Capped"
         SPAM = "spam", "Spam"
         CLEARED = "cleared", "Not spam (cleared by staff)"
+        BLOCKED = "blocked", "Blocked address"
 
     interested_professional = models.ForeignKey(
         InterestedProfessional,

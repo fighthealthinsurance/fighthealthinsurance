@@ -236,6 +236,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="proconnector_quick_intro",
     ),
     path(
+        "timbit/help/pro_signup/<int:pro_id>/<slug:action>",
+        staff_member_required(staff_views.ProSignupActionView.as_view()),
+        name="pro_signup_action",
+    ),
+    path(
         "timbit/help/proconnector_extract.csv",
         staff_member_required(staff_views.ProConnectorExtractCSVView.as_view()),
         name="proconnector_extract_csv",

@@ -57,7 +57,11 @@ class AsyncEmailSenderMixin:
 
 class ThankyouEmailSender(AsyncEmailSenderMixin):
     def _find_candidates(self):
-        return InterestedProfessional.objects.filter(thankyou_email_sent=False)
+        # Not swept automatically any more: staff send each thank-you from the
+        # signup notification (pro_signup_actions.py).
+        return InterestedProfessional.objects.filter(
+            thankyou_email_sent=False, blocked=False, unsubscribed=False
+        )
 
     def find_candidates(
         self,
