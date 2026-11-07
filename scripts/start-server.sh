@@ -83,11 +83,12 @@ elif [ -n "$IMPORT_PLAN_DOCUMENTS" ]; then
     fi
     sleep 30
   done
-  # --deactivate-missing: the corpus owns the carriers it names, so their
-  # documents it no longer lists are retired. A refused record is skipped and
+  # --deactivate-missing --complete: the release is the whole corpus, so any
+  # imported document it no longer lists is retired, including a carrier's
+  # last one after a takedown (admin uploads are kept). A refused record is skipped and
   # counted in the log line; the Job fails only if the bundle itself cannot
   # be read. Unchanged files are not parsed again.
-  exec python manage.py import_plan_documents --source "$PLAN_DOCUMENTS_ZIP" --store-file --deactivate-missing
+  exec python manage.py import_plan_documents --source "$PLAN_DOCUMENTS_ZIP" --store-file --deactivate-missing --complete
 elif [ -n "$BACKFILL_APPEAL_FINGERPRINTS" ]; then
   # Post-rollout Job (k8s/temporal/backfill-fingerprints-job.yaml): second
   # pass of the ProposedAppeal fingerprint backfill. --strict exits non-zero

@@ -260,9 +260,12 @@ repository, organised by plan year and document type
 the PDFs, in Git LFS). Only documents found automatically on a carrier's own
 public website are published: every record carries the finder that proposed
 it, an https `source_url` on one of the carrier's listed domains, when it was
-fetched and the hash of its bytes, and the repository's `validate` refuses a
-record or a file without that provenance, so nothing can be added by hand.
-Discovery only writes drafts; reviewers promote a draft through a pull
+fetched and the hash of its bytes. The repository's `validate` refuses a
+record or a file without that provenance or with an unknown finder, and its
+pull-request CI fetches every new or changed record's `source_url` again and
+fails unless the bytes match the recorded hash, so a pull request cannot add
+a document the carrier does not serve (a direct push to its `main` skips that
+check). Discovery only writes drafts; reviewers promote a draft through a pull
 request there, and every published document is fetched again monthly. That
 repository's README covers the layout, discovery, review, the variant rule
 and takedown requests.
@@ -271,8 +274,8 @@ and takedown requests.
 checkout of this repository's `main` (a dry run), and its releases are
 imported by whatever this repository deploys. Both need this repository's
 `main` to carry the importer described here first: a single migration leaf
-(`0263_merge_public_plan_documents_plan_sponsor`; without it `migrate`
-refuses), a zip read from a path accepted up to `MAX_ARCHIVE_PATH_BYTES`
+(`0263_public_plan_documents`, renumbered on `main` so it follows
+`0262_plan_sponsor`), a zip read from a path accepted up to `MAX_ARCHIVE_PATH_BYTES`
 (before, the full collection was refused at `MAX_BUNDLE_BYTES`), and the
 contract refusals above (a top-level `defaults` key, a file whose bytes do
 not match its `source_sha256`, a Git LFS pointer). Merge that here before
@@ -336,7 +339,7 @@ own. Then it runs
 
 ```bash
 python manage.py import_plan_documents --source plan_documents/plan-docs.zip \
-    --store-file --deactivate-missing
+    --store-file --deactivate-missing --complete
 ```
 
 exiting with its status. The Job has `backoffLimit: 1`,
@@ -354,13 +357,15 @@ job/web-plan-documents-import`): the summary's `skipped=` count and the
 production's `InsuranceCompany` rows, which can differ from the fixtures the
 corpus repository's CI imports against.
 
-**The corpus owns its carriers.** The import runs with
-`--deactivate-missing` over one bundle that holds every carrier's complete
-published set, so for each carrier the corpus names, active documents the
-release does not list are retired, including documents a staff member
-imported by hand or added in the admin. Carriers the corpus does not name
-are never touched. To keep a document for such a carrier, publish it in the
-corpus repository instead.
+**The corpus owns the imported documents.** The import runs with
+`--deactivate-missing --complete` over one bundle that holds every
+carrier's complete published set, so any active document the release does
+not list is retired, whatever its carrier, including documents a staff
+member imported by hand with the command. A takedown that removes a
+carrier's last record, or empties the collection, therefore still retires
+it on the next deploy. Documents uploaded in the admin (`import_batch`
+`admin`) are kept. To keep any other document, publish it in the corpus
+repository instead.
 
 ### Writing records
 
@@ -421,7 +426,10 @@ retires the active documents of the carriers the bundle names whose keys it
 does not carry (a key whose record was refused still counts as carried, so
 a typo in one record never retires its document), and touches no other
 carrier, so a Kaiser bundle never retires an Aetna row; a partial bundle
-with the flag would retire the rest of the carrier's documents. Without the flag nothing is retired: a superseded
+with the flag would retire the rest of the carrier's documents. `--complete`
+widens the flag to every carrier, for a bundle that is the whole corpus
+(the deploy Job's release zip): every active document it does not carry is
+retired, except those uploaded in the admin. Without the flag nothing is retired: a superseded
 document stays active until it is deactivated in the admin or sent again with
 `"is_active": false`. Two plan years of one product within 15 points of each
 other are rivals that only the tie-break can separate, so retire last year's
@@ -440,7 +448,7 @@ python manage.py import_plan_documents --source bundle.json --dry-run
 python manage.py import_plan_documents --source bundle.json --batch kaiser-2025-01
 
 # The corpus release's zip, checked first, then for real (the deploy Job
-# runs the second line with --store-file --deactivate-missing)
+# runs the second line with --store-file --deactivate-missing --complete)
 python manage.py import_plan_documents --source plan_documents/plan-docs.zip --dry-run
 python manage.py import_plan_documents --source plan_documents/plan-docs.zip
 
@@ -465,6 +473,7 @@ kubectl exec <pod> -- python manage.py import_plan_documents \
 | `--store-file` | Keep the original of each `file` record (read under `--files-root` or from the archive) on storage, named `<document_key><extension>` (the storage adds a token of its own to the name). A re-import with the same bytes and extension leaves the kept file alone; different bytes replace it, the old file going once the run commits |
 | `--batch LABEL` | Stored as `import_batch` on every row the run writes; default a UTC timestamp such as `20250115T080000Z` |
 | `--deactivate-missing` | Retire the named carriers' active documents the bundle does not list |
+| `--complete` | With `--deactivate-missing`: the bundle is the whole corpus, so every carrier's active documents it does not list are retired, except those uploaded in the admin |
 | `--dry-run` | Do everything inside the transaction, then roll it back |
 | `--strict` | Refuse the whole bundle, writing nothing, on the first bad record or the first warning |
 | `--reparse` | Parse every `file` again, even one whose bytes and `pipeline_version` are the ones its row was parsed from (by default that row's text is reused) |

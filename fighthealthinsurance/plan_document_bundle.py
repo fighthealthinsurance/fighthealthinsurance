@@ -1079,6 +1079,7 @@ def import_bundle(
     store_file: bool = False,
     import_batch: str = "",
     deactivate_missing: bool = False,
+    complete: bool = False,
     dry_run: bool = False,
     strict: bool = False,
     reparse: bool = False,
@@ -1089,7 +1090,10 @@ def import_bundle(
     (or the first warning) raises BundleError and nothing is written.
     ``deactivate_missing`` retires the documents of the carriers the bundle
     names whose keys it does not carry (a key whose record was refused
-    still counts as carried), and only theirs. ``dry_run`` does the work
+    still counts as carried), and only theirs. With ``complete`` the bundle
+    is the whole corpus: it retires every document it does not carry,
+    whatever the carrier, so a carrier whose last record left the corpus is
+    retired too; rows uploaded in the admin are kept. ``dry_run`` does the work
     and rolls it back, writing no files; a run that is abandoned removes
     the files it had written. A ``file`` whose bytes and pipeline version
     are the ones its row was parsed from keeps the row's text unless
@@ -1162,14 +1166,18 @@ def import_bundle(
                     result.warnings.append((index, prepared.document_key, warning))
                 seen_companies.add(prepared.fields["insurance_company"].id)
                 setattr(result, outcome, getattr(result, outcome) + 1)
-            if deactivate_missing and seen_companies:
-                result.deactivated = (
-                    PublicPlanDocument.objects.filter(
-                        insurance_company_id__in=seen_companies
+            if deactivate_missing and (complete or seen_companies):
+                missing = PublicPlanDocument.objects.filter(is_active=True).exclude(
+                    document_key__in=named_keys
+                )
+                if complete:
+                    missing = missing.exclude(
+                        import_batch=PublicPlanDocument.ADMIN_IMPORT_BATCH
                     )
-                    .exclude(document_key__in=named_keys)
-                    .filter(is_active=True)
-                    .update(is_active=False, updated_at=timezone.now())
+                else:
+                    missing = missing.filter(insurance_company_id__in=seen_companies)
+                result.deactivated = missing.update(
+                    is_active=False, updated_at=timezone.now()
                 )
             if dry_run:
                 transaction.set_rollback(True)

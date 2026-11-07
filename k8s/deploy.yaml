@@ -140,7 +140,7 @@ metadata:
   # release pinned in plan_documents.lock; docs/plan-document-corpus.md).
   # IMPORT_PLAN_DOCUMENTS in scripts/start-server.sh waits for this deploy's
   # migrations, loads the insurer fixtures, and runs one
-  # `import_plan_documents --store-file --deactivate-missing`. With no corpus
+  # `import_plan_documents --store-file --deactivate-missing --complete`. With no corpus
   # pinned it logs that and exits 0. Jobs are immutable, so scripts/build.sh
   # deletes the previous run before the apply.
   name: web-plan-documents-import

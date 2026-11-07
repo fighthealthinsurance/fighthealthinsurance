@@ -261,10 +261,10 @@ def _import_branch() -> str:
     return text[start : text.index("\nelif ", start + 1)]
 
 
-def test_start_server_imports_the_zip_with_deactivate_missing():
+def test_start_server_imports_the_zip_as_the_complete_corpus():
     assert (
         "python manage.py import_plan_documents "
-        '--source "$PLAN_DOCUMENTS_ZIP" --store-file --deactivate-missing'
+        '--source "$PLAN_DOCUMENTS_ZIP" --store-file --deactivate-missing --complete'
     ) in _import_branch()
 
 

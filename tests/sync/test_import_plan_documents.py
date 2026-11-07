@@ -448,6 +448,35 @@ class DryRunAndDeactivateMissingTest(_ImportTestCase):
         self.assertTrue(self.the_document(SBC_KEY).is_active)
         self.assertIn("skipped=1 deactivated=0", out)
 
+    def test_complete_retires_a_carrier_the_bundle_no_longer_names(self):
+        out, docs = self.three_documents_then_the_eoc_alone(
+            deactivate_missing=True, complete=True
+        )
+        self.assertEqual(
+            {key: d.is_active for key, d in docs.items()},
+            {EOC_KEY: True, SBC_KEY: False, "aetna-eoc-2025": False},
+        )
+        self.assertIn("deactivated=2", out)
+
+    def test_complete_with_an_empty_bundle_retires_every_imported_document(self):
+        self.run_import([self.record()])
+        out, _ = self.run_import([], deactivate_missing=True, complete=True)
+        self.assertFalse(self.the_document().is_active)
+        self.assertIn("deactivated=1", out)
+
+    def test_complete_keeps_documents_uploaded_in_the_admin(self):
+        self.run_import([self.record()])
+        PublicPlanDocument.objects.filter(document_key=EOC_KEY).update(
+            import_batch=PublicPlanDocument.ADMIN_IMPORT_BATCH
+        )
+        self.run_import([], deactivate_missing=True, complete=True)
+        self.assertTrue(self.the_document().is_active)
+
+    def test_complete_without_deactivate_missing_is_a_command_error(self):
+        with self.assertRaises(CommandError):
+            self.run_import([self.record()], complete=True)
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
 
 class FileRecordsTest(_ImportTestCase):
     def test_parses_a_pdf_file_under_the_files_root(self):

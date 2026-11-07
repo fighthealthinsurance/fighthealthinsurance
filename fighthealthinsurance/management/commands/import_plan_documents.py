@@ -22,7 +22,8 @@ the summary styled as a warning; ``--strict`` refuses the whole bundle on
 the first bad record instead. A bundle that cannot be read at all (not
 JSON, too large, a key given twice) is a CommandError. ``--dry-run`` does
 everything and rolls it back; ``--deactivate-missing`` retires the named
-carriers' documents the bundle no longer lists.
+carriers' documents the bundle no longer lists (with ``--complete``, every
+carrier's, for a bundle that is the whole corpus).
 
 A zip read from a path may be up to 2 GiB on disk (``MAX_ARCHIVE_PATH_BYTES``);
 a JSON bundle, or anything on stdin, up to 256 MiB. A ``file`` whose bytes
@@ -104,7 +105,18 @@ class Command(BaseCommand):
             action="store_true",
             help=(
                 "Mark the named carriers' documents that the bundle does not list "
-                "as inactive. Only those carriers' rows are touched."
+                "as inactive. Only those carriers' rows are touched, unless "
+                "--complete is given."
+            ),
+        )
+        parser.add_argument(
+            "--complete",
+            action="store_true",
+            help=(
+                "The bundle is the whole corpus (the deploy Job's release zip): "
+                "--deactivate-missing then retires every document it does not "
+                "list, whatever the carrier. Documents uploaded in the admin "
+                "are kept."
             ),
         )
         parser.add_argument(
@@ -218,6 +230,8 @@ class Command(BaseCommand):
     def _import(
         self, records: List[dict], archive: Optional[BundleArchive], options: Any
     ) -> None:
+        if options["complete"] and not options["deactivate_missing"]:
+            raise CommandError("--complete only applies with --deactivate-missing")
         if archive is not None and options["files_root"] is not None:
             raise CommandError(
                 "An archive carries its own files: --files-root is not used with one"
@@ -259,6 +273,7 @@ class Command(BaseCommand):
                 store_file=options["store_file"],
                 import_batch=batch,
                 deactivate_missing=options["deactivate_missing"],
+                complete=options["complete"],
                 dry_run=options["dry_run"],
                 strict=options["strict"],
                 reparse=options["reparse"],
