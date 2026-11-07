@@ -244,6 +244,11 @@ class Base(Configuration):
     # Off by default: the page and its JSON serve 404, nothing links to it,
     # and it stays out of the sitemap and llms.txt. Dev/Test enable it.
     ARENA_RANKINGS_PAGE_ENABLED = _env_flag("ARENA_RANKINGS_PAGE_ENABLED")
+    # Matching denials to the public plan documents we fetched
+    # (plan_document_matcher) and quoting them in the appeal prompt. Off by
+    # default: the corpus importer and admin work without it, so documents
+    # can be loaded and reviewed before any letter changes.
+    PLAN_DOCUMENT_MATCHING_ENABLED = _env_flag("PLAN_DOCUMENT_MATCHING_ENABLED")
 
     # --- Temporal (durable workflow execution) ---
     # Off by default: fax sending stays on the Ray fax actor until

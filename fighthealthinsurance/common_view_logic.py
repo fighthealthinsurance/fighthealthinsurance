@@ -2608,6 +2608,9 @@ EXTRACTION_TASK_DATE_OF_SERVICE = "date_of_service"
 EXTRACTION_TASK_REGULATOR = "regulator"
 EXTRACTION_TASK_TRIAGE = "triage"
 EXTRACTION_TASK_PLAN_DOCUMENTS = "plan_documents"
+# The public plan documents we fetched, matched to the letter
+# (plan_document_matcher); run only with PLAN_DOCUMENT_MATCHING_ENABLED.
+EXTRACTION_TASK_PLAN_DOCUMENT_CORPUS = "plan_document_corpus"
 EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS = "procedure_and_diagnosis"
 EXTRACTION_TASK_DENIAL_TYPE = "denial_type"
 
@@ -3052,6 +3055,9 @@ class DenialCreatorHelper:
           and the NICE, guideline (RAG) and past-review (IMR) context. Each
           is built from the procedure and diagnosis read out of the letter,
           or from the codes in its text.
+        * the public plan documents matched to the letter
+          (``PlanDocumentMatch``, plan_document_matcher), chosen from the
+          carrier, region and plan the old letter named.
 
         With the flag at None and the extracted values gone, the new letter
         is read on the next visit to the extraction page, which fills only
@@ -3137,6 +3143,11 @@ class DenialCreatorHelper:
             PlanSourceRelation.objects.filter(
                 denial=denial, src__name=denial_triage.TRIAGE_DATA_SOURCE
             ).delete()
+            # The public plan documents matched to the old letter
+            # (plan_document_matcher); the new one is matched afresh.
+            matches_deleted, _ = PlanDocumentMatch.objects.filter(
+                denial=denial
+            ).delete()
             Denial.objects.filter(denial_id=denial.denial_id).update(
                 denial_text_summary=None,
                 candidate_denial_text_summary=None,
@@ -3156,8 +3167,9 @@ class DenialCreatorHelper:
             f"{deleted} held-back speculative appeal(s), both cached "
             f"denial-text summaries, the triage columns, the candidate "
             f"procedure/diagnosis mirrors, {types_deleted} detected denial "
-            f"type(s), the question set, both citation sets and the stored "
-            f"research; extracted values cleared: "
+            f"type(s), the question set, both citation sets, the stored "
+            f"research and {matches_deleted} plan document match(es); "
+            f"extracted values cleared: "
             f"{', '.join(letter_values_cleared) or 'none'}"
         )
 
@@ -3983,6 +3995,19 @@ class DenialCreatorHelper:
             EXTRACTION_TASK_PROCEDURE_AND_DIAGNOSIS,
             EXTRACTION_TASK_DENIAL_TYPE,
         ]
+        # Only while the flag is on: an expected task that never reports is
+        # told as timed out, and a disabled step's None would read as
+        # "nothing found".
+        from fighthealthinsurance import plan_document_matcher
+
+        if plan_document_matcher.enabled():
+            optional_awaitables.append(
+                cls._run_extraction_step(
+                    cls.match_public_plan_documents(denial_id),
+                    EXTRACTION_TASK_PLAN_DOCUMENT_CORPUS,
+                )
+            )
+            expected_tasks.append(EXTRACTION_TASK_PLAN_DOCUMENT_CORPUS)
 
         logger.debug(
             f"extract_entity({denial_id}): {len(optional_awaitables)} optional + "
@@ -4686,6 +4711,44 @@ class DenialCreatorHelper:
             )
 
         return None
+
+    @classmethod
+    async def match_public_plan_documents(cls, denial_id) -> str:
+        """Match the letter to the public plan documents we fetched
+        (plan_document_matcher) and store the passages the appeal may quote.
+
+        Resolves the carrier itself, with the matcher's own resolver: the
+        insurer and plan steps run beside this one, so the row's carrier
+        columns may still be empty, and the reader at appeal time must
+        resolve the same carrier or never find these rows. Returns an
+        extraction outcome, for the reason given on ``extract_set_plan_id``.
+        """
+        from fighthealthinsurance import plan_document_matcher
+        from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
+
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        try:
+            company = await database_sync_to_async(
+                plan_document_matcher.resolve_carrier
+            )(denial)
+            if company is None:
+                return EXTRACTION_OUTCOME_NOTHING_FOUND
+            budget = MLPlanDocHelper.TIMEOUT_SECONDS
+            async with asyncio.timeout(budget):
+                found = await plan_document_matcher.arefresh_match(
+                    denial, company=company, deadline=time.monotonic() + budget
+                )
+            if found:
+                return EXTRACTION_OUTCOME_FOUND
+            return EXTRACTION_OUTCOME_NOTHING_FOUND
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to match plan documents for denial {denial_id}: "
+                f"{type(e).__name__}"
+            )
+            return EXTRACTION_OUTCOME_FAILED
 
     @classmethod
     async def extract_set_claim_id(cls, denial_id) -> str:
@@ -6984,6 +7047,29 @@ class AppealsBackendHelper:
                         done_msg="NICE guidance lookup complete",
                     )
                 )
+            # The public plan documents matched to the letter
+            # (plan_document_matcher): brought up to date here so a carrier
+            # or plan corrected on the review page is honoured, and so a
+            # denial whose extraction skipped the step still gets them.
+            # Appended after the conditional NICE slot, which is read by
+            # position; make_appeals reads the rows this leaves behind.
+            from fighthealthinsurance import plan_document_matcher
+
+            plan_document_index: Optional[int] = None
+            if plan_document_matcher.enabled():
+                plan_document_index = len(gather_awaitables)
+                gather_awaitables.append(
+                    tracked_awaitable(
+                        asyncio.wait_for(
+                            plan_document_matcher.arefresh_match(
+                                denial, deadline=time.monotonic() + 40
+                            ),
+                            timeout=40,
+                        ),
+                        substep="plan_documents",
+                        done_msg="Plan document lookup complete",
+                    )
+                )
 
             # return_exceptions=True is belt-and-suspenders: tracked_awaitable
             # already catches exceptions, but this prevents gather from raising
@@ -7062,6 +7148,12 @@ class AppealsBackendHelper:
                     # back to whatever is already persisted on the denial so cached
                     # NICE guidance survives a regen even when the API key is unset.
                     nice_context = denial.nice_context
+                if (
+                    plan_document_index is not None
+                    and plan_document_index < len(results)
+                    and results[plan_document_index] is True
+                ):
+                    logger.info("Plan documents matched for the appeal")
                 logger.debug("Success")
             except Exception as e:
                 logger.opt(exception=True).error(f"Error gathering contexts: {e}")
@@ -7164,6 +7256,29 @@ class AppealsBackendHelper:
                     f"ClinicalTrials context refresh on retry failed: {e}"
                 )
                 clinical_trials_context = None
+            # The plan-document match, kept current here too: every
+            # interactive generation counts toward gen_attempts, so a person
+            # who regenerates three times would otherwise never see a
+            # correction honoured. With the inputs unchanged this is a DB
+            # read; with a short budget it builds passages from the
+            # fallback terms and puts no tie to a model.
+            from fighthealthinsurance import plan_document_matcher
+
+            if plan_document_matcher.enabled():
+                try:
+                    await asyncio.wait_for(
+                        plan_document_matcher.arefresh_match(
+                            denial,
+                            deadline=time.monotonic()
+                            + plan_document_matcher.SHORT_BUDGET_SECONDS,
+                        ),
+                        timeout=plan_document_matcher.SHORT_BUDGET_SECONDS,
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Plan document refresh on retry for denial "
+                        f"{denial.denial_id} failed: {type(e).__name__}"
+                    )
             yield json.dumps(
                 {
                     "type": "status",

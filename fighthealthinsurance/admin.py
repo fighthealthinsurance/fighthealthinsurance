@@ -1,3 +1,4 @@
+from typing import Optional
 from urllib.parse import urlsplit
 
 from django import forms
@@ -51,6 +52,7 @@ from fighthealthinsurance.models import (
     MedicationContext,
     OngoingChat,
     PayerPolicyEntry,
+    PlanDocumentMatch,
     PlanDocuments,
     PlanSource,
     PlanSponsor,
@@ -62,6 +64,7 @@ from fighthealthinsurance.models import (
     ProfessionalInquiry,
     ProposedAppeal,
     ProposedPriorAuth,
+    PublicPlanDocument,
     PubMedArticleSummarized,
     PubMedQueryData,
     Regulator,
@@ -685,6 +688,283 @@ class PayerPolicyEntryAdmin(admin.ModelAdmin):
         return False
 
     def has_change_permission(self, request, obj=None):  # type: ignore[override]
+        return False
+
+
+class PublicPlanDocumentForm(forms.ModelForm):
+    """The add/change form: the text is never edited by hand; a file
+    uploaded here is parsed the way the importer parses one, and a new
+    row needs one."""
+
+    upload = forms.FileField(
+        required=False,
+        help_text=(
+            "A PDF, Word or text file of the document, up to 20MB; parsed on "
+            "save and replaces the stored text. Bulk loads go through "
+            "import_plan_documents."
+        ),
+    )
+
+    class Meta:
+        model = PublicPlanDocument
+        exclude = ("text",)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # A RegexField holds a compiled pattern; shown as is, the form would
+        # offer its repr and write that back as the pattern on save.
+        for name in ("match_regex", "negative_regex"):
+            value = self.initial.get(name)
+            if value is not None and not isinstance(value, str):
+                self.initial[name] = getattr(value, "pattern", "")
+        #: What the upload parsed to, for save_model: (text, page_count).
+        self.parsed_upload: Optional[tuple[str, int]] = None
+
+    def clean_upload(self):
+        upload = self.cleaned_data.get("upload")
+        if upload:
+            from fighthealthinsurance.plan_document_bundle import (
+                RecordError,
+                page_marked_text_from_bytes,
+            )
+            from fighthealthinsurance.upload_limits import validate_policy_document
+
+            # The policy-document checks: extension, 20MB, PDF/DOCX bytes.
+            validate_policy_document(upload)
+            upload.seek(0)
+            try:
+                self.parsed_upload = page_marked_text_from_bytes(
+                    upload.read(), upload.name or ""
+                )
+            except RecordError as exc:
+                raise forms.ValidationError(str(exc)) from None
+        return upload
+
+    def clean(self):
+        cleaned = super().clean() or {}
+        if self.instance.pk is None and not cleaned.get("upload"):
+            self.add_error("upload", "A new document needs its file.")
+        company = cleaned.get("insurance_company")
+        plan = cleaned.get("insurance_plan")
+        if company and plan and plan.insurance_company_id != company.pk:
+            self.add_error("insurance_plan", "That plan belongs to another insurer.")
+        for name in ("plan_id_prefixes", "match_keywords"):
+            value = cleaned.get(name)
+            if value in (None, ""):
+                continue
+            if not isinstance(value, list) or not all(
+                isinstance(v, str) for v in value
+            ):
+                self.add_error(name, 'A JSON list of strings, such as ["GRP"].')
+        return cleaned
+
+
+@admin.register(PublicPlanDocument)
+class PublicPlanDocumentAdmin(admin.ModelAdmin):
+    """The public plan documents we fetched (plan_document_matcher): rows
+    from import_plan_documents, or added here one at a time."""
+
+    form = PublicPlanDocumentForm
+    list_display = (
+        "document_key",
+        "insurance_company",
+        "title",
+        "document_type",
+        "coverage_kind",
+        "line_of_business",
+        "state",
+        "region",
+        "plan_year",
+        "page_count",
+        "is_active",
+        "updated_at",
+    )
+    list_select_related = ("insurance_company",)
+    list_filter = (
+        "insurance_company",
+        "document_type",
+        "coverage_kind",
+        "line_of_business",
+        "state",
+        "is_active",
+        "plan_year",
+    )
+    search_fields = ("document_key", "title", "region", "employer_name", "source_url")
+    ordering = ("insurance_company__name", "-plan_year", "title")
+    autocomplete_fields = ["insurance_company", "insurance_plan"]
+    readonly_fields = (
+        "read_text",
+        "page_count",
+        "char_count",
+        "text_sha256",
+        "source_sha256",
+        "import_batch",
+        "pipeline_version",
+        "created_at",
+        "updated_at",
+    )
+    actions = ("activate", "deactivate")
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "document_key",
+                    "insurance_company",
+                    "insurance_plan",
+                    "title",
+                    "document_type",
+                    "coverage_kind",
+                    "line_of_business",
+                    "is_active",
+                    "notes",
+                ),
+            },
+        ),
+        (
+            "Matching",
+            {
+                "fields": (
+                    "state",
+                    "region",
+                    "employer_name",
+                    "plan_year",
+                    "plan_id_prefixes",
+                    "match_keywords",
+                    "match_regex",
+                    "negative_regex",
+                ),
+                "description": (
+                    "What places a denial letter with this document. Keywords "
+                    "are matched as whole words; a negative regex rules the "
+                    "document out. Keep both away from carrier letterhead and "
+                    "grievance addresses, which appear on every letter."
+                ),
+            },
+        ),
+        (
+            "Source",
+            {
+                "fields": (
+                    "source_url",
+                    "fetched_at",
+                    "source_sha256",
+                    "stored_file",
+                    "pipeline_version",
+                    "import_batch",
+                    "created_at",
+                    "updated_at",
+                ),
+            },
+        ),
+        (
+            "Text",
+            {
+                # Never the text field itself (it runs to megabytes and the
+                # form excludes it): the upload that fills it and the link
+                # that shows it.
+                "fields": (
+                    "upload",
+                    "read_text",
+                    "page_count",
+                    "char_count",
+                    "text_sha256",
+                ),
+            },
+        ),
+    )
+
+    def get_queryset(self, request):
+        # The list never shows the text, which runs to megabytes a row.
+        return super().get_queryset(request).defer("text")
+
+    def save_model(self, request, obj, form, change):
+        parsed = getattr(form, "parsed_upload", None)
+        if parsed:
+            text, page_count = parsed
+            obj.text = text
+            obj.text_sha256 = PublicPlanDocument.text_hash(text)
+            obj.page_count = page_count
+            obj.char_count = len(text)
+            obj.import_batch = "admin"
+        super().save_model(request, obj, form, change)
+        if parsed and change:
+            # The passages built from the old text no longer quote it.
+            PlanDocumentMatch.objects.filter(document=obj).delete()
+
+    @admin.display(description="Text")
+    def read_text(self, obj: PublicPlanDocument) -> str:
+        if not obj.pk or not obj.char_count:
+            return "-"
+        return format_html(
+            '<a href="{}">Read the text</a> ({} pages, {} characters)',
+            reverse("staff_plan_document_corpus_text", kwargs={"pk": obj.pk}),
+            obj.page_count,
+            obj.char_count,
+        )
+
+    @admin.action(description="Activate: match these documents to denials")
+    def activate(self, request, queryset):
+        # updated_at moves too, so the matcher's corpus stamp changes and
+        # denials are matched again (QuerySet.update skips auto_now).
+        updated = queryset.update(is_active=True, updated_at=timezone.now())
+        self.message_user(request, f"{updated} document(s) activated.")
+
+    @admin.action(description="Deactivate: stop matching these documents")
+    def deactivate(self, request, queryset):
+        updated = queryset.update(is_active=False, updated_at=timezone.now())
+        self.message_user(request, f"{updated} document(s) deactivated.")
+
+
+@admin.register(PlanDocumentMatch)
+class PlanDocumentMatchAdmin(admin.ModelAdmin):
+    """Read-only: why a public plan document was, or was not, chosen for a
+    denial (plan_document_matcher). Rows are written by the matcher only."""
+
+    list_display = (
+        "id",
+        "denial_id",
+        "document",
+        "score",
+        "rank",
+        "selected",
+        "method",
+        "created_at",
+    )
+    list_select_related = ("document", "document__insurance_company")
+    list_filter = ("selected", "method", "document__insurance_company")
+    search_fields = ("denial__denial_id", "document__title", "document__document_key")
+    raw_id_fields = ("denial",)
+    ordering = ("-created_at", "rank")
+    readonly_fields = (
+        "denial",
+        "document",
+        "company",
+        "score",
+        "signals",
+        "rank",
+        "selected",
+        "method",
+        "relevant_text",
+        "summary",
+        "inputs_hash",
+        "relevance_key",
+        "created_at",
+    )
+
+    def get_queryset(self, request):
+        # Never the documents' text, which runs to megabytes a row.
+        return super().get_queryset(request).defer("document__text")
+
+    def has_add_permission(self, request):  # type: ignore[override]
+        return False
+
+    def has_change_permission(self, request, obj=None):  # type: ignore[override]
+        return False
+
+    def has_delete_permission(self, request, obj=None):  # type: ignore[override]
+        # The matcher owns these rows: deleting a selected one by hand would
+        # leave its candidates with nothing selected.
         return False
 
 

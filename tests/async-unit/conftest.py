@@ -67,6 +67,9 @@ _AMBIENT_BACKEND_ENV_VARS = (
     "TYPESAFE_CHAT_SHADOW_ENABLED",
     "TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED",
     "FHI_FOLLOWUP_QUESTIONS_ENABLED",
+    # A developer's exported flag would have extraction and appeal
+    # generation match plan documents, with model calls, in this suite.
+    "PLAN_DOCUMENT_MATCHING_ENABLED",
 )
 for _name in _AMBIENT_BACKEND_ENV_VARS:
     os.environ.pop(_name, None)

@@ -117,6 +117,7 @@ from fighthealthinsurance.models import (
     ProfessionalDomainRelation,
     ProfessionalUser,
     ProposedAppeal,
+    PublicPlanDocument,
     ScheduledEmail,
     UserDomain,
 )
@@ -435,6 +436,45 @@ class PolicyDocumentTextView(View):
                 f"Only the first {self.MAX_CHARS:,} characters are shown."
             )
         return text, note
+
+
+@method_decorator(never_cache, name="dispatch")
+class PublicPlanDocumentTextView(View):
+    """The text of a public plan document we fetched (PublicPlanDocument),
+    as the importer stored it, served as plain text that can't run
+    anything. Public data; routed behind staff_member_required all the
+    same, like the other document text views."""
+
+    def get(self, request, pk: int) -> HttpResponseBase:
+        # only(): none of the regex columns, which RegexField cannot load
+        # once deferred, is read here.
+        doc = (
+            PublicPlanDocument.objects.filter(pk=pk)
+            .only(
+                "pk",
+                "title",
+                "plan_year",
+                "page_count",
+                "char_count",
+                "updated_at",
+                "text",
+            )
+            .first()
+        )
+        if doc is None:
+            raise Http404("No public plan document by that id")
+        header = (
+            f"Public plan document {pk}: {doc.citation_name()}\n"
+            f"Pages: {doc.page_count}; characters: {doc.char_count}; "
+            f"updated: {doc.updated_at:%Y-%m-%d %H:%M} UTC\n"
+        )
+        text = doc.text
+        if len(text) > PolicyDocumentTextView.MAX_CHARS:
+            text = text[: PolicyDocumentTextView.MAX_CHARS]
+            header += (
+                f"Showing the first {PolicyDocumentTextView.MAX_CHARS} characters.\n"
+            )
+        return _plain_text(header + "\n" + text)
 
 
 @method_decorator(never_cache, name="dispatch")
