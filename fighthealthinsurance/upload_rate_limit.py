@@ -4,10 +4,10 @@ follow-up documents, server-side OCR, appeal attachments and the share page.
 
 Counted in the database, since each web pod keeps its own cache. A visitor
 is counted by address (``CF-Connecting-IP``, an IPv6 address by its /64, as
-assistant_ip_limit counts it), and also by email or account when the page
-has one, so a new address doesn't reset the count for the same email. Each
-is kept only as a keyed digest of the period and the value, never the value,
-and rows are swept once their day is over.
+assistant_ip_limit counts it), and also by account when signed in. Not by a
+typed email: anyone can type anyone's, and would use up that person's
+uploads. Each is kept only as a keyed digest of the period and the value,
+never the value, and rows are swept once their day is over.
 
 Files are counted when they arrive, before any is checked, so files that
 fail the checks count too. Logged-in staff are not counted. When the count
@@ -16,7 +16,7 @@ not to turn a person away.
 """
 
 import datetime
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping
 
 from django.conf import settings
 from django.db import transaction
@@ -28,7 +28,6 @@ from loguru import logger
 from fighthealthinsurance import client_network
 
 _ADDRESS_LABEL = b"fhi-uploads-per-address-v1"
-_EMAIL_LABEL = b"fhi-uploads-per-email-v1"
 _ACCOUNT_LABEL = b"fhi-uploads-per-account-v1"
 
 LIMIT_MESSAGE = (
@@ -54,13 +53,10 @@ def _address_of(request: HttpRequest) -> str:
     return assistant_ip_limit.address_of(request)
 
 
-def _who(request: HttpRequest, email: Optional[str]) -> list[tuple[bytes, str]]:
-    """What the upload is counted against: the address, and the email or the
-    account when there is one."""
+def _who(request: HttpRequest) -> list[tuple[bytes, str]]:
+    """What the upload is counted against: the address, and the account
+    when signed in."""
     who = [(_ADDRESS_LABEL, _address_of(request))]
-    normalized = (email or "").strip().lower()
-    if normalized:
-        who.append((_EMAIL_LABEL, normalized))
     user = getattr(request, "user", None)
     if user is not None and user.is_authenticated:
         who.append((_ACCOUNT_LABEL, str(user.pk)))
@@ -85,10 +81,10 @@ def _exempt(request: HttpRequest) -> bool:
     return bool(user is not None and user.is_authenticated and user.is_staff)
 
 
-def take(request: HttpRequest, files: int, email: Optional[str] = None) -> bool:
+def take(request: HttpRequest, files: int) -> bool:
     """Count ``files`` uploaded by this visitor. False when that would go
-    over the hour's or the day's limit for the address, the email or the
-    account, and then nothing is counted. Each count is one conditional
+    over the hour's or the day's limit for the address or the account,
+    and then nothing is counted. Each count is one conditional
     update, so two pods can't both take the last place."""
     from fighthealthinsurance.models import UploadCount
 
@@ -100,7 +96,7 @@ def take(request: HttpRequest, files: int, email: Optional[str] = None) -> bool:
         UploadCount.objects.filter(day__lt=day).delete()
         with transaction.atomic():
             for period, limit in _periods(now):
-                for label, value in _who(request, email):
+                for label, value in _who(request):
                     key = client_network.period_key(label, period, value)
                     UploadCount.objects.get_or_create(
                         period=period, key=key, defaults={"day": day, "count": 0}

@@ -1,6 +1,6 @@
 """Every page that takes files counts them the same way (upload_rate_limit).
 
-One address, email or account may upload so many files an hour and a day,
+One address or signed-in account may upload so many files an hour and a day,
 across Explain My Policy, the appeal's plan documents step, follow-up
 documents, server-side OCR, appeal attachments and the share page. Files are
 counted when they arrive, before any check, and a refused upload counts
@@ -67,17 +67,16 @@ class TheCountTestCase(TestCase):
             upload_rate_limit.take(visitor(), 5)
         self.assertFalse(upload_rate_limit.take(visitor(), 1))
 
-    def test_the_same_email_from_another_address_is_counted_together(self):
-        upload_rate_limit.take(visitor(), 3, EMAIL)
-        self.assertFalse(upload_rate_limit.take(visitor(OTHER_ADDRESS), 1, EMAIL))
+    def test_the_same_account_from_another_address_is_counted_together(self):
+        person = get_user_model().objects.create_user(
+            "uploads-person", password="unused-in-this-test"
+        )
+        upload_rate_limit.take(visitor(user=person), 3)
+        self.assertFalse(upload_rate_limit.take(visitor(OTHER_ADDRESS, user=person), 1))
 
-    def test_another_address_without_the_email_has_its_own_count(self):
-        upload_rate_limit.take(visitor(), 3, EMAIL)
+    def test_another_address_has_its_own_count(self):
+        upload_rate_limit.take(visitor(), 3)
         self.assertTrue(upload_rate_limit.take(visitor(OTHER_ADDRESS), 1))
-
-    def test_an_email_is_counted_whatever_its_case(self):
-        upload_rate_limit.take(visitor(), 3, EMAIL.upper())
-        self.assertFalse(upload_rate_limit.take(visitor(OTHER_ADDRESS), 1, EMAIL))
 
     def test_staff_are_not_counted(self):
         staff = get_user_model().objects.create_user(
@@ -86,8 +85,8 @@ class TheCountTestCase(TestCase):
         upload_rate_limit.take(visitor(user=staff), 3)
         self.assertTrue(upload_rate_limit.take(visitor(user=staff), 3))
 
-    def test_no_address_or_email_is_kept_as_written(self):
-        upload_rate_limit.take(visitor(), 1, EMAIL)
+    def test_no_address_is_kept_as_written(self):
+        upload_rate_limit.take(visitor(), 1)
         keys = " ".join(UploadCount.objects.values_list("key", flat=True))
         self.assertNotIn(ADDRESS, keys)
 

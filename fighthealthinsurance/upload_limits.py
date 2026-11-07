@@ -60,7 +60,8 @@ _DOCX_MAGIC = b"PK"  # ZIP-based format
 #: A Word file is a zip with these inside; any other zip renamed .docx
 #: lacks them. Only the zip's list of names is read, nothing is unpacked.
 _DOCX_REQUIRED_PARTS = ("[Content_Types].xml", "word/document.xml")
-#: More entries than any real Word file has: the list is not read past it.
+#: More entries than any real Word file has. The directory is read whole
+#: first (bounded by the upload's size); past this the file is refused.
 _DOCX_MAX_ENTRIES = 5000
 
 
