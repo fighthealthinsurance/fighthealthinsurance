@@ -181,11 +181,17 @@ async def _judge_all(
             )
 
     tasks = {asyncio.ensure_future(one(r)): r for r in results}
-    done, pending = await asyncio.wait(tasks, timeout=seconds)
-    for task in pending:
-        task.cancel()
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+    try:
+        done, _ = await asyncio.wait(tasks, timeout=seconds)
+    finally:
+        # Also when this call is cancelled (its time box ran out, or the
+        # citation run was): asyncio.wait leaves its tasks running, and a
+        # judge left behind keeps calling the backends that write appeals.
+        unfinished = [task for task in tasks if not task.done()]
+        for task in unfinished:
+            task.cancel()
+        if unfinished:
+            await asyncio.gather(*unfinished, return_exceptions=True)
     judgments: Dict[str, research_judging.Judgment] = {}
     for task in done:
         if task.cancelled() or task.exception() is not None:

@@ -625,3 +625,35 @@ class TestCitationStepAppendsWebResults:
             )
         assert result == ["ML 1", "CMS NCD 1", "Web 1"]
         assert web.call_args.kwargs["budget_seconds"] < 30
+
+
+class TestJudgeAllCancellation:
+    @pytest.mark.asyncio
+    async def test_cancelling_the_caller_cancels_the_judging(self):
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def judge(*args, **kwargs):
+            started.set()
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        with (
+            patch.object(
+                web_search_context.ml_router, "best_internal_model", return_value=None
+            ),
+            patch.object(web_search_context, "judge_result", side_effect=judge),
+        ):
+            caller = asyncio.ensure_future(
+                web_search_context._judge_all(
+                    _results("https://a.org/x"), "MRI", "pain", 30, False
+                )
+            )
+            await asyncio.wait_for(started.wait(), 5)
+            caller.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await caller
+            await asyncio.wait_for(cancelled.wait(), 1)
