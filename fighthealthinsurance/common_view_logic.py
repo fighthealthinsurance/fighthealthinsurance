@@ -1244,6 +1244,12 @@ class ChooseAppealHelper:
                     kept, dropped = research_judging.order(
                         articles, judgments, pmid_of=lambda a: a.pmid or ""
                     )
+                    # What the letter's context set aside beside enough on
+                    # topic (research_judging.focus) is offered unticked too.
+                    kept, set_aside = research_judging.focus(
+                        kept, judgments, pmid_of=lambda a: a.pmid or ""
+                    )
+                    dropped = set_aside + dropped
                     for article in dropped:
                         setattr(article, "judged_drop", True)
                     articles = kept + dropped
@@ -6880,8 +6886,11 @@ class AppealsBackendHelper:
             # the citation barrier watches both; the refresh then hands the
             # inline generate_citations call a warm in-memory denial, and
             # that helper applies its own candidate->main freshness/promotion.
-            # How long an inline context fetch is waited for.
-            inline_timeout = 40
+            # How long an inline context fetch is waited for. 50 rather than
+            # 40 since relevance judging and per-article summaries were
+            # added: PubMed's extra 10 seconds go to those
+            # (pubmed_tools.JUDGING_BUDGET_SECONDS, _SUMMARY_RESERVE_SECONDS).
+            inline_timeout = 50
 
             def warmed_context(
                 readiness_fields,

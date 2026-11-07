@@ -207,3 +207,65 @@ class TestDraftPromptWithWebPages:
         prompt = self._prompt([{"pmid": "1", "title": "A study"}])
         assert "the only studies you may cite" in prompt
         assert "web page" not in prompt
+
+
+ON_TOPIC = research_judging.Judgment(on_topic=0.9, supports=0.8, undermines=0.1)
+MAYBE = research_judging.Judgment(on_topic=0.45, supports=0.8, undermines=0.1)
+
+
+def _articles(*pmids):
+    return [{"pmid": p, "title": f"Study {p}"} for p in pmids]
+
+
+class TestFocusEvidence:
+    """The drafts are told which evidence is probably off topic, and given
+    only the plainly on-topic evidence when there is enough of it."""
+
+    def test_beside_two_on_topic_the_rest_are_left_out(self):
+        focused = chooser_tasks._focus_evidence(
+            _articles("1", "2", "3"), {"1": ON_TOPIC, "2": MAYBE, "3": ON_TOPIC}
+        )
+        assert [e["pmid"] for e in focused] == ["1", "3"]
+
+    def test_with_fewer_on_topic_the_probably_off_topic_ones_are_marked(self):
+        focused = chooser_tasks._focus_evidence(
+            _articles("1", "2"), {"1": ON_TOPIC, "2": MAYBE}
+        )
+        assert [e.get("relevance") for e in focused] == [
+            None,
+            chooser_tasks.EVIDENCE_PROBABLY_OFF_TOPIC,
+        ]
+
+    def test_without_judgments_the_evidence_is_as_it_was(self):
+        evidence = _articles("1", "2")
+        assert chooser_tasks._focus_evidence(evidence, {}) == evidence
+
+    def test_a_probably_off_topic_web_page_is_marked(self):
+        row = chooser_tasks._web_evidence_item(PAGE, MAYBE)
+        assert row["relevance"] == chooser_tasks.EVIDENCE_PROBABLY_OFF_TOPIC
+
+    def test_an_on_topic_web_page_is_not(self):
+        assert "relevance" not in _web_row()
+
+
+class TestDraftPromptRelevanceNote:
+    def _prompt(self, evidence):
+        return chooser_tasks._build_appeal_prompt(
+            {"procedure": "Lumbar MRI", "diagnosis": "Back pain", "evidence": evidence}
+        )
+
+    def test_a_marked_article_carries_the_note(self):
+        evidence = [
+            {
+                "pmid": "2",
+                "title": "Study 2",
+                "relevance": chooser_tasks.EVIDENCE_PROBABLY_OFF_TOPIC,
+            }
+        ]
+        assert (
+            f"Relevance note: judged {research_judging.PROBABLY_OFF_TOPIC_NOTE}"
+            in self._prompt(evidence)
+        )
+
+    def test_an_unmarked_article_has_no_note(self):
+        assert "Relevance note" not in self._prompt(_articles("1"))

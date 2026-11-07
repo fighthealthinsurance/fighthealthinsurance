@@ -303,6 +303,60 @@ class TestDropAndOrder:
         assert dropped == ["off"]
 
 
+class TestFocus:
+    ON = rj.Judgment(on_topic=0.9, supports=0.8, undermines=0.1)
+    MAYBE = rj.Judgment(on_topic=0.45, supports=0.8, undermines=0.1)
+
+    def _focus(self, judgments, articles=("a", "b", "c")):
+        return rj.focus(list(articles), judgments, pmid_of=lambda a: a)
+
+    def test_two_on_topic_set_the_rest_aside(self):
+        quoted, set_aside = self._focus({"a": self.ON, "b": self.MAYBE, "c": self.ON})
+        assert (quoted, set_aside) == (["a", "c"], ["b"])
+
+    def test_beside_two_on_topic_an_unjudged_one_is_set_aside_too(self):
+        _, set_aside = self._focus({"a": self.ON, "b": self.ON})
+        assert set_aside == ["c"]
+
+    def test_one_on_topic_keeps_them_all(self):
+        quoted, set_aside = self._focus({"a": self.ON, "b": self.MAYBE})
+        assert (quoted, set_aside) == (["a", "b", "c"], [])
+
+    def test_probably_off_topic_names_the_judged_ones_below_the_bar(self):
+        assert rj.probably_off_topic(
+            ["a", "b", "c"], {"a": self.ON, "b": self.MAYBE}, pmid_of=lambda a: a
+        ) == {"b"}
+
+    @pytest.mark.parametrize(
+        "on_topic,probably_off", [(0.1, True), (0.45, True), (0.6, False), (0.9, False)]
+    )
+    def test_the_bar(self, on_topic, probably_off):
+        judgment = rj.Judgment(on_topic=on_topic, supports=0.5, undermines=0.1)
+        assert judgment.probably_off_topic is probably_off
+
+
+class TestPubMedRelevanceNote:
+    def _article(self, pmid="9", title="A trial"):
+        return PubMedArticleSummarized(pmid=pmid, title=title, abstract=ABSTRACT)
+
+    def test_a_probably_off_topic_article_carries_the_note(self):
+        text = PubMedTools.format_article_short(
+            self._article(), probably_off_topic=True
+        )
+        assert text.endswith(f"Relevance note: judged {rj.PROBABLY_OFF_TOPIC_NOTE}")
+
+    def test_an_on_topic_article_has_no_note(self):
+        assert "Relevance note" not in PubMedTools.format_article_short(self._article())
+
+    def test_an_articles_own_summary_is_used_and_capped(self):
+        article = self._article()
+        article.basic_summary = "This study found MRI helped. " * 100
+        text = PubMedTools.format_article_short(article)
+        summary = text.split("Summary: ", 1)[1]
+        assert summary.startswith("This study found MRI helped.")
+        assert len(summary) <= 800
+
+
 def _denial(use_external=True, **fields):
     return Denial.objects.create(
         hashed_email="h",
@@ -413,12 +467,237 @@ class TestJudgeArticlesForADenial:
             return next(p for title, p in answers.items() if title in state)
 
         with override_settings(**ENABLED), patch.object(rj, "_post", fake_post):
-            kept = async_to_sync(PubMedTools()._judged_for_context)(
+            kept, _ = async_to_sync(PubMedTools()._judged_for_context)(
                 denial, articles, searched=True
             )
         assert [a.pmid for a in kept] == ["2"]
         denial.refresh_from_db()
         assert denial.pubmed_ids_json == ["2"]
+
+    def _judge_three(self, on_topic_by_title, *, searched=True):
+        denial = _denial(pubmed_ids_json=["1", "2", "3"])
+        articles = [_article("1"), _article("2"), _article("3")]
+
+        async def fake_post(state, questions, timeout):
+            title = next(t for t in on_topic_by_title if t in state)
+            return _payload(on_topic=on_topic_by_title[title], supports=0.9)
+
+        with override_settings(**ENABLED), patch.object(rj, "_post", fake_post):
+            kept, off_topic = async_to_sync(PubMedTools()._judged_for_context)(
+                denial, articles, searched=searched
+            )
+        denial.refresh_from_db()
+        return [a.pmid for a in kept], off_topic, denial.pubmed_ids_json
+
+    def test_beside_two_on_topic_a_probably_off_topic_one_is_left_out(self):
+        kept, off_topic, row = self._judge_three(
+            {"Title 1": 0.9, "Title 2": 0.45, "Title 3": 0.8}
+        )
+        assert (sorted(kept), off_topic, sorted(row)) == (["1", "3"], set(), ["1", "3"])
+
+    def test_with_one_on_topic_the_probably_off_topic_ones_are_kept_and_named(self):
+        kept, off_topic, _ = self._judge_three(
+            {"Title 1": 0.9, "Title 2": 0.45, "Title 3": 0.5}
+        )
+        assert (sorted(kept), off_topic) == (["1", "2", "3"], {"2", "3"})
+
+    def test_a_selection_on_the_row_is_never_focused_only_named(self):
+        kept, off_topic, row = self._judge_three(
+            {"Title 1": 0.9, "Title 2": 0.45, "Title 3": 0.8}, searched=False
+        )
+        assert (sorted(kept), off_topic, row) == (["1", "2", "3"], {"2"}, ["1", "2", "3"])
+
+    def _context(self, articles, on_topic, summarize):
+        denial = _denial()
+
+        async def fake_post(state, questions, timeout):
+            title = next(t for t in on_topic if t in state)
+            return _payload(on_topic=on_topic[title], supports=0.9)
+
+        with override_settings(**ENABLED), patch.object(
+            rj, "_post", fake_post
+        ), patch.object(
+            PubMedTools,
+            "find_pubmed_articles_for_denial",
+            new=AsyncMock(return_value=articles),
+        ), patch(
+            "fighthealthinsurance.pubmed_tools.ml_router.summarize", new=summarize
+        ):
+            return async_to_sync(PubMedTools().find_context_for_denial)(denial)
+
+    def test_each_article_is_its_own_entry_with_its_own_note(self):
+        context = self._context(
+            [_article("1"), _article("2")],
+            {"Title 1": 0.9, "Title 2": 0.45},
+            AsyncMock(side_effect=lambda **kw: f"Summary of {kw['title']}."),
+        )
+        one, two = context.split("\n")
+        assert "PMID: 1" in one and "Summary of Title 1." in one
+        assert "Relevance note" not in one
+        assert "PMID: 2" in two and "Summary of Title 2." in two
+        assert two.endswith(f"Relevance note: judged {rj.PROBABLY_OFF_TOPIC_NOTE}")
+
+    def test_articles_are_summarized_one_at_a_time_never_together(self):
+        summarize = AsyncMock(return_value="A summary.")
+        self._context(
+            [_article("1"), _article("2")], {"Title 1": 0.9, "Title 2": 0.9}, summarize
+        )
+        assert sorted(c.kwargs["title"] for c in summarize.await_args_list) == [
+            "Title 1",
+            "Title 2",
+        ]
+
+    def test_a_new_summary_is_stored_on_the_article(self):
+        self._context(
+            [_article("1")], {"Title 1": 0.9}, AsyncMock(return_value="Stored one.")
+        )
+        assert PubMedArticleSummarized.objects.get(pmid="1").basic_summary == (
+            "Stored one."
+        )
+
+    def test_a_stored_summary_is_not_written_again(self):
+        article = _article("1")
+        PubMedArticleSummarized.objects.filter(pk=article.pk).update(
+            basic_summary="Already here."
+        )
+        article.refresh_from_db()
+        summarize = AsyncMock(return_value="New.")
+        context = self._context([article], {"Title 1": 0.9}, summarize)
+        summarize.assert_not_awaited()
+        assert "Already here." in context
+
+    def test_a_failed_summary_falls_back_to_the_abstract(self):
+        context = self._context(
+            [_article("1")], {"Title 1": 0.9}, AsyncMock(side_effect=RuntimeError)
+        )
+        assert f"Summary: {ABSTRACT}" in context
+
+    def _too_long(self, summarize, cap=150):
+        with patch("fighthealthinsurance.pubmed_tools.PUBMED_CONTEXT_MAX_CHARS", cap):
+            return self._context(
+                [_article("1"), _article("2"), _article("3")],
+                {"Title 1": 0.9, "Title 2": 0.45, "Title 3": 0.8},
+                summarize,
+            )
+
+    def test_too_long_falls_back_to_one_summary_of_the_relevant_articles(self):
+        summarize = AsyncMock(return_value="Two trials found MRI helped.")
+        context = self._too_long(summarize)
+        assert context.startswith("Two trials found MRI helped.\n")
+        assert "PMID 1 (Title 1)" in context and "PMID 3 (Title 3)" in context
+
+    def test_the_summary_of_summaries_leaves_out_the_probably_off_topic_one(self):
+        summarize = AsyncMock(return_value="Two trials found MRI helped.")
+        context = self._too_long(summarize)
+        summarize.assert_awaited_once()
+        text = summarize.await_args.kwargs["text"]
+        assert "PMID: 1" in text and "PMID: 3" in text and "PMID: 2" not in text
+        assert "PMID 2" not in context and "Title 2" not in context
+
+    def test_the_summary_of_summaries_reads_all_of_its_input(self):
+        summarize = AsyncMock(return_value="Two trials found MRI helped.")
+        self._too_long(summarize)
+        kwargs = summarize.await_args.kwargs
+        assert kwargs["max_input_chars"] >= len(kwargs["text"])
+
+    def test_too_long_without_a_summary_keeps_whole_entries_relevant_first(self):
+        context = self._too_long(AsyncMock(return_value=None), cap=300)
+        entries = context.split("\n")
+        assert len(context) <= 300 or len(entries) == 1
+        assert all(e.startswith("Title: ") for e in entries)
+        assert "PMID: 2" not in context
+
+    def _too_long_selection(self, summarize, cap=150):
+        """The person's own selection, on the row before the build: it is
+        labelled, never cut."""
+        denial = _denial(pubmed_ids_json=["1", "2", "3"])
+        for pmid in ("1", "2", "3"):
+            _article(pmid)
+        on_topic = {"Title 1": 0.9, "Title 2": 0.45, "Title 3": 0.8}
+
+        async def fake_post(state, questions, timeout):
+            title = next(t for t in on_topic if t in state)
+            return _payload(on_topic=on_topic[title], supports=0.9)
+
+        with override_settings(**ENABLED), patch.object(
+            rj, "_post", fake_post
+        ), patch(
+            "fighthealthinsurance.pubmed_tools.ml_router.summarize", new=summarize
+        ), patch(
+            "fighthealthinsurance.pubmed_tools.PUBMED_CONTEXT_MAX_CHARS", cap
+        ):
+            return async_to_sync(PubMedTools().find_context_for_denial)(denial)
+
+    def test_a_selection_is_summarized_whole_with_the_off_topic_one_noted(self):
+        summarize = AsyncMock(return_value="Three studies on MRI.")
+        context = self._too_long_selection(summarize)
+        assert "PMID: 2" in summarize.await_args.kwargs["text"]
+        assert (
+            f"PMID 2 (Title 2), judged {rj.PROBABLY_OFF_TOPIC_NOTE}" in context
+        )
+
+    def test_a_selection_without_a_summary_keeps_every_entry(self):
+        context = self._too_long_selection(AsyncMock(return_value=None))
+        assert sorted(line.split("PMID: ")[1][0] for line in context.split("\n")) == [
+            "1",
+            "2",
+            "3",
+        ]
+
+    def test_a_retained_off_topic_one_is_left_out_of_the_summary_of_summaries(self):
+        # One plainly on topic, so focus keeps PMID 2 (with its note); the
+        # condensed step is what must leave it out.
+        summarize = AsyncMock(return_value="One trial found MRI helped.")
+        with patch("fighthealthinsurance.pubmed_tools.PUBMED_CONTEXT_MAX_CHARS", 100):
+            context = self._context(
+                [_article("1"), _article("2")],
+                {"Title 1": 0.9, "Title 2": 0.45},
+                summarize,
+            )
+        assert "PMID: 2" not in summarize.await_args.kwargs["text"]
+        assert "PMID 2" not in context and "PMID 1 (Title 1)" in context
+
+    def test_articles_past_the_summarizers_input_are_not_listed_as_summarized(self):
+        summarize = AsyncMock(return_value="A trial found MRI helped.")
+        with patch("fighthealthinsurance.pubmed_tools._CONDENSED_INPUT_CHARS", 10):
+            context = self._too_long(summarize)
+        assert "PMID: 3" not in summarize.await_args.kwargs["text"]
+        assert "PMID 3" not in context.split("Articles summarized above:")[1]
+
+    def test_a_selection_past_the_summarizers_input_is_listed_apart(self):
+        summarize = AsyncMock(return_value="A trial found MRI helped.")
+        with patch("fighthealthinsurance.pubmed_tools._CONDENSED_INPUT_CHARS", 10):
+            context = self._too_long_selection(summarize)
+        summarized, apart = context.split("Also selected, but not in the summary above")
+        assert "PMID 1 (Title 1)" in summarized
+        assert "PMID 2 (Title 2)" in apart and "PMID 3 (Title 3)" in apart
+
+    def test_the_unsummarized_fallback_skips_one_too_big_for_a_later_one(self):
+        articles = [
+            PubMedArticleSummarized(pmid=p, title=f"Title {p}") for p in "123"
+        ]
+        entries = ["a" * 50, "b" * 200, "c" * 50]
+        with patch("fighthealthinsurance.pubmed_tools.PUBMED_CONTEXT_MAX_CHARS", 120):
+            context = async_to_sync(PubMedTools._condensed_context)(
+                articles, entries, set(), 0.0
+            )
+        assert context.split("\n") == ["a" * 50, "c" * 50]
+
+    def test_a_blank_stored_summary_is_replaced(self):
+        article = _article("1")
+        PubMedArticleSummarized.objects.filter(pk=article.pk).update(basic_summary="  ")
+        article.refresh_from_db()
+        self._context([article], {"Title 1": 0.9}, AsyncMock(return_value="Now one."))
+        assert PubMedArticleSummarized.objects.get(pmid="1").basic_summary == "Now one."
+
+    def test_under_the_cap_there_is_no_summary_of_summaries(self):
+        summarize = AsyncMock(return_value="A summary.")
+        self._context(
+            [_article("1"), _article("2")], {"Title 1": 0.9, "Title 2": 0.9}, summarize
+        )
+        assert all(
+            c.kwargs["title"].startswith("Title ") for c in summarize.await_args_list
+        )
 
     def test_selected_articles_not_fetched_in_time_stay_on_the_row(self):
         # The search selected three; the fetch was cut after two. Judging
@@ -434,7 +713,7 @@ class TestJudgeArticlesForADenial:
             return next(p for title, p in answers.items() if title in state)
 
         with override_settings(**ENABLED), patch.object(rj, "_post", fake_post):
-            kept = async_to_sync(PubMedTools()._judged_for_context)(
+            kept, _ = async_to_sync(PubMedTools()._judged_for_context)(
                 denial, articles, searched=True, selected=["1", "2", "3"]
             )
         assert [a.pmid for a in kept] == ["2"]
@@ -453,7 +732,7 @@ class TestJudgeArticlesForADenial:
             return next(p for title, p in answers.items() if title in state)
 
         with override_settings(**ENABLED), patch.object(rj, "_post", fake_post):
-            kept = async_to_sync(PubMedTools()._judged_for_context)(
+            kept, _ = async_to_sync(PubMedTools()._judged_for_context)(
                 denial, articles, searched=False
             )
         assert [a.pmid for a in kept] == ["2", "1"]
@@ -463,7 +742,7 @@ class TestJudgeArticlesForADenial:
     def test_judging_off_leaves_the_articles_as_they_are(self):
         denial = _denial()
         articles = [_article("1"), _article("2")]
-        kept = async_to_sync(PubMedTools()._judged_for_context)(
+        kept, _ = async_to_sync(PubMedTools()._judged_for_context)(
             denial, articles, searched=True
         )
         assert kept == articles

@@ -63,10 +63,25 @@ T = TypeVar("T")
 # How long building one denial's research context waits for Jev's article
 # judgments (ml/research_judging.py) before going on with the articles as
 # they are; judgments that landed in time are stored either way.
-JUDGING_BUDGET_SECONDS = 15.0
+JUDGING_BUDGET_SECONDS = 20.0
 # What judging leaves of a caller's budget for summarizing the articles
-# (the summary itself is cut at the budget, keeping the articles unsummarized).
-_SUMMARY_RESERVE_SECONDS = 5.0
+# that have no summary yet, or, when one entry per article is too long, for
+# summarizing them together (each summary is cut at the budget, and its
+# article goes on with its abstract). The appeal step's 10 seconds more for
+# this whole build (50, was 40) go to judging and this reserve, 5 each.
+_SUMMARY_RESERVE_SECONDS = 10.0
+# The most those summaries take without a caller's budget, and how many are
+# written at once (the same backends write appeals).
+_SUMMARY_BUDGET_SECONDS = 20.0
+_SUMMARY_CONCURRENCY = 3
+# The longest summary an article goes into the letter's context with.
+_ARTICLE_SUMMARY_CHARS = 800
+# The longest the context of one entry per article may be (about 1,500
+# tokens). Past it, the articles judged relevant are summarized together
+# instead (PubMedTools._condensed_context), the summarizer reading as many
+# whole entries as fit in _CONDENSED_INPUT_CHARS.
+PUBMED_CONTEXT_MAX_CHARS = 6_000
+_CONDENSED_INPUT_CHARS = 20_000
 
 
 def judgment_rows(
@@ -1213,12 +1228,13 @@ class PubMedTools(object):
                 logger.debug(f"Writing back selected pmids {selected_pmids}")
                 await self._this_letter(denial).aupdate(pubmed_ids_json=selected_pmids)
 
+        off_topic: set[str] = set()
         if articles:
             judging_budget = JUDGING_BUDGET_SECONDS
             if budget is not None:
                 left = budget - (asyncio.get_running_loop().time() - started)
                 judging_budget = min(judging_budget, left - _SUMMARY_RESERVE_SECONDS)
-            articles = await self._judged_for_context(
+            articles, off_topic = await self._judged_for_context(
                 denial,
                 articles,
                 searched=searched,
@@ -1226,39 +1242,213 @@ class PubMedTools(object):
                 budget=judging_budget,
             )
 
-        # Format the articles for context
-        if articles:
-            logger.debug("Making single context input")
-            joined_contexts = "\n".join(
-                self.format_article_short(article) for article in articles
-            )
-            if len(joined_contexts) < 100:
-                logger.debug("Not much input, skpping summary step.")
-                return joined_contexts
-            summary_budget = None
-            if budget is not None:
-                # Leave a moment before the caller's own cut.
-                elapsed = asyncio.get_running_loop().time() - started
-                summary_budget = max(budget - elapsed - 0.5, 0.0)
-            try:
-                r: Optional[str] = await asyncio.wait_for(
-                    ml_router.summarize(
-                        title="Combined contexts",
-                        text=joined_contexts,
-                        literature=True,
-                    ),
-                    timeout=summary_budget,
-                )
-            except asyncio.TimeoutError:
-                logger.debug("Summary ran out of time; using the articles as is")
-                return joined_contexts
-            logger.debug("Summarized combined contexts")
-            if r is None:
-                return joined_contexts
-            else:
-                return r
-        else:
+        # Each article goes to the letter's model as its own entry, with its
+        # own summary and its own relevance note. (A summary of all of them
+        # together was cut to the summarizer's input cap, so it read only the
+        # first article or two, and merged away which one a note was about.)
+        # Only when that is too long (PUBMED_CONTEXT_MAX_CHARS) does it fall
+        # back to one summary of the relevant articles (_condensed_context).
+        if not articles:
             return ""
+        loop = asyncio.get_running_loop()
+        summary_budget = _SUMMARY_BUDGET_SECONDS
+        if budget is not None:
+            # Leave a moment before the caller's own cut.
+            summary_budget = min(summary_budget, budget - (loop.time() - started) - 0.5)
+        summary_deadline = loop.time() + summary_budget
+
+        def entries() -> list[str]:
+            return [
+                self.format_article_short(
+                    article, probably_off_topic=article.pmid in off_topic
+                )
+                for article in articles
+            ]
+
+        # Already too long with what is on file: the summary of the
+        # summaries reads the abstracts as they are, so the time goes to it
+        # rather than to summarizing each article first.
+        if len("\n".join(entries())) <= PUBMED_CONTEXT_MAX_CHARS:
+            await self._summarize_unsummarized(articles, summary_budget)
+        per_article = entries()
+        if len("\n".join(per_article)) <= PUBMED_CONTEXT_MAX_CHARS:
+            return "\n".join(per_article)
+        return await self._condensed_context(
+            articles,
+            per_article,
+            off_topic,
+            summary_deadline - loop.time(),
+            selected=not searched,
+        )
+
+    @staticmethod
+    async def _condensed_context(
+        articles: list[PubMedArticleSummarized],
+        per_article: list[str],
+        off_topic: set[str],
+        budget: float,
+        *,
+        selected: bool = False,
+    ) -> str:
+        """The PubMed context when one entry per article (``per_article``,
+        in the order of ``articles``) is too long: one summary of the
+        entries of the articles not judged probably off topic (those are
+        left out of it entirely), then a short list of those articles' ids
+        so a citation can still name and be checked against one. Without a
+        summary in ``budget`` seconds (none to read, no time, a failure),
+        as many whole entries as fit in PUBMED_CONTEXT_MAX_CHARS, at least
+        one: the relevant ones first, strongest first (``articles`` is in
+        that order), then the probably off-topic ones.
+
+        ``selected``: the articles are a selection already on the row
+        (possibly the person's own), which is labelled but never cut, as in
+        _judged_for_context. Every one of them is summarized, a probably
+        off-topic one with its note (its entry carries it, and the list
+        after the summary repeats it), and without a summary every entry is
+        kept, however long."""
+        relevant = [
+            (article, entry)
+            for article, entry in zip(articles, per_article)
+            if selected or article.pmid not in off_topic
+        ]
+        # The summarizer reads only so much: the whole entries that fit in
+        # _CONDENSED_INPUT_CHARS (at least one) are what it summarizes, and
+        # only those are listed as summarized. The rest, the weakest of our
+        # search's, are left out; a selection's are listed apart, as not in
+        # the summary, so nothing is credited with findings never read.
+        read: list[tuple[PubMedArticleSummarized, str]] = []
+        for article, entry in relevant:
+            joined = "\n".join([*(e for _, e in read), entry])
+            if read and len(joined) > _CONDENSED_INPUT_CHARS:
+                break
+            read.append((article, entry))
+        unread = relevant[len(read) :]
+        summary: Optional[str] = None
+        if read and budget > 0:
+            text = "\n".join(entry for _, entry in read)
+            try:
+                summary = await asyncio.wait_for(
+                    ml_router.summarize(
+                        title="Published studies on the denied treatment",
+                        text=text,
+                        literature=True,
+                        max_input_chars=len(text),
+                    ),
+                    timeout=budget,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug(
+                    f"Summary of the article summaries failed ({type(e).__name__})"
+                )
+
+        def cited(pairs: list[tuple[PubMedArticleSummarized, str]]) -> str:
+            return "; ".join(
+                f"PMID {a.pmid}"
+                + (f" ({(a.title or '').strip()})" if (a.title or "").strip() else "")
+                + (f", DOI {a.doi}" if a.doi else "")
+                + (
+                    f", judged {research_judging.PROBABLY_OFF_TOPIC_NOTE}"
+                    if a.pmid in off_topic
+                    else ""
+                )
+                for a, _ in pairs
+                if a.pmid
+            )
+
+        if (summary or "").strip():
+            logger.debug(
+                f"PubMed context too long; summarized {len(read)} of "
+                f"{len(articles)} article(s)"
+                + (f", {len(unread)} more not read" if unread else "")
+            )
+            parts = [(summary or "").strip()]
+            references = cited(read)
+            if references:
+                parts.append(f"Articles summarized above: {references}")
+            not_read = cited(unread) if selected else ""
+            if not_read:
+                parts.append(
+                    "Also selected, but not in the summary above (cite one "
+                    f"only by what you know it to report): {not_read}"
+                )
+            return "\n".join(parts)
+        if selected:
+            logger.debug(
+                "PubMed context too long and not summarized; a selection on "
+                f"the row is never cut, so all {len(per_article)} kept"
+            )
+            return "\n".join(per_article)
+        # The relevant ones get the room first.
+        off = [e for a, e in zip(articles, per_article) if a.pmid in off_topic]
+        kept: list[str] = []
+        for entry in [e for _, e in relevant] + off:
+            if kept and len("\n".join([*kept, entry])) > PUBMED_CONTEXT_MAX_CHARS:
+                # A shorter one further down may still fit.
+                continue
+            kept.append(entry)
+        logger.debug(
+            f"PubMed context too long and not summarized; kept {len(kept)} of "
+            f"{len(per_article)} article(s)"
+        )
+        return "\n".join(kept)
+
+    @staticmethod
+    async def _summarize_unsummarized(
+        articles: list[PubMedArticleSummarized], budget: float
+    ) -> None:
+        """Give each of ``articles`` without a summary one of its own
+        (ml_router.summarize, as do_article_summary does), a few at once,
+        within ``budget`` seconds, storing it on the row for the next case
+        about it. Articles not summarized in time, or whose summary failed,
+        go on with the start of their abstract (format_article_short).
+        Never raises (cancellation aside)."""
+        missing = [
+            a
+            for a in articles
+            if not (a.basic_summary or "").strip()
+            and ((a.abstract or "").strip() or (a.text or "").strip())
+        ]
+        if not missing or budget <= 0:
+            return
+        gate = asyncio.Semaphore(_SUMMARY_CONCURRENCY)
+
+        async def one(article: PubMedArticleSummarized) -> None:
+            async with gate:
+                summary = await ml_router.summarize(
+                    title=article.title or "",
+                    abstract=article.abstract,
+                    text=article.text,
+                    literature=True,
+                )
+            if not (summary or "").strip():
+                return
+            article.basic_summary = summary
+            if article.pk is not None:
+                # Only over a summary still missing (NULL or blank), never
+                # over one another build stored meanwhile.
+                await PubMedArticleSummarized.objects.filter(
+                    Q(basic_summary__isnull=True) | Q(basic_summary__regex=r"^\s*$"),
+                    pk=article.pk,
+                ).aupdate(basic_summary=summary)
+
+        tasks = [asyncio.ensure_future(one(a)) for a in missing]
+        try:
+            await asyncio.wait(tasks, timeout=budget)
+        finally:
+            unfinished = [t for t in tasks if not t.done()]
+            for task in unfinished:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        failed = sum(
+            1 for t in tasks if not t.cancelled() and t.exception() is not None
+        )
+        if unfinished or failed:
+            logger.debug(
+                f"Article summaries: {len(unfinished)} ran out of time and "
+                f"{failed} failed of {len(missing)}; those use their abstracts"
+            )
 
     async def judge_articles(
         self, denial: Denial, articles: list[PubMedArticleSummarized]
@@ -1300,20 +1490,24 @@ class PubMedTools(object):
         searched: bool,
         selected: Optional[list[str]] = None,
         budget: float = JUDGING_BUDGET_SECONDS,
-    ) -> list[PubMedArticleSummarized]:
+    ) -> tuple[list[PubMedArticleSummarized], set[str]]:
         """The articles to quote, ordered by how strongly Jev finds each
-        supports the treatment. Articles our search found that Jev finds off
-        topic or against the treatment are left out, and the row's article
-        list is rewritten to match; a selection already on the row (possibly
-        the person's own) is only reordered, never cut. ``selected`` is the
-        list written to the row for this build: an id in it whose article
-        was not fetched in time (the fetch is cut by the timeout) was never
-        judged, so it stays on the row. Waits at most ``budget`` seconds
-        (none left: no judging); past that, or on any failure, the articles
-        go on as they are."""
+        supports the treatment, and the PMIDs of those among them Jev finds
+        probably off topic (the letter's model is told so, see
+        format_article_short). Articles our search found that Jev finds off
+        topic or against the treatment are left out, and so, once at least
+        research_judging.FOCUS_MIN_ON_TOPIC are plainly on topic, are the
+        rest (research_judging.focus); the row's article list is rewritten
+        to match. A selection already on the row (possibly the person's own)
+        is only reordered, never cut. ``selected`` is the list written to
+        the row for this build: an id in it whose article was not fetched in
+        time (the fetch is cut by the timeout) was never judged, so it stays
+        on the row. Waits at most ``budget`` seconds (none left: no
+        judging); past that, or on any failure, the articles go on as they
+        are."""
         if budget <= 0:
             logger.debug("article judging skipped: no time left")
-            return articles
+            return articles, set()
         try:
             judgments = await asyncio.wait_for(
                 self.judge_articles(denial, articles),
@@ -1323,14 +1517,20 @@ class PubMedTools(object):
             raise
         except Exception as e:
             logger.debug(f"article judging skipped: {type(e).__name__}")
-            return articles
+            return articles, set()
         if not judgments:
-            return articles
-        kept, dropped = research_judging.order(
-            articles, judgments, pmid_of=lambda a: a.pmid or ""
-        )
+            return articles, set()
+
+        def pmid_of(article: PubMedArticleSummarized) -> str:
+            return article.pmid or ""
+
+        kept, dropped = research_judging.order(articles, judgments, pmid_of=pmid_of)
         if not searched:
-            return kept + dropped
+            ordered = kept + dropped
+            return ordered, research_judging.probably_off_topic(
+                ordered, judgments, pmid_of=pmid_of
+            )
+        kept, set_aside = research_judging.focus(kept, judgments, pmid_of=pmid_of)
         selection = list(
             dict.fromkeys(
                 pmid
@@ -1341,26 +1541,36 @@ class PubMedTools(object):
             )
         )
         kept_pmids = [a.pmid for a in kept]
-        judged = set(kept_pmids) | {a.pmid for a in dropped}
+        judged = (
+            set(kept_pmids) | {a.pmid for a in dropped} | {a.pmid for a in set_aside}
+        )
         # The kept articles first, then the selected ids no article was
         # fetched for: dropping those would lose them from the row for good.
         rewritten = kept_pmids + [pmid for pmid in selection if pmid not in judged]
         if rewritten != selection:
-            if dropped:
+            if dropped or set_aside:
                 logger.debug(
                     f"PubMed context for denial {denial.denial_id}: left out "
                     f"{len(dropped)} article(s) judged off topic or against "
-                    "the treatment"
+                    f"the treatment and {len(set_aside)} probably off topic or "
+                    "unjudged beside enough on topic"
                 )
             await self._this_letter(denial).aupdate(pubmed_ids_json=rewritten)
-        return kept
+        return kept, research_judging.probably_off_topic(
+            kept, judgments, pmid_of=pmid_of
+        )
 
     @staticmethod
-    def format_article_short(article: PubMedArticleSummarized) -> str:
-        """Helper function to format an article for context with full citation metadata."""
+    def format_article_short(
+        article: PubMedArticleSummarized, probably_off_topic: bool = False
+    ) -> str:
+        """Helper function to format an article for context with full
+        citation metadata, and, when it was judged ``probably_off_topic``,
+        a note saying so (research_judging.PROBABLY_OFF_TOPIC_NOTE)."""
         summary = None
-        if article.basic_summary:
-            summary = article.basic_summary
+        own_summary = (article.basic_summary or "").strip()
+        if own_summary:
+            summary = truncate_at_boundary(own_summary, _ARTICLE_SUMMARY_CHARS)
         elif article.abstract:
             summary = truncate_at_boundary(article.abstract, 500)
 
@@ -1381,6 +1591,10 @@ class PubMedTools(object):
             parts.append(f"URL: {article.article_url}")
         if summary:
             parts.append(f"Summary: {summary}")
+        if probably_off_topic:
+            parts.append(
+                f"Relevance note: judged {research_judging.PROBABLY_OFF_TOPIC_NOTE}"
+            )
 
         return "; ".join(parts)
 
