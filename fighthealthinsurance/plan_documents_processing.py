@@ -24,7 +24,9 @@ import datetime
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
+from channels.db import database_sync_to_async
 from django.utils import timezone
+from loguru import logger
 
 from fighthealthinsurance.models import PolicyDocument
 from fighthealthinsurance.upload_limits import MAX_STORED_POLICY_DOCUMENT_BYTES
@@ -201,7 +203,28 @@ async def aprocess_document(document_id: str) -> str:
         if cleaned
         else PolicyDocument.PROCESSING_UNREADABLE
     )
-    return await _astore(document_id, status, cleaned)
+    stored = await _astore(document_id, status, cleaned)
+    if stored == PolicyDocument.PROCESSING_READY and text:
+        # The company is read from the text before cleaning, which may have
+        # taken a line that looked personal.
+        await database_sync_to_async(link_company)(document_id, text)
+    return stored
+
+
+def link_company(document_id: str, text: str) -> None:
+    """Link the shared row to the company its text names as plan sponsor
+    (plan_sponsors), adding the company to the list if it's new. A failure
+    is logged and leaves the row unlinked: the reading itself stands."""
+    from fighthealthinsurance.plan_sponsors import identify_sponsor, link_sponsor
+
+    try:
+        sponsor = identify_sponsor(text)
+        if sponsor is not None:
+            link_sponsor(document_id, sponsor)
+    except Exception:
+        logger.opt(exception=True).warning(
+            f"Could not link policy document {document_id} to a company"
+        )
 
 
 async def amark_unreadable(document_id: str) -> str:

@@ -4715,6 +4715,48 @@ class EncryptedTextField(models.TextField):
             return ""
 
 
+class PlanSponsor(models.Model):
+    """A company behind a shared plan document: the employer a plan through
+    work names as its sponsor. The running list the share page's goal counts,
+    each company once. Found from a document's own text (plan_sponsors), by
+    its Employer Identification Number first, then its name; staff can add
+    or fix one in the admin."""
+
+    name = models.CharField(max_length=300)
+    # The name to match on (plan_sponsors.normalize_name). Two employers
+    # can share a name, so only one without an EIN per name is kept.
+    normalized_name = models.CharField(max_length=300, db_index=True)
+    ein = models.CharField(
+        max_length=10,
+        unique=True,
+        null=True,
+        blank=True,
+        verbose_name="EIN",
+        help_text="Employer Identification Number, as 12-3456789",
+    )
+    first_document = models.ForeignKey(
+        "PolicyDocument",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["normalized_name"],
+                condition=models.Q(ein__isnull=True),
+                name="plan_sponsor_one_without_ein_per_name",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model):  # type: ignore
     """
     Stores uploaded policy documents (Summary of Benefits, Medical Policy PDFs).
@@ -4842,6 +4884,15 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     )
     insurance_plan_obj = models.ForeignKey(
         InsurancePlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="policy_documents",
+    )
+    # The company the document names as its plan sponsor (plan_sponsors),
+    # or the one staff set. Only a company counts toward the goal.
+    plan_sponsor = models.ForeignKey(
+        PlanSponsor,
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
