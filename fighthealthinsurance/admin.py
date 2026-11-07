@@ -751,6 +751,9 @@ class PublicPlanDocumentForm(forms.ModelForm):
         for name in ("plan_id_prefixes", "match_keywords"):
             value = cleaned.get(name)
             if value in (None, ""):
+                # A cleared box is no phrases: the empty list the importer
+                # stores, never a JSON null.
+                cleaned[name] = []
                 continue
             if not isinstance(value, list) or not all(
                 isinstance(v, str) for v in value

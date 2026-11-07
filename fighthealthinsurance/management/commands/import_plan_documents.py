@@ -23,6 +23,12 @@ JSON, too large, a key given twice) is a CommandError. ``--dry-run`` does
 everything and rolls it back; ``--deactivate-missing`` retires the named
 carriers' documents the bundle no longer lists.
 
+A zip read from a path may be up to 2 GiB on disk (``MAX_ARCHIVE_PATH_BYTES``);
+a JSON bundle, or anything on stdin, up to 256 MiB. A ``file`` whose bytes
+and ``pipeline_version`` match what its row was parsed from is not parsed
+again (its row's text is kept, its metadata still updated); ``--reparse``
+parses every file anyway.
+
 Output names keys, fields and counts. It never prints a document's text.
 """
 
@@ -34,6 +40,7 @@ from typing import Any, List, Optional, Tuple, Union
 from django.core.management.base import BaseCommand, CommandError
 
 from fighthealthinsurance.plan_document_bundle import (
+    MAX_ARCHIVE_PATH_BYTES,
     MAX_BUNDLE_BYTES,
     BundleArchive,
     BundleDecodeError,
@@ -105,6 +112,15 @@ class Command(BaseCommand):
             help="Validate and resolve everything, then roll back.",
         )
         parser.add_argument(
+            "--reparse",
+            action="store_true",
+            help=(
+                "Parse every 'file' again, even one whose bytes and pipeline_version "
+                "are the ones its row was parsed from (by default that row's text "
+                "is reused)."
+            ),
+        )
+        parser.add_argument(
             "--strict",
             action="store_true",
             help="Refuse the whole bundle on the first bad record or warning.",
@@ -148,16 +164,18 @@ class Command(BaseCommand):
                     path = Path(source)
                     if not path.is_file():
                         raise CommandError(f"No bundle file at {source}")
-                    if path.stat().st_size > MAX_BUNDLE_BYTES:
-                        raise CommandError(
-                            f"The bundle is larger than {MAX_BUNDLE_BYTES} bytes"
-                        )
                     with path.open("rb") as fh:
                         head = fh.read(4)
-                    if fmt == "zip" or (
+                    is_zip = fmt == "zip" or (
                         fmt == "auto"
                         and (source.lower().endswith(".zip") or looks_like_zip(head))
-                    ):
+                    )
+                    # An archive is read in place, so it may be larger than a
+                    # bundle that is read whole.
+                    limit = MAX_ARCHIVE_PATH_BYTES if is_zip else MAX_BUNDLE_BYTES
+                    if path.stat().st_size > limit:
+                        raise CommandError(f"The bundle is larger than {limit} bytes")
+                    if is_zip:
                         archive = BundleArchive.open_path(str(path))
                     else:
                         with path.open("rb") as fh:
@@ -242,6 +260,7 @@ class Command(BaseCommand):
                 deactivate_missing=options["deactivate_missing"],
                 dry_run=options["dry_run"],
                 strict=options["strict"],
+                reparse=options["reparse"],
             )
         except BundleError as exc:
             raise CommandError(f"Bundle refused: {exc}") from None

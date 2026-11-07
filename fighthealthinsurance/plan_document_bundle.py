@@ -54,8 +54,13 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.pa_requirements import resolve_insurance_company_by_name
 
 BUNDLE_VERSION = 1
-#: The largest bundle the import reads, refused before any of it is decoded.
+#: The largest bundle the import reads, refused before any of it is decoded:
+#: a JSON bundle, a bundle file inside an archive, and anything on stdin.
 MAX_BUNDLE_BYTES = 256 * 1024 * 1024
+#: The largest zip archive read from a path. It is read in place, never
+#: loaded whole, so it may be far larger than what stdin may carry; what is
+#: inside it stays bounded by MAX_ARCHIVE_BYTES and the per-member caps.
+MAX_ARCHIVE_PATH_BYTES = 2 * 1024 * 1024 * 1024
 #: The largest file a record may point at.
 MAX_FILE_BYTES = 50 * 1024 * 1024
 MAX_DOCUMENTS = 5_000
@@ -63,19 +68,24 @@ MAX_TEXT_CHARS = min(PublicPlanDocument.MAX_TEXT_CHARS, MAX_PDF_CHARS)
 MAX_PAGES = 2_000
 
 #: A zip bundle (BundleArchive). The archive itself is capped at
-#: MAX_BUNDLE_BYTES like any bundle; these bound what is inside it.
+#: MAX_ARCHIVE_PATH_BYTES on disk, or MAX_BUNDLE_BYTES on stdin; these bound
+#: what is inside it.
 ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06")  # a member first; an empty archive
 ARCHIVE_BUNDLE_NAMES = ("bundle.json", "bundle.jsonl")
 ARCHIVE_FILES_DIR = "files/"
 ARCHIVE_SUMS_NAME = "SHA256SUMS"
 MAX_ARCHIVE_MEMBERS = MAX_DOCUMENTS + 8
-#: The declared uncompressed total: an expansion bound.
+#: The declared uncompressed total: an expansion bound. A corpus of a few
+#: hundred megabytes of PDFs (which deflate barely shrinks) fits well inside.
 MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
 MAX_SUMS_BYTES = 1024 * 1024
 _READ_CHUNK = 1 << 20
 
 KEY_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,128}")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+#: The first bytes of a Git LFS pointer file: what a checkout without
+#: ``git lfs pull`` holds in place of the document.
+LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
 _PAGE_MARKER_RE = re.compile(r"^\[Page \d+\]$", re.MULTILINE)
 _REGEX_FLAGS = re.IGNORECASE | re.UNICODE | re.M
 #: Words every denial letter carries; a negative regex that matches them
@@ -180,6 +190,13 @@ def parse_bundle(data: Any) -> List[Dict[str, Any]]:
     """The records of a decoded bundle: a JSON array of records, or an
     object ``{"bundle_version": 1, "documents": [...]}``."""
     if isinstance(data, dict):
+        if "defaults" in data:
+            # Each record carries every field it means: a default merged in
+            # here would make a record read differently from how it looks.
+            raise BundleError(
+                "the bundle object has a 'defaults' key; records must be flat, "
+                "each carrying its own fields"
+            )
         version = data.get("bundle_version")
         if version not in (None, BUNDLE_VERSION):
             raise BundleError(f"bundle_version {version!r} is not supported")
@@ -313,6 +330,17 @@ FilesRoot = Union[str, "BundleArchive", None]
 
 
 def _read_file(relative: Any, files_root: FilesRoot) -> Tuple[bytes, str]:
+    """A record's ``file``: its bytes and base name. A Git LFS pointer in
+    place of the document is refused, under a files root or in an archive."""
+    data, name = _read_file_bytes(relative, files_root)
+    if data.startswith(LFS_POINTER_PREFIX):
+        raise RecordError(
+            "file: is a Git LFS pointer, not the document; run git lfs pull"
+        )
+    return data, name
+
+
+def _read_file_bytes(relative: Any, files_root: FilesRoot) -> Tuple[bytes, str]:
     if not isinstance(relative, str) or not relative.strip():
         raise RecordError("file: a relative path")
     if files_root is None:
@@ -402,6 +430,14 @@ class BundleArchive:
 
     @classmethod
     def open_path(cls, path: str) -> "BundleArchive":
+        try:
+            size = os.path.getsize(path)
+        except OSError:
+            raise BundleError("not a zip archive") from None
+        if size > MAX_ARCHIVE_PATH_BYTES:
+            raise BundleError(
+                f"the archive is larger than {MAX_ARCHIVE_PATH_BYTES} bytes"
+            )
         try:
             archive = zipfile.ZipFile(path)
         except (zipfile.BadZipFile, OSError, ValueError, EOFError):
@@ -723,6 +759,7 @@ def prepare_document_fields(
     files_root: FilesRoot = None,
     store_file: bool = False,
     import_batch: str = "",
+    reuse_text: bool = False,
 ) -> PreparedDocument:
     """Validate one record and resolve what it names.
 
@@ -730,6 +767,12 @@ def prepare_document_fields(
     warnings worth printing, and the file's bytes when ``store_file`` asked
     for them. Raises RecordError, whose message names the field and never
     quotes the text.
+
+    A ``file`` record's ``source_sha256``, when given, must be the hash of
+    its bytes. With ``reuse_text``, a file whose hash and
+    ``pipeline_version`` are the ones the existing row of that key was
+    parsed from is not parsed again: the row's text is reused
+    (:func:`_reusable_text`), and the record's metadata still applies.
     """
     unknown = sorted(set(record) - RECORD_FIELDS)
     if unknown:
@@ -810,9 +853,24 @@ def prepare_document_fields(
         text, page_count = _text_from_text(record["text"])
     else:
         data, file_name = _read_file(record["file"], files_root)
-        text, page_count = page_marked_text_from_bytes(data, file_name)
-        if not source_sha256:
-            source_sha256 = hashlib.sha256(data).hexdigest()
+        actual_sha256 = hashlib.sha256(data).hexdigest()
+        if source_sha256 and source_sha256 != actual_sha256:
+            raise RecordError("source_sha256: does not match the file's bytes")
+        source_sha256 = actual_sha256
+        reused = (
+            _reusable_text(
+                key,
+                file_name,
+                actual_sha256,
+                _string(record, "pipeline_version", MAX_VERSION),
+            )
+            if reuse_text
+            else None
+        )
+        if reused is not None:
+            text, page_count = reused
+        else:
+            text, page_count = page_marked_text_from_bytes(data, file_name)
         if store_file:
             file_bytes = data
     if len(text) > MAX_TEXT_CHARS:
@@ -859,6 +917,32 @@ def prepare_document_fields(
         file_bytes=file_bytes,
         file_name=file_name,
     )
+
+
+def _reusable_text(
+    key: str, file_name: str, sha256: str, pipeline_version: str
+) -> Optional[Tuple[str, int]]:
+    """The existing row's ``(text, page_count)`` when that row was parsed
+    from these very bytes (``source_sha256``) by the same pipeline version
+    and holds text; else None, and the file is parsed. Saves a deploy from
+    re-parsing every unchanged PDF of the corpus. The file's name is still
+    checked as a parse would check it."""
+    if not file_name.lower().endswith(FILE_EXTENSIONS):
+        return None
+    row = (
+        PublicPlanDocument.objects.filter(
+            document_key=key,
+            source_sha256=sha256,
+            pipeline_version=pipeline_version,
+        )
+        .exclude(text="")
+        .values_list("text", "page_count")
+        .first()
+    )
+    if row is None:
+        return None
+    text, page_count = row
+    return text, page_count
 
 
 # ---- Storing -------------------------------------------------------------------------
@@ -982,6 +1066,7 @@ def import_bundle(
     deactivate_missing: bool = False,
     dry_run: bool = False,
     strict: bool = False,
+    reparse: bool = False,
 ) -> ImportResult:
     """Store every record of a bundle in one transaction.
 
@@ -991,7 +1076,9 @@ def import_bundle(
     names whose keys it does not carry (a key whose record was refused
     still counts as carried), and only theirs. ``dry_run`` does the work
     and rolls it back, writing no files; a run that is abandoned removes
-    the files it had written.
+    the files it had written. A ``file`` whose bytes and pipeline version
+    are the ones its row was parsed from keeps the row's text unless
+    ``reparse`` asks for every file to be parsed again.
     """
     result = ImportResult()
     # Every key the bundle names, valid record or not.
@@ -1020,6 +1107,7 @@ def import_bundle(
                         files_root=files_root,
                         store_file=store_file,
                         import_batch=import_batch,
+                        reuse_text=not reparse,
                     )
                     if strict and prepared.warnings:
                         raise RecordError(prepared.warnings[0])

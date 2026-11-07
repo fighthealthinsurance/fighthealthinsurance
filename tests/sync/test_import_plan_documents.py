@@ -950,8 +950,8 @@ def build_zip(members):
     return buf.getvalue()
 
 
-class ArchiveSourcesTest(_ImportTestCase):
-    """--source plan-docs.zip: the exporter's archive, read in place."""
+class _ArchiveTestCase(_ImportTestCase):
+    """Builders for zip bundles, the exporter's shape."""
 
     def bundle_bytes(self, records, **top):
         return json.dumps(dict(EXPORTER_KEYS, documents=records, **top)).encode()
@@ -1002,6 +1002,10 @@ class ArchiveSourcesTest(_ImportTestCase):
             self.assertIn(needle, str(caught.exception))
         self.assertEqual(PublicPlanDocument.objects.count(), 0)
         return str(caught.exception)
+
+
+class ArchiveSourcesTest(_ArchiveTestCase):
+    """--source plan-docs.zip: the exporter's archive, read in place."""
 
     # -- reading ---------------------------------------------------------------
 
@@ -1268,6 +1272,201 @@ class ArchiveSourcesTest(_ImportTestCase):
             self.write_zip([self.record(pages=[f"Benefits {SENTINEL} page."])])
         )
         self.assertNotIn(SENTINEL, out + err)
+
+
+#: What a checkout holds for an LFS-tracked PDF before ``git lfs pull``.
+LFS_POINTER = (
+    b"version https://git-lfs.github.com/spec/v1\n"
+    b"oid sha256:" + b"a" * 64 + b"\n"
+    b"size 123456\n"
+)
+COMMAND_MODULE = "fighthealthinsurance.management.commands.import_plan_documents"
+
+
+class BundleContractRefusalsTest(_ArchiveTestCase):
+    """What the corpus contract refuses: defaults, a hash the bytes do not
+    have, and an LFS pointer in place of the document."""
+
+    def test_a_bundle_object_with_defaults_is_refused(self):
+        bundle = {
+            "bundle_version": 1,
+            "defaults": {"insurer": "Kaiser Permanente"},
+            "documents": [self.record()],
+        }
+        with self.assertRaises(CommandError) as caught:
+            self.run_import_from_stdin(json.dumps(bundle))
+        self.assertIn("'defaults'", str(caught.exception))
+        self.assertIn("records must be flat", str(caught.exception))
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+    def test_a_zip_whose_bundle_has_defaults_is_refused(self):
+        path = self.write_zip(
+            [], bundle=self.bundle_bytes([self.record()], defaults={"state": "CA"})
+        )
+        self.assert_refused(path, "bundle.json", "records must be flat")
+
+    def test_a_file_whose_bytes_differ_from_its_source_sha256_is_refused(self):
+        root, _ = self.pdf_under_root()
+        out, err = self.run_import(
+            [self.file_record(source_sha256="0" * 64)], files_root=root
+        )
+        self.assertIn(
+            f"Skipped record 0 ({SBC_KEY}): source_sha256: does not match the "
+            "file's bytes",
+            err,
+        )
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+    def test_a_file_whose_bytes_match_its_source_sha256_is_imported(self):
+        root, data = self.pdf_under_root()
+        digest = hashlib.sha256(data).hexdigest()
+        out, _ = self.run_import(
+            [self.file_record(source_sha256=digest.upper())], files_root=root
+        )
+        self.assertIn("created=1", out)
+        self.assertEqual(self.the_document(SBC_KEY).source_sha256, digest)
+
+    def test_an_lfs_pointer_under_the_files_root_is_refused_with_the_fix(self):
+        root, _ = self.pdf_under_root()
+        with open(os.path.join(root, PDF_RELATIVE), "wb") as fh:
+            fh.write(LFS_POINTER)
+        out, err = self.run_import([self.file_record()], files_root=root)
+        self.assertIn(
+            f"Skipped record 0 ({SBC_KEY}): file: is a Git LFS pointer, not the "
+            "document; run git lfs pull",
+            err,
+        )
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+    def test_an_lfs_pointer_with_a_matching_hash_is_still_refused(self):
+        root, _ = self.pdf_under_root()
+        with open(os.path.join(root, PDF_RELATIVE), "wb") as fh:
+            fh.write(LFS_POINTER)
+        _, err = self.run_import(
+            [self.file_record(source_sha256=hashlib.sha256(LFS_POINTER).hexdigest())],
+            files_root=root,
+        )
+        self.assertIn("run git lfs pull", err)
+
+    def test_an_lfs_pointer_in_an_archive_is_refused_with_the_fix(self):
+        path = self.write_zip(
+            [self.archive_file_record()], files={ARCHIVE_PDF: LFS_POINTER}
+        )
+        out, err = self.run_source(path)
+        self.assertIn("file: is a Git LFS pointer", err)
+        self.assertIn("run git lfs pull", err)
+        self.assertIn("skipped=1", out)
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+
+class ArchivePathCapTest(_ArchiveTestCase):
+    """A zip read from a path may be up to MAX_ARCHIVE_PATH_BYTES on disk;
+    stdin, and a JSON bundle on disk, stay at MAX_BUNDLE_BYTES."""
+
+    def test_the_caps_are_two_gib_on_disk_and_256_mib_otherwise(self):
+        self.assertEqual(plan_document_bundle.MAX_ARCHIVE_PATH_BYTES, 2 * 1024**3)
+        self.assertEqual(plan_document_bundle.MAX_BUNDLE_BYTES, 256 * 1024**2)
+
+    def test_a_zip_on_disk_may_be_larger_than_the_bundle_cap(self):
+        data = self.zip_bytes([self.record()])
+        with patch(f"{COMMAND_MODULE}.MAX_BUNDLE_BYTES", len(data) - 1):
+            out, _ = self.run_source(self.write_raw(data))
+        self.assertIn("created=1", out)
+
+    def test_the_same_zip_on_stdin_is_held_to_the_bundle_cap(self):
+        data = self.zip_bytes([self.record()])
+        with patch(f"{COMMAND_MODULE}.MAX_BUNDLE_BYTES", len(data) - 1):
+            with self.assertRaises(CommandError) as caught:
+                self.run_zip_from_stdin(data)
+        self.assertIn(f"larger than {len(data) - 1} bytes", str(caught.exception))
+        self.assertEqual(PublicPlanDocument.objects.count(), 0)
+
+    def test_a_json_bundle_on_disk_is_held_to_the_bundle_cap(self):
+        path = self.write_bundle([self.record()])
+        with patch(f"{COMMAND_MODULE}.MAX_BUNDLE_BYTES", 10):
+            self.assert_refused(path, "larger than 10 bytes")
+
+    def test_a_zip_on_disk_past_the_archive_path_cap_is_refused(self):
+        path = self.write_zip([self.record()])
+        with patch(f"{COMMAND_MODULE}.MAX_ARCHIVE_PATH_BYTES", 10):
+            self.assert_refused(path, "larger than 10 bytes")
+
+    def test_bundle_archive_open_path_enforces_the_cap_itself(self):
+        path = self.write_zip([self.record()])
+        with patch.object(plan_document_bundle, "MAX_ARCHIVE_PATH_BYTES", 10):
+            with self.assertRaises(plan_document_bundle.BundleError) as caught:
+                plan_document_bundle.BundleArchive.open_path(path)
+        self.assertIn("larger than 10 bytes", str(caught.exception))
+
+
+class UnchangedOriginalTest(_ImportTestCase):
+    """A file whose bytes and pipeline version are the ones its row was
+    parsed from is not parsed again: a deploy re-imports the whole corpus."""
+
+    def setUp(self):
+        super().setUp()
+        self.root, self.data = self.pdf_under_root()
+        self.run_import(
+            [self.file_record(pipeline_version="plan-docs-1")], files_root=self.root
+        )
+        self.before = self.the_document(SBC_KEY)
+
+    def reimport(self, reparse=False, **overrides):
+        """Import the SBC record again, counting the parses; returns
+        (stdout, parse mock)."""
+        overrides.setdefault("pipeline_version", "plan-docs-1")
+        record = self.file_record(**overrides)
+        with patch.object(
+            plan_document_bundle,
+            "page_marked_text_from_bytes",
+            wraps=plan_document_bundle.page_marked_text_from_bytes,
+        ) as parse:
+            out, _ = self.run_import([record], files_root=self.root, reparse=reparse)
+        return out, parse
+
+    def test_an_identical_reimport_does_not_parse_the_file(self):
+        out, parse = self.reimport()
+        parse.assert_not_called()
+        self.assertIn("created=0 updated=0 unchanged=1", out)
+
+    def test_a_metadata_change_applies_without_parsing_the_file(self):
+        out, parse = self.reimport(region="Northern California Region")
+        parse.assert_not_called()
+        self.assertIn("updated=1 unchanged=0", out)
+        doc = self.the_document(SBC_KEY)
+        self.assertEqual(doc.region, "Northern California Region")
+        self.assertEqual(
+            (doc.text, doc.page_count, doc.text_sha256),
+            (self.before.text, self.before.page_count, self.before.text_sha256),
+        )
+
+    def test_a_metadata_change_keeps_the_match_rows(self):
+        self.match_row_for(SBC_KEY)
+        self.reimport(region="Northern California Region")
+        self.assertEqual(PlanDocumentMatch.objects.count(), 1)
+
+    def test_a_new_pipeline_version_parses_the_file_again(self):
+        out, parse = self.reimport(pipeline_version="plan-docs-2")
+        parse.assert_called_once()
+        self.assertIn("updated=1", out)
+
+    def test_new_bytes_are_parsed(self):
+        self.pdf_under_root(pages=REVISED_PDF_PAGES)
+        out, parse = self.reimport()
+        parse.assert_called_once()
+        self.assertIn("updated=1", out)
+        self.assertIn(REVISED_PDF_PAGES[0], self.the_document(SBC_KEY).text)
+
+    def test_a_row_without_text_is_parsed_again(self):
+        PublicPlanDocument.objects.filter(document_key=SBC_KEY).update(text="")
+        out, parse = self.reimport()
+        parse.assert_called_once()
+        self.assertEqual(self.the_document(SBC_KEY).text, self.before.text)
+
+    def test_reparse_parses_an_unchanged_file_and_counts_it_unchanged(self):
+        out, parse = self.reimport(reparse=True)
+        parse.assert_called_once()
+        self.assertIn("created=0 updated=0 unchanged=1", out)
 
 
 class TextCleanupTest(_ImportTestCase):

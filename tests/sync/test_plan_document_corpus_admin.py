@@ -400,3 +400,10 @@ class ReviewFindingsAdminTest(_CorpusAdminTestCase):
         self.assertIn("A JSON list of strings", self.form_errors(response))
         doc.refresh_from_db()
         self.assertEqual(doc.plan_id_prefixes, [])
+
+    def test_a_cleared_phrase_list_saves_an_empty_list(self):
+        doc = self.document(plan_id_prefixes=["GRP"])
+        response = self.change_post(doc, plan_id_prefixes="", match_keywords="")
+        self.assertEqual(response.status_code, 302, self.form_errors(response))
+        doc.refresh_from_db()
+        self.assertEqual((doc.plan_id_prefixes, doc.match_keywords), ([], []))
