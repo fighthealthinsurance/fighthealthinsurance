@@ -78,8 +78,8 @@ _SUMMARY_CONCURRENCY = 3
 _ARTICLE_SUMMARY_CHARS = 800
 # The longest the context of one entry per article may be (about 1,500
 # tokens). Past it, the articles judged relevant are summarized together
-# instead (PubMedTools._condensed_context), the summarizer reading at most
-# _CONDENSED_INPUT_CHARS of their entries.
+# instead (PubMedTools._condensed_context), the summarizer reading as many
+# whole entries as fit in _CONDENSED_INPUT_CHARS.
 PUBMED_CONTEXT_MAX_CHARS = 6_000
 _CONDENSED_INPUT_CHARS = 20_000
 
@@ -1311,16 +1311,28 @@ class PubMedTools(object):
             for article, entry in zip(articles, per_article)
             if selected or article.pmid not in off_topic
         ]
+        # The summarizer reads only so much: the whole entries that fit in
+        # _CONDENSED_INPUT_CHARS (at least one) are what it summarizes, and
+        # only those are listed as summarized. The rest, the weakest of our
+        # search's, are left out; a selection's are listed apart, as not in
+        # the summary, so nothing is credited with findings never read.
+        read: list[tuple[PubMedArticleSummarized, str]] = []
+        for article, entry in relevant:
+            joined = "\n".join([*(e for _, e in read), entry])
+            if read and len(joined) > _CONDENSED_INPUT_CHARS:
+                break
+            read.append((article, entry))
+        unread = relevant[len(read) :]
         summary: Optional[str] = None
-        if relevant and budget > 0:
-            text = "\n".join(entry for _, entry in relevant)
+        if read and budget > 0:
+            text = "\n".join(entry for _, entry in read)
             try:
                 summary = await asyncio.wait_for(
                     ml_router.summarize(
                         title="Published studies on the denied treatment",
                         text=text,
                         literature=True,
-                        max_input_chars=min(len(text), _CONDENSED_INPUT_CHARS),
+                        max_input_chars=len(text),
                     ),
                     timeout=budget,
                 )
@@ -1330,8 +1342,9 @@ class PubMedTools(object):
                 logger.debug(
                     f"Summary of the article summaries failed ({type(e).__name__})"
                 )
-        if (summary or "").strip():
-            references = "; ".join(
+
+        def cited(pairs: list[tuple[PubMedArticleSummarized, str]]) -> str:
+            return "; ".join(
                 f"PMID {a.pmid}"
                 + (f" ({(a.title or '').strip()})" if (a.title or "").strip() else "")
                 + (f", DOI {a.doi}" if a.doi else "")
@@ -1340,19 +1353,27 @@ class PubMedTools(object):
                     if a.pmid in off_topic
                     else ""
                 )
-                for a, _ in relevant
+                for a, _ in pairs
                 if a.pmid
             )
+
+        if (summary or "").strip():
             logger.debug(
-                f"PubMed context too long; summarized {len(relevant)} of "
+                f"PubMed context too long; summarized {len(read)} of "
                 f"{len(articles)} article(s)"
+                + (f", {len(unread)} more not read" if unread else "")
             )
-            condensed = (summary or "").strip()
-            return (
-                f"{condensed}\nArticles summarized above: {references}"
-                if references
-                else condensed
-            )
+            parts = [(summary or "").strip()]
+            references = cited(read)
+            if references:
+                parts.append(f"Articles summarized above: {references}")
+            not_read = cited(unread) if selected else ""
+            if not_read:
+                parts.append(
+                    "Also selected, but not in the summary above (cite one "
+                    f"only by what you know it to report): {not_read}"
+                )
+            return "\n".join(parts)
         if selected:
             logger.debug(
                 "PubMed context too long and not summarized; a selection on "
@@ -1364,7 +1385,8 @@ class PubMedTools(object):
         kept: list[str] = []
         for entry in [e for _, e in relevant] + off:
             if kept and len("\n".join([*kept, entry])) > PUBMED_CONTEXT_MAX_CHARS:
-                break
+                # A shorter one further down may still fit.
+                continue
             kept.append(entry)
         logger.debug(
             f"PubMed context too long and not summarized; kept {len(kept)} of "
@@ -1404,8 +1426,11 @@ class PubMedTools(object):
                 return
             article.basic_summary = summary
             if article.pk is not None:
+                # Only over a summary still missing (NULL or blank), never
+                # over one another build stored meanwhile.
                 await PubMedArticleSummarized.objects.filter(
-                    pk=article.pk, basic_summary__isnull=True
+                    Q(basic_summary__isnull=True) | Q(basic_summary__regex=r"^\s*$"),
+                    pk=article.pk,
                 ).aupdate(basic_summary=summary)
 
         tasks = [asyncio.ensure_future(one(a)) for a in missing]

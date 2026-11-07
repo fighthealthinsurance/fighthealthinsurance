@@ -644,6 +644,52 @@ class TestJudgeArticlesForADenial:
             "3",
         ]
 
+    def test_a_retained_off_topic_one_is_left_out_of_the_summary_of_summaries(self):
+        # One plainly on topic, so focus keeps PMID 2 (with its note); the
+        # condensed step is what must leave it out.
+        summarize = AsyncMock(return_value="One trial found MRI helped.")
+        with patch("fighthealthinsurance.pubmed_tools.PUBMED_CONTEXT_MAX_CHARS", 100):
+            context = self._context(
+                [_article("1"), _article("2")],
+                {"Title 1": 0.9, "Title 2": 0.45},
+                summarize,
+            )
+        assert "PMID: 2" not in summarize.await_args.kwargs["text"]
+        assert "PMID 2" not in context and "PMID 1 (Title 1)" in context
+
+    def test_articles_past_the_summarizers_input_are_not_listed_as_summarized(self):
+        summarize = AsyncMock(return_value="A trial found MRI helped.")
+        with patch("fighthealthinsurance.pubmed_tools._CONDENSED_INPUT_CHARS", 10):
+            context = self._too_long(summarize)
+        assert "PMID: 3" not in summarize.await_args.kwargs["text"]
+        assert "PMID 3" not in context.split("Articles summarized above:")[1]
+
+    def test_a_selection_past_the_summarizers_input_is_listed_apart(self):
+        summarize = AsyncMock(return_value="A trial found MRI helped.")
+        with patch("fighthealthinsurance.pubmed_tools._CONDENSED_INPUT_CHARS", 10):
+            context = self._too_long_selection(summarize)
+        summarized, apart = context.split("Also selected, but not in the summary above")
+        assert "PMID 1 (Title 1)" in summarized
+        assert "PMID 2 (Title 2)" in apart and "PMID 3 (Title 3)" in apart
+
+    def test_the_unsummarized_fallback_skips_one_too_big_for_a_later_one(self):
+        articles = [
+            PubMedArticleSummarized(pmid=p, title=f"Title {p}") for p in "123"
+        ]
+        entries = ["a" * 50, "b" * 200, "c" * 50]
+        with patch("fighthealthinsurance.pubmed_tools.PUBMED_CONTEXT_MAX_CHARS", 120):
+            context = async_to_sync(PubMedTools._condensed_context)(
+                articles, entries, set(), 0.0
+            )
+        assert context.split("\n") == ["a" * 50, "c" * 50]
+
+    def test_a_blank_stored_summary_is_replaced(self):
+        article = _article("1")
+        PubMedArticleSummarized.objects.filter(pk=article.pk).update(basic_summary="  ")
+        article.refresh_from_db()
+        self._context([article], {"Title 1": 0.9}, AsyncMock(return_value="Now one."))
+        assert PubMedArticleSummarized.objects.get(pmid="1").basic_summary == "Now one."
+
     def test_under_the_cap_there_is_no_summary_of_summaries(self):
         summarize = AsyncMock(return_value="A summary.")
         self._context(
