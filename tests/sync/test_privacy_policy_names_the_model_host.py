@@ -82,3 +82,14 @@ class PrivacyPolicyNamesTheSearchServicesTest(TestCase):
             "procedure and diagnosis.",
             text,
         )
+
+
+class AboutAiPageDisclosesSearchesTest(TestCase):
+    def test_the_page_says_searches_run_whatever_the_outside_models_choice(self):
+        body = Client().get(reverse("about-ai")).content.decode("utf-8")
+        text = " ".join(BeautifulSoup(body, "html.parser").get_text(" ").split())
+        self.assertIn(
+            "Searches may be conducted using external services (like PubMed, "
+            "OpenRouter web search, and similar) either way.",
+            text,
+        )
