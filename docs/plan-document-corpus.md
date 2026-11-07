@@ -78,11 +78,15 @@ always among the stored rows, whatever their rank.
 
 A bundle is a JSON array of records, an object
 `{"bundle_version": 1, "documents": [...]}` (other top-level keys, such as the
-exporter's provenance, are ignored), or JSON Lines with one record per line;
+exporter's provenance, are ignored, except `defaults`), or JSON Lines with one
+record per line;
 any of these may also arrive inside a zip archive (Zip bundles, below). Problems with the bundle as a whole are refused before anything is
 written: more than `MAX_BUNDLE_BYTES` (256 MiB) of UTF-8 text, more than
 `MAX_DOCUMENTS` (5,000) records, a JSON object that gives a field twice, a
-record that is not an object, or a `bundle_version` other than 1.
+record that is not an object, a `bundle_version` other than 1, or a bundle
+object with a `defaults` key. Records are flat: each carries every field it
+means, so a record reads the same in the bundle as it lands on the row, and
+nothing is merged into it.
 
 A record is one document. A record with a field outside the table is
 refused, and so is a second record with a `document_key` the bundle already
@@ -114,12 +118,12 @@ constants in `plan_document_bundle.py`.
 | `negative_regex` | string, at most 800 | no | Must compile. A pattern that matches the probe `NEGATIVE_REGEX_PROBE` (`medical necessity medically necessary medical center`) draws a warning, and refuses the record under `--strict` |
 | `source_url` | string, at most `MAX_URL` (2000) | no | A valid `http://` or `https://` URL (Django's `URLValidator`) |
 | `fetched_at` | ISO 8601 datetime string | no | A naive time is taken as UTC |
-| `source_sha256` | 64 hex characters | no | SHA-256 of the original file. Computed from the bytes when a `file` record leaves it out |
+| `source_sha256` | 64 hex characters | no | SHA-256 of the original file. A `file` record's must be the hash of the file's bytes, or the record is refused (`source_sha256: does not match the file's bytes`); computed from the bytes when it is left out. A `pages` or `text` record's is kept as given |
 | `pages` | non-empty list of strings, or of `{"page": N, "text": "..."}` objects | exactly one of `pages`, `text` and `file` | At most `MAX_PAGES` (2,000). Plain strings are numbered by their position from 1, so send one entry per physical page with a blank page as `""` (dropping it would renumber every later page); CRLF is read as LF and NUL is removed; an object's `page` must be a whole number of 1 or more. Blank pages are dropped, and a record whose pages are all blank is refused |
 | `text` | non-empty string | one of the three | Kept as is when it has lines that read exactly `[Page N]`; otherwise wrapped as page 1 |
-| `file` | relative path ending in `.pdf`, `.docx` or `.txt` | one of the three | Read under `--files-root`, or, in a zip, the exact name of a `files/` member (`files/kaiser-norcal-sbc-2025-hmo.pdf`); an absolute path, or one that leaves the root, is refused. At most `MAX_FILE_BYTES` (50 MiB). Parsed with `ml_document_extraction.extract_text_from_bytes`, the readers the appeal flow uses, into page blocks. A file that yields no text (a scanned PDF) is refused |
+| `file` | relative path ending in `.pdf`, `.docx` or `.txt` | one of the three | Read under `--files-root`, or, in a zip, the exact name of a `files/` member (`files/kaiser-norcal-sbc-2025-hmo.pdf`); an absolute path, or one that leaves the root, is refused. At most `MAX_FILE_BYTES` (50 MiB). A Git LFS pointer in place of the document (bytes starting `version https://git-lfs.github.com/spec/v1`, what a checkout holds before `git lfs pull`) is refused with `file: is a Git LFS pointer, not the document; run git lfs pull`. Parsed with `ml_document_extraction.extract_text_from_bytes`, the readers the appeal flow uses, into page blocks; not parsed again when the row was already parsed from the same bytes (below). A file that yields no text (a scanned PDF) is refused |
 | `is_active` | boolean | no, default `true` | |
-| `pipeline_version` | string, at most `MAX_VERSION` (64) | no | |
+| `pipeline_version` | string, at most `MAX_VERSION` (64) | no | With the bytes' hash, decides whether a `file` is parsed again (below) |
 | `notes` | string | no | Free text; anything but a string is stored as blank |
 
 Whichever way the text arrives, it is stored as `[Page N]` blocks joined by
@@ -127,6 +131,15 @@ blank lines (the shape `MLPlanDocHelper`'s passage selection reads, so a
 quoted passage can name its page), and may hold at most `MAX_TEXT_CHARS`
 (3,000,000 characters). The row's `text_sha256`, `page_count` and
 `char_count` are computed from it, and `import_batch` is the run's label.
+
+A `file` is not parsed again when the row of that `document_key` has text
+and was parsed from the same bytes by the same pipeline: its
+`source_sha256` is the hash of the file's bytes and its `pipeline_version`
+equals the record's. The row's text and page count are reused, so a deploy
+that re-imports the whole corpus does not re-read every unchanged PDF; the
+record's metadata still applies, and the record counts as `unchanged` only
+when nothing else differs either. New bytes, a new `pipeline_version`, a
+row without text, or `--reparse` parse the file again.
 
 ### Zip bundles
 
@@ -147,12 +160,15 @@ an encrypted or symbolic-link member, or a compression method other than
 stored or deflated. The checks run on the central directory before any member
 is read. The caps:
 
-- the archive itself (a file, or stdin) is capped at `MAX_BUNDLE_BYTES`
-  (256 MiB), like any bundle;
-- `bundle.json` at the same cap;
+- the archive itself, read from a path, at `MAX_ARCHIVE_PATH_BYTES` (2 GiB
+  on disk; it is read in place, never loaded whole); on stdin, where it is
+  read into memory, at `MAX_BUNDLE_BYTES` (256 MiB), like any bundle;
+- `bundle.json` at `MAX_BUNDLE_BYTES`;
 - each original at `MAX_FILE_BYTES` (50 MiB);
 - `SHA256SUMS` at 1 MiB;
-- the members' declared total at `MAX_ARCHIVE_BYTES` (1 GiB).
+- the members' declared total at `MAX_ARCHIVE_BYTES` (1 GiB), which bounds
+  what the archive can expand to whatever its size on disk. A corpus of a
+  few hundred megabytes of PDFs fits well inside it.
 
 Every member is read in chunks against its own cap, so a member whose declared
 size is forged cannot inflate past it. An archive never takes `--files-root`.
@@ -359,6 +375,7 @@ kubectl exec <pod> -- python manage.py import_plan_documents \
 | `--deactivate-missing` | Retire the named carriers' active documents the bundle does not list |
 | `--dry-run` | Do everything inside the transaction, then roll it back |
 | `--strict` | Refuse the whole bundle, writing nothing, on the first bad record or the first warning |
+| `--reparse` | Parse every `file` again, even one whose bytes and `pipeline_version` are the ones its row was parsed from (by default that row's text is reused) |
 
 The command prints `Loaded N record(s) from '<source>'` (for an archive
 followed by `(archive: K file member(s), checksums verified)` or
@@ -510,12 +527,26 @@ skipped when the margin holds; one that conflicts with nothing selected rides
 along, up to `MAX_SELECTED` (3), which is how a plan's SBC sits beside its
 EOC. Two documents conflict (`conflicts`) when their plan, state, region,
 plan year or employer are both set and differ, both have a specific line
-of business and the lines differ, or one is dental coverage and the other
-is not.
+of business and the lines differ, one is dental coverage and the other
+is not, or they are plan-code variants: both have `plan_id_prefixes` and
+the two lists share none, or both have a `match_regex` and the patterns
+differ.
+
+Variants are documents with the same metadata told apart only by the plan
+codes or the pattern they key on, such as two small-group EOCs of one
+carrier, region and year. Without the variant rule both would ride along.
+With it, a denial whose plan id starts with one variant's prefix gives that
+variant the 30 prefix points (or 25 for its regex), which clear the margin,
+so it alone is selected; a denial carrying neither code leaves the two
+within the margin, so they go to the tie-break, and nothing is selected
+without an answer. Identical prefix lists, overlapping ones, or prefixes on
+only one side do not conflict, so an EOC and its SBC keyed on the same
+codes still ride together. Give each variant its own prefixes (or regex):
+two variants with neither are not told apart at all.
 
 Any rival means the rules select nothing. The top and its rivals go to
 `tie_break`: a prompt listing them as numbered lines (title, plan, region,
-state or national, year, line of business, coverage, employer) over the first 2,000
+state or national, year, line of business, coverage, employer, plan codes) over the first 2,000
 characters of the letter, asking for the number of the member's plan or 0,
 answered by `infer_with_fallback` at temperature 0 with a 20 s timeout over
 at most 2 of the internal general-purpose models (`models=` is never passed,
@@ -530,7 +561,8 @@ seconds, nothing is stored and the next refresh asks again. Fail closed.
 
 The tie-break fires only for conflicts the regexes do not settle: two plan
 years of one product, an HMO and a Deductible HMO of the same region, two
-employers' SPDs. A region conflict encoded as negative regexes never reaches
+employers' SPDs, two plan-code variants for a letter that carries neither
+code. A region conflict encoded as negative regexes never reaches
 it: a letter naming San Francisco and Los Angeles hits both regional
 documents' negative regexes, both are hard-excluded before scoring, and
 nothing is selected without a model call.
@@ -698,7 +730,8 @@ a `file` record; a file that yields no text (a scanned PDF) is a form error.
 A new document needs its file. On save the text, hashes and counts are
 replaced and `import_batch` is set to `admin`; saving an upload onto an
 existing row deletes that document's match rows. The two regex fields show
-their pattern text, not the compiled pattern. "Read the text" links to the
+their pattern text, not the compiled pattern. The prefixes and keywords are
+JSON lists of strings; a cleared box saves the empty list. "Read the text" links to the
 staff text view. The actions **Activate**
 and **Deactivate** set `is_active` and move `updated_at`, so the carrier's
 corpus stamp changes and its denials are matched again.
