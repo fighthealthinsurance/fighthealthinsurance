@@ -327,7 +327,10 @@ class TestWebSearchCitations:
         self.backend.web_search = AsyncMock(return_value=[])
         self.judgments: dict = {}
 
+        self.judge_kwargs: list = []
+
         async def judge(result, procedure, diagnosis, **kwargs):
+            self.judge_kwargs.append(kwargs)
             return self.judgments.get(result.url)
 
         with (
@@ -402,10 +405,28 @@ class TestWebSearchCitations:
         assert len(cited) == web_search_context.MAX_KEPT
 
     @pytest.mark.asyncio
-    async def test_no_search_without_consent(self):
+    async def test_searches_without_external_models_consent(self):
+        # Only the procedure and diagnosis go out, as with a PubMed search.
         self.consent.return_value = False
-        assert await web_search_context.web_search_citations(_denial(), 10) == []
-        self.backend.web_search.assert_not_called()
+        self.backend.web_search.return_value = _results("https://a.org/good")
+        self.judgments = {"https://a.org/good": SUPPORTS}
+        cited = await web_search_context.web_search_citations(
+            _denial(use_external=False), 10
+        )
+        assert len(cited) == 1 and "https://a.org/good" in cited[0]
+
+    @pytest.mark.asyncio
+    async def test_jev_may_not_judge_without_consent(self):
+        self.consent.return_value = False
+        self.backend.web_search.return_value = _results("https://a.org/x")
+        await web_search_context.web_search_citations(_denial(), 10)
+        assert [k["may_ask_jev"] for k in self.judge_kwargs] == [False]
+
+    @pytest.mark.asyncio
+    async def test_jev_may_judge_with_consent(self):
+        self.backend.web_search.return_value = _results("https://a.org/x")
+        await web_search_context.web_search_citations(_denial(), 10)
+        assert [k["may_ask_jev"] for k in self.judge_kwargs] == [True]
 
     @pytest.mark.asyncio
     async def test_no_search_without_a_procedure(self):
@@ -506,9 +527,35 @@ class TestJudgeResult:
                 "MRI",
                 "pain",
                 judge_model=object(),
+                may_ask_jev=True,
             )
         assert judgment is AGAINST
         own.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_asks_our_model_not_jev_without_consent(self):
+        with (
+            patch.object(research_judging, "enabled", return_value=True),
+            patch.object(research_judging, "skip_reason", return_value=None),
+            patch.object(
+                research_judging, "judge_article", new_callable=AsyncMock
+            ) as jev,
+            patch.object(
+                research_judging,
+                "judge_article_with",
+                new_callable=AsyncMock,
+                return_value=SUPPORTS,
+            ),
+        ):
+            judgment = await web_search_context.judge_result(
+                WebCitation("T", "https://a.org", "excerpt"),
+                "MRI",
+                "pain",
+                judge_model=object(),
+                may_ask_jev=False,
+            )
+        assert judgment is SUPPORTS
+        jev.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_judge_is_no_judgment(self):

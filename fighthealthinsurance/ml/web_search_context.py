@@ -23,11 +23,14 @@ unlike a PubMed article, an unjudged web page does not keep its place.
 What is kept goes in order of how strongly it supports the treatment.
 
 Data protection: the search is sent the denial's procedure and diagnosis
-only, never the letter, the history or anything about the person, and only
-with the person's external-models consent (``Denial.use_external``, read
-again from the database right before the search). The judges are sent the
-page's public title and excerpt and the same procedure and diagnosis, as
-research judging is. Nothing here logs the text.
+only, never the letter, the history or anything about the person: the same
+terms a PubMed search sends, so like the PubMed search it runs whether or
+not the person allowed outside models. The judges are sent the page's
+public title and excerpt and the same procedure and diagnosis, as research
+judging is, and as there Jev (an outside service) is asked only with the
+person's external-models consent (``Denial.use_external``, read again from
+the database first); without it our own model judges. Nothing here logs the
+text.
 """
 
 import asyncio
@@ -96,7 +99,8 @@ def build_question(procedure: Optional[str], diagnosis: Optional[str]) -> Option
 
 async def _consent_allows(denial: Denial) -> bool:
     """The person allowed outside models, on the row in memory and on the
-    row as it is now. A missing row or a failed read is a no."""
+    row as it is now. A missing row or a failed read is a no. Decides
+    whether Jev may judge the results, not whether the search runs."""
     if getattr(denial, "use_external", False) is not True:
         return False
     denial_id = getattr(denial, "denial_id", None)
@@ -110,8 +114,8 @@ async def _consent_allows(denial: Denial) -> bool:
         )
     except Exception as e:
         logger.debug(
-            f"Could not read consent for denial {denial_id} before a web "
-            f"search ({type(e).__name__}); not searching"
+            f"Could not read consent for denial {denial_id} before judging "
+            f"web results ({type(e).__name__}); not asking Jev"
         )
         return False
     return bool(row and row["use_external"])
@@ -123,13 +127,19 @@ async def judge_result(
     diagnosis: Optional[str],
     *,
     judge_model: Any = None,
+    may_ask_jev: bool = False,
     timeout_seconds: float = research_judging.OWN_MODEL_TIMEOUT_SECONDS,
 ) -> Optional[research_judging.Judgment]:
-    """Jev's judgment of one result when research judging is on and may
-    send now, else (or when Jev gives none) ``judge_model``'s, else None.
-    Never raises (cancellation aside). Consent is the caller's to check."""
+    """Jev's judgment of one result when ``may_ask_jev`` (the person's
+    external-models consent, the caller's to check) and research judging
+    is on and may send now, else (or when Jev gives none) ``judge_model``'s,
+    else None. Never raises (cancellation aside)."""
     title, excerpt = result.page_title, result.excerpt
-    if research_judging.enabled() and research_judging.skip_reason() is None:
+    if (
+        may_ask_jev
+        and research_judging.enabled()
+        and research_judging.skip_reason() is None
+    ):
         judgment = await research_judging.judge_article(
             title, excerpt, procedure, diagnosis, timeout_seconds=timeout_seconds
         )
@@ -152,6 +162,7 @@ async def _judge_all(
     procedure: Optional[str],
     diagnosis: Optional[str],
     seconds: float,
+    may_ask_jev: bool,
 ) -> Dict[str, research_judging.Judgment]:
     """Judgments by URL, for the results judged within ``seconds``; the
     rest are cancelled and stay unjudged."""
@@ -165,6 +176,7 @@ async def _judge_all(
                 procedure,
                 diagnosis,
                 judge_model=judge_model,
+                may_ask_jev=may_ask_jev,
                 timeout_seconds=seconds,
             )
 
@@ -204,9 +216,6 @@ async def _search_and_judge(denial: Denial, budget_seconds: float) -> List[str]:
     if backend is None:
         _count("skipped")
         return []
-    if not await _consent_allows(denial):
-        _count("skipped")
-        return []
     with llm_usage.llm_task("web_search"):
         results = await backend.web_search(
             question, timeout=budget_seconds * SEARCH_SHARE
@@ -220,8 +229,10 @@ async def _search_and_judge(denial: Denial, budget_seconds: float) -> List[str]:
     if left < _MIN_JUDGE_SECONDS:
         _count("unjudged", len(results))
         return []
+    may_ask_jev = await _consent_allows(denial)
+    left = budget_seconds - (time.monotonic() - started)
     judgments = await _judge_all(
-        results, denial.procedure, denial.diagnosis, left - 0.5
+        results, denial.procedure, denial.diagnosis, left - 0.5, may_ask_jev
     )
     kept, dropped = research_judging.order(
         [r for r in results if r.url in judgments],
@@ -245,8 +256,8 @@ async def web_search_citations(
 ) -> List[str]:
     """Citations from a web search on the denial's treatment, each judged
     relevant and not against it, within ``budget_seconds``; [] when there
-    is no web search, no consent, no procedure, nothing relevant, or no
-    time. Never raises (cancellation aside)."""
+    is no web search, no procedure, nothing relevant, or no time. Never raises (cancellation aside).
+    """
     budget = min(float(budget_seconds), DEFAULT_BUDGET_SECONDS)
     if budget <= 0:
         return []

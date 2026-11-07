@@ -235,10 +235,10 @@ OpenRouter's web search (the `openrouter:web_search` server tool, run by
 `anthropic/claude-haiku-5.5`, or `OPENROUTER_WEB_SEARCH_MODEL`) adds
 citations to an appeal ([`ml/web_search_context.py`](../fighthealthinsurance/ml/web_search_context.py)):
 
-- **Only with consent, and only the treatment.** It runs only when the
-  person left the external-models consent on (`Denial.use_external`, read
-  again just before the search), and it is sent the procedure and
-  diagnosis, never the letter, the history or anything about the person.
+- **Only the treatment.** It is sent the procedure and diagnosis, never the
+  letter, the history or anything about the person: the same terms the
+  PubMed search sends, so like that search it runs whether or not the
+  person left the external-models consent on.
 - **Non-blocking.** It runs beside the citation backends, inside the
   citation step's existing time box (at most 25 seconds), and a failure,
   timeout or missing key just means no web citations.
@@ -246,8 +246,9 @@ citations to an appeal ([`ml/web_search_context.py`](../fighthealthinsurance/ml/
   thrown away; only the pages the search returned (title, URL, excerpt) are
   kept. Each is asked the same three questions research judging asks of a
   PubMed article (on topic? supports the treatment? argues against it?), by
-  Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on, else by our own best
-  general-purpose model. Pages judged off topic or against the treatment are
+  Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on and the person allowed
+  outside models (`Denial.use_external`, read again first), else by our own
+  best general-purpose model. Pages judged off topic or against the treatment are
   dropped, and so are pages nobody could judge in time. At most three are
   kept, strongest support first, and added after the CMS citations.
 - **Settings.** `OPENROUTER_WEB_SEARCH_ENABLED=false` turns it off;

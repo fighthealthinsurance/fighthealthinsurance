@@ -606,8 +606,9 @@ class MLCitationsHelper:
         cms_task = asyncio.create_task(
             cls.generate_cms_coverage_citations(denial=denial)
         )
-        # OpenRouter's web search, when it is configured and the person
-        # allowed outside models, also alongside the backends. Its own time
+        # OpenRouter's web search, when it is configured, also alongside the
+        # backends. It sends only the procedure and diagnosis, as the PubMed
+        # search does, so it runs with or without use_external. Its own time
         # box ends before this run's, so awaiting it below never makes the
         # run longer than ``timeout``; with nothing to search or nothing
         # judged relevant it gives [] (see ml/web_search_context.py).
