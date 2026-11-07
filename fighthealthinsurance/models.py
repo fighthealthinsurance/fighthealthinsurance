@@ -6014,6 +6014,29 @@ class AssistantAgreementCount(models.Model):
         return f"AssistantAgreementCount({self.day}, {self.count})"
 
 
+class UploadCount(models.Model):
+    """Files uploaded from one address, email or account in one hour or one
+    UTC day, on any page that takes files (upload_rate_limit.py). The
+    address, email or account is kept only as a keyed digest that changes
+    every period; rows are swept once their day is over."""
+
+    day = models.DateField(db_index=True)
+    # "h" plus the UTC hour (2026-11-06T21) or "d" plus the day.
+    period = models.CharField(max_length=16)
+    key = models.CharField(max_length=64)
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period", "key"], name="upload_count_period_key"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"UploadCount({self.period}, {self.count})"
+
+
 class McpToolCallCount(models.Model):
     """MCP tool calls per UTC hour, tool and outcome, shared by every pod
     (mcp_call_counts.py). Names and counts only: no arguments, no request

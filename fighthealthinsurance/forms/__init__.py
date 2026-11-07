@@ -931,10 +931,11 @@ class FollowUpForm(forms.Form):
     )
 
     def clean_followup_documents(self) -> list:
-        """Any format, since nothing parses these; a cap on each file and on
-        the upload, since each is encrypted and kept."""
+        """Documents and photos only (upload_limits.validate_attachment), and
+        a cap on each file and on the upload, since each is encrypted and
+        kept."""
         files = [f for f in self.cleaned_data.get("followup_documents") or [] if f]
-        upload_limits.validate_uploads(files, each=[upload_limits.validate_upload_size])
+        upload_limits.validate_uploads(files, each=[upload_limits.validate_attachment])
         return files
 
 

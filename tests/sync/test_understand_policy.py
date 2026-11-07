@@ -48,13 +48,13 @@ class UnderstandPolicyFormValidationTest(TestCase):
         return SimpleUploadedFile(name, content, content_type=content_type)
 
     _VALID_FILES = [
-        ("test.pdf", b"%PDF-1.4 fake pdf content", "application/pdf"),
+        ("test.pdf", b"%PDF-1.4 fake pdf content" + b" " * 300, "application/pdf"),
         (
             "test.docx",
-            b"PK\x03\x04 fake docx content",
+            b"PK\x03\x04 fake docx content" + b" " * 300,
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ),
-        ("test.txt", b"plain text content", "text/plain"),
+        ("test.txt", b"plain text content" + b" " * 300, "text/plain"),
     ]
 
     _INVALID_FILES = [
@@ -112,7 +112,7 @@ class UnderstandPolicyFormValidationTest(TestCase):
         self.assertFalse(form.is_valid())
 
     def test_requires_tos_agreement(self):
-        pdf_content = b"%PDF-1.4 fake pdf content"
+        pdf_content = b"%PDF-1.4 fake pdf content" + b" " * 300
         f = self._make_uploaded_file("test.pdf", pdf_content, "application/pdf")
         form = UnderstandPolicyForm(
             data=self._make_form_data(tos_agreement=False),
@@ -121,7 +121,7 @@ class UnderstandPolicyFormValidationTest(TestCase):
         self.assertFalse(form.is_valid())
 
     def test_requires_email(self):
-        pdf_content = b"%PDF-1.4 fake pdf content"
+        pdf_content = b"%PDF-1.4 fake pdf content" + b" " * 300
         f = self._make_uploaded_file("test.pdf", pdf_content, "application/pdf")
         form = UnderstandPolicyForm(
             data=self._make_form_data(email=""),
@@ -130,7 +130,7 @@ class UnderstandPolicyFormValidationTest(TestCase):
         self.assertFalse(form.is_valid())
 
     def test_optional_user_question(self):
-        pdf_content = b"%PDF-1.4 fake pdf content"
+        pdf_content = b"%PDF-1.4 fake pdf content" + b" " * 300
         f = self._make_uploaded_file("test.pdf", pdf_content, "application/pdf")
         form = UnderstandPolicyForm(
             data=self._make_form_data(user_question="Is my MRI covered?"),
@@ -330,7 +330,7 @@ class UnderstandPolicyViewTest(TestCase):
         self.assertContains(response, "This field is required")
 
     def test_valid_pdf_upload_creates_document(self):
-        pdf_content = b"%PDF-1.4 test policy content" + b"x" * 100
+        pdf_content = b"%PDF-1.4 test policy content" + b"x" * 300
         response = self.client.post(
             self.url,
             {
@@ -355,7 +355,7 @@ class UnderstandPolicyViewTest(TestCase):
         self.assertIn("policy", doc.filename)
 
     def test_valid_upload_stores_session_data(self):
-        pdf_content = b"%PDF-1.4 test policy content" + b"x" * 100
+        pdf_content = b"%PDF-1.4 test policy content" + b"x" * 300
         self.client.post(
             self.url,
             {

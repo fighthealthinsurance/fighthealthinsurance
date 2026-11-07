@@ -57,6 +57,7 @@ from PIL import Image
 from fighthealthinsurance import (
     assistant_handoff_views,
     upload_limits,
+    upload_rate_limit,
     common_view_logic,
     consent,
     intake_resume,
@@ -237,6 +238,19 @@ class FollowUpView(generic.FormView):
 
     template_name = "followup.html"
     form_class = core_forms.FollowUpForm
+
+    def post(self, request, *args, **kwargs):
+        # Counted before any file is checked.
+        files = upload_rate_limit.uploaded_files(request, "followup_documents")
+        if not upload_rate_limit.take(request, files):
+            form = upload_rate_limit.refused_form(
+                self.form_class,
+                "followup_documents",
+                {**request.POST.dict(), **self.get_initial()},
+                files=files,
+            )
+            return self.render_to_response(self.get_context_data(form=form))
+        return super().post(request, *args, **kwargs)
 
     def get_initial(self):
         # Set the initial arguments to the form based on the URL route params.
@@ -2462,10 +2476,18 @@ class OCRView(View):
             files = dict(request.FILES.lists())
             uploader = files["uploader"]
             # Before any file is read: the count and each file's size, which
-            # Django measured as the files arrived.
+            # Django measured as the files arrived, then the visitor's limit.
+            # Counted before the size and count checks answer, so an upload
+            # refused for them still uses up its place; their reason is the
+            # one shown, being the more specific.
             refused = self.refusal(uploader)
+            counted = upload_rate_limit.take(request, len(uploader))
             if refused is not None:
                 return render_ocr_error(request, refused, form)
+            if not counted:
+                return render_ocr_error(
+                    request, upload_rate_limit.refusal_message(len(uploader)), form
+                )
             doc_txt = self._ocr(uploader)
             return render(
                 request,
@@ -3677,6 +3699,16 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
     form_class = core_forms.PlanDocumentsForm
     template_name = "plan_documents.html"
 
+    def post(self, request, *args, **kwargs):
+        # Counted before any file is checked.
+        files = upload_rate_limit.uploaded_files(request, "plan_documents")
+        if not upload_rate_limit.take(request, files):
+            form = upload_rate_limit.refused_form(
+                self.form_class, "plan_documents", request.POST, files=files
+            )
+            return self.render_to_response(self.get_context_data(form=form))
+        return super().post(request, *args, **kwargs)
+
     def get_initial(self):
         """Populate form with denial ref data from URL params for back navigation."""
         initial = super().get_initial()
@@ -4460,6 +4492,16 @@ class UnderstandPolicyView(FormView):
         context["title"] = "Understand My Policy"
         return context
 
+    def post(self, request, *args, **kwargs) -> HttpResponse:
+        # Counted before any file is checked.
+        files = upload_rate_limit.uploaded_files(request, "policy_document")
+        if not upload_rate_limit.take(request, files):
+            form = upload_rate_limit.refused_form(
+                self.form_class, "policy_document", request.POST, files=files
+            )
+            return self.render_to_response(self.get_context_data(form=form))
+        return super().post(request, *args, **kwargs)
+
     def form_valid(self, form) -> HttpResponse:
         """Process the uploaded policy document and redirect to chat."""
         email = form.cleaned_data.get("email")
@@ -4473,9 +4515,7 @@ class UnderstandPolicyView(FormView):
             return self.form_invalid(form)
 
         # Sanitize filename, preserving extension for downstream dispatch
-        sanitized = re.sub(r"[^\w .\-]", "_", uploaded_file.name)
-        stem, ext = os.path.splitext(sanitized)
-        safe_filename = f"{stem[:max(1, 200 - len(ext))]}{ext.lower()}"
+        safe_filename = upload_limits.safe_filename(uploaded_file.name)
         uploaded_file.name = safe_filename
 
         mark_session_consent(self.request.session, email or "")
@@ -4635,6 +4675,8 @@ class SharePlanDocumentsView(FormView):
         if not shared_plan_documents.render_token_ok(request.POST.get("rendered")):
             return self._refuse(shared_plan_documents.TRY_AGAIN)
         files = request.FILES.getlist("plan_documents")
+        if not upload_rate_limit.take(request, len(files)):
+            return self._refuse(upload_rate_limit.refusal_message(len(files)))
         problem = shared_plan_documents.daily_limit_problem(request, files)
         if problem:
             return self._refuse(problem)

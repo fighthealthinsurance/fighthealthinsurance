@@ -322,7 +322,9 @@ class EveryFileGetsACloserLookTest(_ShareTestCase):
 
     def test_explain_policy_keeps_its_own_lighter_check(self):
         # The closer look is only for files we keep for research.
-        fake = SimpleUploadedFile("policy.docx", b"PK\x03\x04 fake docx content")
+        fake = SimpleUploadedFile(
+            "policy.docx", b"PK\x03\x04 fake docx content" + b" " * 300
+        )
         chat_forms.validate_policy_document(fake)
         with self.assertRaises(chat_forms.forms.ValidationError):
             chat_forms.validate_shared_document(fake)
