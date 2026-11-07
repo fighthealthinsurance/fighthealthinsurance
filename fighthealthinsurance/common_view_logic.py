@@ -7256,6 +7256,29 @@ class AppealsBackendHelper:
                     f"ClinicalTrials context refresh on retry failed: {e}"
                 )
                 clinical_trials_context = None
+            # The plan-document match, kept current here too: every
+            # interactive generation counts toward gen_attempts, so a person
+            # who regenerates three times would otherwise never see a
+            # correction honoured. With the inputs unchanged this is a DB
+            # read; with a short budget it builds passages from the
+            # fallback terms and puts no tie to a model.
+            from fighthealthinsurance import plan_document_matcher
+
+            if plan_document_matcher.enabled():
+                try:
+                    await asyncio.wait_for(
+                        plan_document_matcher.arefresh_match(
+                            denial,
+                            deadline=time.monotonic()
+                            + plan_document_matcher.SHORT_BUDGET_SECONDS,
+                        ),
+                        timeout=plan_document_matcher.SHORT_BUDGET_SECONDS,
+                    )
+                except Exception as e:
+                    logger.debug(
+                        f"Plan document refresh on retry for denial "
+                        f"{denial.denial_id} failed: {type(e).__name__}"
+                    )
             yield json.dumps(
                 {
                     "type": "status",

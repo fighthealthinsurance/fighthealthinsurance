@@ -384,7 +384,9 @@ def _phrase_list(value: Any) -> List[str]:
     return [item.strip() for item in value if isinstance(item, str) and item.strip()]
 
 
-def _candidate(doc: PublicPlanDocument, plan_name: str) -> Candidate:
+def _candidate(
+    doc: PublicPlanDocument, plan_name: str, *, trust_plan: bool = True
+) -> Candidate:
     return Candidate(
         id=doc.id,
         title=doc.title,
@@ -400,7 +402,7 @@ def _candidate(doc: PublicPlanDocument, plan_name: str) -> Candidate:
         match_keywords=tuple(k.lower() for k in _phrase_list(doc.match_keywords)),
         match_regex=_pattern_or_none(doc.match_regex),
         negative_regex=_pattern_or_none(doc.negative_regex),
-        insurance_plan_id=doc.insurance_plan_id,
+        insurance_plan_id=doc.insurance_plan_id if trust_plan else None,
         plan_name=plan_name,
         source_url=doc.source_url or "",
     )
@@ -414,12 +416,25 @@ def _candidates(company: InsuranceCompany) -> List[Candidate]:
     # Plan names through values(), not select_related: InsurancePlan's regex
     # columns are NOT NULL and a left join on a document without a plan
     # would hand NULL to RegexField.
-    plan_names = dict(
-        rows.filter(insurance_plan__isnull=False).values_list(
-            "id", "insurance_plan__plan_name"
+    # A plan counts only while it is the carrier's own: a plan moved to
+    # another insurer in the admin after the document was linked to it says
+    # nothing about this carrier's members.
+    plans = {
+        doc_id: (name, plan_company_id)
+        for doc_id, name, plan_company_id in rows.filter(
+            insurance_plan__isnull=False
+        ).values_list(
+            "id", "insurance_plan__plan_name", "insurance_plan__insurance_company_id"
         )
-    )
-    return [_candidate(doc, plan_names.get(doc.id) or "") for doc in rows]
+    }
+    out = []
+    for doc in rows:
+        name, plan_company_id = plans.get(doc.id, ("", None))
+        if plan_company_id is not None and plan_company_id != company.id:
+            out.append(_candidate(doc, "", trust_plan=False))
+        else:
+            out.append(_candidate(doc, name or ""))
+    return out
 
 
 def corpus_stamp(company_id: int) -> Tuple[int, str]:
@@ -758,6 +773,18 @@ def match_documents(
             s for s in ranked(scored) if s.score >= MIN_SCORE and s.identifying >= 1
         ][0]
         tie_break_candidates = [top] + rivals
+    dental = PublicPlanDocument.COVERAGE_KIND_DENTAL
+    if (
+        facts.dental
+        and not facts.dental_is_hard
+        and any(s.candidate.coverage_kind == dental for s in selected)
+    ):
+        # Only the letter's words make this a dental claim, and they can be
+        # a medical claim about dental work: the rules alone never pick a
+        # dental document for it. The model reads the letter and says, and
+        # without its answer nothing is selected.
+        tie_break_candidates = list(selected)
+        selected = []
     quotable = {s.candidate.id for s in selected} | {
         s.candidate.id for s in tie_break_candidates
     }

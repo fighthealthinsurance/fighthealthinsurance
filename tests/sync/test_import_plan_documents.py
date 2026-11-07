@@ -1296,6 +1296,10 @@ class ReviewFindingsImportTest(_ImportTestCase):
         self.run_import([self.record(match_regex=pattern)])
         self.assertEqual(self.the_document().match_regex.pattern, pattern)
 
+    def test_a_regex_keeps_a_space_at_its_end(self):
+        self.run_import([self.record(match_regex="north ")])
+        self.assertEqual(self.the_document().match_regex.pattern, "north ")
+
     def test_a_key_with_stray_whitespace_is_not_retired_by_deactivate_missing(self):
         self.run_import([self.record()])
         out, _ = self.run_import(

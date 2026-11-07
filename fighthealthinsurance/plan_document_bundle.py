@@ -649,7 +649,9 @@ def _regex(record: Dict[str, Any], name: str) -> str:
         value = ""
     if not isinstance(value, str):
         raise RecordError(f"{name}: a string")
-    pattern = value.strip()
+    # Only a blank pattern is emptied: a space at either end can be part of
+    # it ("north " must not match "northern").
+    pattern = value if value.strip() else ""
     if len(pattern) > MAX_REGEX:
         raise RecordError(f"{name}: longer than {MAX_REGEX} characters")
     if pattern:

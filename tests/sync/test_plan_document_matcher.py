@@ -420,6 +420,31 @@ class MatchDocumentsTests(_CorpusMixin, TestCase):
         self.assertEqual(outcome.selected[0].signals["same_plan"], 40)
         self.assertEqual(outcome.selected[0].score, 99)
 
+    def test_a_plan_moved_to_another_insurer_no_longer_counts_as_the_same_plan(self):
+        # The plan was the carrier's when the document was linked to it, then
+        # reassigned in the plan admin: its link says nothing about Kaiser's
+        # members any more.
+        self.ma_plan.insurance_company = self.aetna
+        self.ma_plan.save(update_fields=["insurance_company"])
+        denial = self.denial(SENIOR_ADVANTAGE_LETTER, insurance_plan_obj=self.ma_plan)
+        PlanSourceRelation.objects.create(denial=denial, plan_source=self.ma_source)
+        outcome = match_documents(denial, company=self.kaiser)
+        scored = self.scored_by_id(outcome)
+        self.assertNotIn("same_plan", scored[self.senior_advantage_eoc.id].signals)
+
+    def test_a_dental_document_found_only_by_the_letters_words_goes_to_the_model(self):
+        # No medical document is in the running, so there is no rival; the
+        # dental document still is not selected by the rules alone.
+        PublicPlanDocument.objects.exclude(id=self.kaiser_dental.id).update(
+            is_active=False
+        )
+        outcome = match_documents(self.denial(DENTAL_LETTER))
+        self.assertEqual(outcome.selected, [])
+        self.assertEqual(
+            [s.candidate.id for s in outcome.tie_break_candidates],
+            [self.kaiser_dental.id],
+        )
+
     def test_a_letter_naming_both_regions_selects_nothing_and_needs_no_tie_break(self):
         outcome = match_documents(self.denial(BOTH_REGIONS_LETTER))
         self.assertEqual(outcome.selected, [])
