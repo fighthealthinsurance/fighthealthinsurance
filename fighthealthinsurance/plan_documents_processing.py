@@ -207,20 +207,34 @@ async def aprocess_document(document_id: str) -> str:
     if stored == PolicyDocument.PROCESSING_READY and text:
         # The company is read from the text before cleaning, which may have
         # taken a line that looked personal.
-        await database_sync_to_async(link_company)(document_id, text)
+        await alink_company(document_id, text)
     return stored
 
 
-def link_company(document_id: str, text: str) -> None:
-    """Link the shared row to the company its text names as plan sponsor
-    (plan_sponsors), adding the company to the list if it's new. A failure
-    is logged and leaves the row unlinked: the reading itself stands."""
-    from fighthealthinsurance.plan_sponsors import identify_sponsor, link_sponsor
+async def afind_company(text: str):
+    """The company ``text`` names as plan sponsor: our model's reading,
+    checked against the text (plan_sponsor_reader), or, when no model gave
+    a usable answer, the fixed patterns' (plan_sponsors.identify_sponsor).
+    None when the document names none."""
+    from fighthealthinsurance.plan_sponsor_reader import aread_sponsor
+    from fighthealthinsurance.plan_sponsors import identify_sponsor
+
+    sponsor, answered = await aread_sponsor(text)
+    if answered:
+        return sponsor
+    return await database_sync_to_async(identify_sponsor)(text)
+
+
+async def alink_company(document_id: str, text: str) -> None:
+    """Link the shared row to the company its text names as plan sponsor,
+    adding the company to the list if it's new. A failure is logged and
+    leaves the row unlinked: the reading itself stands."""
+    from fighthealthinsurance.plan_sponsors import link_sponsor
 
     try:
-        sponsor = identify_sponsor(text)
+        sponsor = await afind_company(text)
         if sponsor is not None:
-            link_sponsor(document_id, sponsor)
+            await database_sync_to_async(link_sponsor)(document_id, sponsor)
     except Exception:
         logger.opt(exception=True).warning(
             f"Could not link policy document {document_id} to a company"

@@ -1,8 +1,10 @@
 """Link shared plan documents already read to the companies they name.
 
-The reading links each new document to its company (plan_sponsors); this
-does the same for documents read before that, from their cleaned text. Lists
-what it would link unless ``--apply``::
+The reading links each new document to its company: our model's reading,
+checked against the text, or the fixed patterns when no model answers
+(plan_documents_processing.afind_company). This does the same for documents
+read before that, from their cleaned text. Lists what it would link unless
+``--apply``::
 
     python manage.py link_plan_sponsors
     python manage.py link_plan_sponsors --apply
@@ -14,11 +16,12 @@ company staff set is never changed. Prints counts and company names only.
 from collections import Counter
 from typing import Any
 
+from asgiref.sync import async_to_sync
 from django.core.management.base import BaseCommand
 
 from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.plan_documents_processing import afind_company
 from fighthealthinsurance.plan_sponsors import (
-    identify_sponsor,
     link_sponsor,
     match_sponsor,
     normalize_name,
@@ -38,19 +41,28 @@ class Command(BaseCommand):
             source__in=PolicyDocument.SHARED_FILE_SOURCES,
             processing_status=PolicyDocument.PROCESSING_READY,
             plan_sponsor__isnull=True,
-        ).only("pk", "cleaned_text")
+        )
         # Each company once, by the same matching the linking uses
         # (match_sponsor): by its EIN, then its name.
         found: Counter[tuple[str, str]] = Counter()
         names: dict[tuple[str, str], str] = {}
+        sources: Counter[str] = Counter()
         looked = 0
-        for row in rows.iterator(chunk_size=50):
+        # The ids first, then each text on its own: the model's reading
+        # takes seconds a document, longer than a database cursor should
+        # stay open, and the texts together can be large.
+        for pk in list(rows.values_list("pk", flat=True)):
+            text = rows.filter(pk=pk).values_list("cleaned_text", flat=True).first()
+            if text is None:
+                continue
             looked += 1
-            sponsor = identify_sponsor(row.cleaned_text or "")
+            sponsor = async_to_sync(afind_company)(text)
             if sponsor is None:
                 continue
             if options["apply"]:
-                linked = link_sponsor(row.pk, sponsor)
+                linked = link_sponsor(pk, sponsor)
+                if linked is None:
+                    continue
                 key, name = ("on the list", str(linked.pk)), linked.name
             else:
                 company = match_sponsor(sponsor)
@@ -61,6 +73,7 @@ class Command(BaseCommand):
                 else:
                     key = ("new", normalize_name(sponsor.name))
                     name = f"{sponsor.name} (new)"
+            sources[sponsor.source] += 1
             found[key] += 1
             names.setdefault(key, name)
         verb = "linked" if options["apply"] else "would be linked"
@@ -68,5 +81,10 @@ class Command(BaseCommand):
             f"{looked} document(s) looked at, {sum(found.values())} {verb} "
             f"to {len(found)} compan{'y' if len(found) == 1 else 'ies'}"
         )
+        if sources:
+            self.stdout.write(
+                "  found by: "
+                + ", ".join(f"{s} {n}" for s, n in sorted(sources.items()))
+            )
         for key, count in sorted(found.items(), key=lambda item: names[item[0]]):
             self.stdout.write(f"  {names[key]}: {count}")
