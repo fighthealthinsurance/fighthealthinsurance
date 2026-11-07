@@ -71,7 +71,9 @@ def _is_routing_setting(name: str) -> bool:
     """Whether an environment variable changes which backends register, how
     they rank, or which deploy the page thinks it is."""
     return (
-        name.startswith(("ANTHROPIC_", "AZURE_", "DEEPINFRA_", "PERPLEXITY_"))
+        name.startswith(
+            ("ANTHROPIC_", "AZURE_", "DEEPINFRA_", "OPENROUTER_", "PERPLEXITY_")
+        )
         or name.endswith(("_BACKEND_HOST", "_BACKEND_PORT", "_BACKEND_MODEL"))
         or name
         in (
@@ -642,10 +644,14 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 "azure-openai/gpt-5.5",
                 # Retired.
                 "fhi-2025-may-0.3-float16-q8-vllm-compressed",
-                # LunaRoute's arena models, not configured here (no
-                # LUNA_ROUTE_KEY): off.
+                # Not configured here (no LUNA_ROUTE_KEY, no
+                # OPENROUTER_API_KEY): off. LunaRoute's arena models and
+                # OpenRouter's, its web search included.
+                "openrouter/anthropic/claude-sonnet-5.5",
                 "lunaroute/deepseek-4.1-flash",
                 "lunaroute/glm-5.3",
+                "openrouter-web-search",
+                "openrouter/google/gemini-3.8-flash",
                 # TypeSafe (Jev), not configured here: off, with the others.
                 "jev-1.13.0",
             ],

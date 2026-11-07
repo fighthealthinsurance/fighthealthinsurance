@@ -35,8 +35,10 @@ class PrivacyPolicyNamesTheModelHostTest(TestCase):
         self.assertIn("better text recognition for photos and scans on the scan page", self.text)
 
     def test_the_date_moved_with_the_change(self):
-        self.assertIn("Last updated: October 5, 2026", self.text)
-        self.assertNotIn("September 7, 2026", self.text)
+        # Moved again on 2026-11-07, when OpenRouter joined the AI providers
+        # and the search services were named.
+        self.assertIn("Last updated: November 7, 2026", self.text)
+        self.assertNotIn("October 5, 2026", self.text)
 
     def test_the_deletion_right_says_anonymous_totals_survive(self):
         # Since the status counters (#1017) a deletion request leaves
@@ -53,3 +55,41 @@ class PrivacyPolicyNamesTheModelHostTest(TestCase):
     def test_no_em_dash_entered_with_the_change(self):
         bullet = next(li for li in self.page.find_all("li") if "Content Delivery" in li.get_text())
         self.assertNotIn("—", bullet.get_text())
+
+
+class PrivacyPolicyNamesTheSearchServicesTest(TestCase):
+    def test_the_search_services_bullet_names_what_is_sent_and_to_whom(self):
+        body = Client().get(reverse("privacy_policy")).content.decode("utf-8")
+        page = BeautifulSoup(body, "html.parser")
+        bullet = next(
+            (
+                li
+                for li in page.find_all("li")
+                if "Research and Search Services" in li.get_text()
+            ),
+            None,
+        )
+        self.assertIsNotNone(bullet, "no search services disclosure")
+        text = " ".join(bullet.get_text(" ").split())
+        self.assertIn(
+            "searches may be conducted using external services (like PubMed, "
+            "OpenRouter web search, and similar services)",
+            text,
+        )
+        self.assertIn(
+            "In chat, what is searched for can be decided automatically by the "
+            "AI assistant; in the appeal flow, the search is normally just the "
+            "procedure and diagnosis.",
+            text,
+        )
+
+
+class AboutAiPageDisclosesSearchesTest(TestCase):
+    def test_the_page_says_searches_run_whatever_the_outside_models_choice(self):
+        body = Client().get(reverse("about-ai")).content.decode("utf-8")
+        text = " ".join(BeautifulSoup(body, "html.parser").get_text(" ").split())
+        self.assertIn(
+            "Searches may be conducted using external services (like PubMed, "
+            "OpenRouter web search, and similar) either way.",
+            text,
+        )

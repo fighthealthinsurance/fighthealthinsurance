@@ -12,7 +12,7 @@ from loguru import logger
 
 # The "Last updated" date each policy page shows; tests hold them equal.
 TERMS_VERSION = datetime.date(2026, 10, 5)
-PRIVACY_VERSION = datetime.date(2026, 10, 5)
+PRIVACY_VERSION = datetime.date(2026, 11, 7)
 
 # A record's channel is who brought the case in: the site itself, or an AI
 # assistant through one of its links, named by assistant_client (the label
