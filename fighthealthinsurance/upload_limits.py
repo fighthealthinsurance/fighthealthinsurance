@@ -10,7 +10,7 @@ Only Django is imported here, so both ``forms`` and ``chat_forms`` can use it
 without importing each other.
 """
 
-from typing import Iterable, Optional, Sequence
+from typing import Any, Iterable, Optional, Sequence
 
 from django import forms
 from django.core.files.uploadedfile import UploadedFile
@@ -57,6 +57,31 @@ MAX_FILENAME_CHARS = 200
 # Magic bytes for file type validation
 _PDF_MAGIC = b"%PDF"
 _DOCX_MAGIC = b"PK"  # ZIP-based format
+#: A Word file is a zip with these inside; any other zip renamed .docx
+#: lacks them. Only the zip's list of names is read, nothing is unpacked.
+_DOCX_REQUIRED_PARTS = ("[Content_Types].xml", "word/document.xml")
+#: More entries than any real Word file has: the list is not read past it.
+_DOCX_MAX_ENTRIES = 5000
+
+
+def is_word_document(file: Any) -> bool:
+    """Whether ``file`` is a Word (.docx) file and not just any zip: its
+    zip directory names the Word parts. Reads only the directory, unpacks
+    nothing, and leaves the file at its start."""
+    import zipfile
+
+    try:
+        file.seek(0)
+        with zipfile.ZipFile(file) as archive:
+            infos = archive.infolist()
+            if len(infos) > _DOCX_MAX_ENTRIES:
+                return False
+            names = {info.filename for info in infos}
+        return all(part in names for part in _DOCX_REQUIRED_PARTS)
+    except Exception:
+        return False
+    finally:
+        file.seek(0)
 
 
 def stored_size_limit(plaintext_bytes: int) -> int:
@@ -213,7 +238,9 @@ def validate_attachment(
     header = file.read(8)
     file.seek(0)
     expected = {".pdf": (_PDF_MAGIC,), ".docx": (_DOCX_MAGIC,), **_IMAGE_MAGIC}
-    if ext in expected and not header.startswith(expected[ext]):
+    if (ext in expected and not header.startswith(expected[ext])) or (
+        ext == ".docx" and not is_word_document(file)
+    ):
         raise forms.ValidationError(
             f"The file does not appear to be a valid {ext[1:].upper()} file."
         )

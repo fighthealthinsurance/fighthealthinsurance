@@ -280,6 +280,32 @@ class DocumentsAndPhotosOnlyTestCase(TestCase):
             "text) or a photo (PNG, JPEG, GIF, TIFF, HEIC or WebP).",
         )
 
+    def test_a_zip_named_docx_is_not_taken_as_an_attachment(self):
+        import io
+        import zipfile
+
+        from django import forms
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("notes.txt", "not a Word file " * 30)
+        with self.assertRaises(forms.ValidationError):
+            upload_limits.validate_attachment(
+                SimpleUploadedFile("letter.docx", buffer.getvalue())
+            )
+
+    def test_a_word_file_is_taken_as_an_attachment(self):
+        import io
+        import zipfile
+
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+            archive.writestr("word/document.xml", "<w:document/>" * 30)
+        upload_limits.validate_attachment(
+            SimpleUploadedFile("letter.docx", buffer.getvalue())
+        )
+
     def test_a_photo_of_a_letter_is_taken(self):
         upload_limits.validate_attachment(
             SimpleUploadedFile("letter.jpg", b"\xff\xd8\xff\xe0" + b"0" * 400)
