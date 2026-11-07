@@ -59,7 +59,6 @@ class Command(BaseCommand):
             sponsor = async_to_sync(afind_company)(text)
             if sponsor is None:
                 continue
-            sources[sponsor.source] += 1
             if options["apply"]:
                 linked = link_sponsor(pk, sponsor)
                 if linked is None:
@@ -74,6 +73,7 @@ class Command(BaseCommand):
                 else:
                     key = ("new", normalize_name(sponsor.name))
                     name = f"{sponsor.name} (new)"
+            sources[sponsor.source] += 1
             found[key] += 1
             names.setdefault(key, name)
         verb = "linked" if options["apply"] else "would be linked"

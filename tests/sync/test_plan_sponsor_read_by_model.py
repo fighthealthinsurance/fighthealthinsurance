@@ -374,3 +374,20 @@ class TheReviewFindingsTest(TestCase):
         doc.refresh_from_db()
         self.assertEqual((doc.plan_sponsor_id, doc.plan_sponsor_evidence), (None, ""))
         self.assertFalse(PlanSponsor.objects.filter(name="Google LLC").exists())
+
+
+class TheSecondReviewTest(TestCase):
+    def test_an_ein_in_other_digits_is_dropped(self):
+        text = (
+            "Plan Sponsor: Crumpler Cooperative\n"
+            "Employer Identification Number: 12-3456789\n" + ("Covered. " * 30)
+        )
+        with model_answers(
+            answer(
+                "Crumpler Cooperative",
+                "Plan Sponsor: Crumpler Cooperative",
+                "١٢-٣٤٥٦٧٨٩",
+            )
+        ):
+            sponsor, _ = read(text)
+        self.assertEqual(sponsor.ein, "")

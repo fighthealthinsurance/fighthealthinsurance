@@ -196,7 +196,7 @@ def _sponsors_ein(raw_ein: object, evidence: str, text: str) -> str:
     named. An EIN elsewhere may be another party's, so it is dropped."""
     if not isinstance(raw_ein, str):
         return ""
-    digits = re.sub(r"\D", "", raw_ein)
+    digits = re.sub(r"[^0-9]", "", raw_ein)
     if len(digits) != 9:
         return ""
     ein = re.compile(rf"(?<!\d){digits[:2]}-?{digits[2:]}(?!\d)")
