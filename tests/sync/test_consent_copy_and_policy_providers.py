@@ -74,13 +74,14 @@ class ConsentCopyTest(TestCase):
 # OpenAI and its Claude deployments, so both are Microsoft Azure.
 CHAT_BACKEND_PROVIDERS = {
     "DeepInfra": "DeepInfra",
+    "OpenCode": "OpenCode",
     "RemoteAnthropic": "Anthropic",
     "RemoteAzureClaude": "Microsoft Azure",
     "RemoteAzureOpenAI": "Microsoft Azure",
 }
 # TypeSafe checks chat replies when the chat quality checks are on. It scores
 # replies rather than writing them, so it is not a chat backend.
-QUALITY_CHECK_PROVIDERS = ("TypeSafe",)
+QUALITY_CHECK_PROVIDERS = ("OpenCode", "TypeSafe")
 # Companies the site stopped using; no consent may name them.
 RETIRED_PROVIDERS = ("OctoAI", "TogetherAI")
 # Well-known AI companies and products a consent might reach for as an
