@@ -71,7 +71,9 @@ def _is_routing_setting(name: str) -> bool:
     """Whether an environment variable changes which backends register, how
     they rank, or which deploy the page thinks it is."""
     return (
-        name.startswith(("ANTHROPIC_", "AZURE_", "DEEPINFRA_", "PERPLEXITY_"))
+        name.startswith(
+            ("ANTHROPIC_", "AZURE_", "DEEPINFRA_", "OPENROUTER_", "PERPLEXITY_")
+        )
         or name.endswith(("_BACKEND_HOST", "_BACKEND_PORT", "_BACKEND_MODEL"))
         or name
         in (

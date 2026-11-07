@@ -104,6 +104,33 @@ class TestCheckedInferProtectsContextUrls:
         assert result, "expected a (kind, text) result"
         assert url in result[0][1]
 
+    @pytest.mark.asyncio
+    async def test_citation_context_urls_survive_when_not_in_the_prompt(self):
+        """The medical-necessity prompt carries citations only as context, and
+        a web search citation is a link: its URL must be registered as an
+        input URL too, or a publisher refusing the probe strips it."""
+        m = _model()
+        url = "https://example.org/mri-coverage-policy"
+        m._infer_no_context = AsyncMock(  # type: ignore[method-assign]
+            return_value=f"The payer's own policy at {url} covers this service."
+        )
+        with patch(
+            "llm_result_utils.cleaner_utils.CleanerUtils.is_valid_url",
+            new=lambda *a, **k: False,
+        ):
+            result = await m._checked_infer(
+                prompt="Why is MRI medically necessary for back pain?",
+                patient_context=None,
+                plan_context=None,
+                infer_type="medically_necessary",
+                pubmed_context=None,
+                system_prompt="sys",
+                temperature=0.5,
+                ml_citations_context=[f"MRI coverage policy. {url}"],
+            )
+        assert result, "expected a (kind, text) result"
+        assert url in result[0][1]
+
 
 class TestProfPovPromptSelection:
     def test_medically_necessary_keeps_its_own_prompt_under_prof_pov(self):

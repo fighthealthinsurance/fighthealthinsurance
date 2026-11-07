@@ -3922,6 +3922,13 @@ class RemoteOpenLike(RemoteModel):
             input_urls.extend(CleanerUtils.url_re.findall(plan_context))
         if pubmed_context and isinstance(pubmed_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(pubmed_context))
+        # Citations reach some calls only as context, not in the prompt (the
+        # short medical-necessity prompt), and web search citations are
+        # links: without this, a page the search found was probed again and,
+        # when its publisher refused the probe, stripped from the letter.
+        citations_text = render_citations_context(ml_citations_context)
+        if citations_text:
+            input_urls.extend(CleanerUtils.url_re.findall(citations_text))
 
         # The first call's outage (a 5xx, refused, a timeout); None when it
         # reached the model. Raised below when there is no time left to retry

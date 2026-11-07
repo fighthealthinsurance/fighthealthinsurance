@@ -657,3 +657,187 @@ class TestJudgeAllCancellation:
             with pytest.raises(asyncio.CancelledError):
                 await caller
             await asyncio.wait_for(cancelled.wait(), 1)
+
+
+class TestJudgingTimeSplit:
+    @pytest.mark.asyncio
+    async def test_jev_gets_half_when_our_model_can_take_over(self):
+        with (
+            patch.object(research_judging, "enabled", return_value=True),
+            patch.object(research_judging, "skip_reason", return_value=None),
+            patch.object(
+                research_judging,
+                "judge_article",
+                new_callable=AsyncMock,
+                return_value=None,
+            ) as jev,
+            patch.object(
+                research_judging,
+                "judge_article_with",
+                new_callable=AsyncMock,
+                return_value=SUPPORTS,
+            ) as own,
+        ):
+            await web_search_context.judge_result(
+                WebCitation("T", "https://a.org", "excerpt"),
+                "MRI",
+                "pain",
+                judge_model=object(),
+                may_ask_jev=True,
+                timeout_seconds=10,
+            )
+        assert jev.call_args.kwargs["timeout_seconds"] == 5
+        assert 0 < own.call_args.kwargs["timeout_seconds"] <= 10
+
+    @pytest.mark.asyncio
+    async def test_jev_gets_all_of_it_with_no_fallback(self):
+        with (
+            patch.object(research_judging, "enabled", return_value=True),
+            patch.object(research_judging, "skip_reason", return_value=None),
+            patch.object(
+                research_judging,
+                "judge_article",
+                new_callable=AsyncMock,
+                return_value=SUPPORTS,
+            ) as jev,
+        ):
+            await web_search_context.judge_result(
+                WebCitation("T", "https://a.org", "excerpt"),
+                "MRI",
+                "pain",
+                may_ask_jev=True,
+                timeout_seconds=10,
+            )
+        assert jev.call_args.kwargs["timeout_seconds"] == 10
+
+    @pytest.mark.asyncio
+    async def test_our_model_still_judges_after_a_slow_jev_comes_back_empty(self):
+        async def slow_empty(*args, **kwargs):
+            await asyncio.sleep(kwargs["timeout_seconds"])
+            return None
+
+        with (
+            patch.object(
+                web_search_context.ml_router,
+                "best_internal_model",
+                return_value=object(),
+            ),
+            patch.object(research_judging, "enabled", return_value=True),
+            patch.object(research_judging, "skip_reason", return_value=None),
+            patch.object(research_judging, "judge_article", side_effect=slow_empty),
+            patch.object(
+                research_judging,
+                "judge_article_with",
+                new_callable=AsyncMock,
+                return_value=SUPPORTS,
+            ),
+        ):
+            judgments = await web_search_context._judge_all(
+                _results("https://a.org/x"), "MRI", "pain", 1.0, True
+            )
+        assert judgments == {"https://a.org/x": SUPPORTS}
+
+
+def _rows(value=None, error=None):
+    """Denial.objects.filter(...).values(...).afirst() answering ``value``,
+    or raising ``error``."""
+    query = MagicMock()
+    query.values.return_value.afirst = AsyncMock(return_value=value, side_effect=error)
+    return query
+
+
+class TestConsentIsReadAgain:
+    @pytest.mark.asyncio
+    async def test_consent_withdrawn_since_is_no(self):
+        with patch.object(
+            Denial.objects, "filter", return_value=_rows({"use_external": False})
+        ):
+            assert await web_search_context._consent_allows(_denial()) is False
+
+    @pytest.mark.asyncio
+    async def test_missing_row_is_no(self):
+        with patch.object(Denial.objects, "filter", return_value=_rows(None)):
+            assert await web_search_context._consent_allows(_denial()) is False
+
+    @pytest.mark.asyncio
+    async def test_unreadable_row_is_no(self):
+        with patch.object(
+            Denial.objects, "filter", return_value=_rows(error=RuntimeError("db"))
+        ):
+            assert await web_search_context._consent_allows(_denial()) is False
+
+    @pytest.mark.asyncio
+    async def test_consent_still_given_is_yes(self):
+        with patch.object(
+            Denial.objects, "filter", return_value=_rows({"use_external": True})
+        ):
+            assert await web_search_context._consent_allows(_denial()) is True
+
+
+class TestCitationStepCancelsItsLookups:
+    @pytest.mark.asyncio
+    async def test_cancelling_the_run_cancels_the_web_search(self):
+        denial = MagicMock(spec=Denial)
+        denial.pk = None
+        denial.denial_id = 8
+        denial.procedure = "MRI"
+        denial.diagnosis = "Headache"
+        denial.denial_text = "Denied"
+        denial.health_history = ""
+        denial.health_history_consent = None
+        denial.plan_context = ""
+        denial.ml_citation_context = None
+        denial.microsite_slug = None
+        denial.use_external = False
+        ml_started = asyncio.Event()
+        web_cancelled = asyncio.Event()
+
+        async def slow_ml(*args, **kwargs):
+            ml_started.set()
+            await asyncio.sleep(30)
+
+        async def slow_web(*args, **kwargs):
+            try:
+                await asyncio.sleep(30)
+            except asyncio.CancelledError:
+                web_cancelled.set()
+                raise
+
+        with (
+            patch.object(
+                MLCitationsHelper,
+                "generate_cms_coverage_citations",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(
+                MLCitationsHelper,
+                "generate_generic_citations",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch.object(
+                MLCitationsHelper,
+                "generate_specific_citations",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
+                side_effect=slow_ml,
+            ),
+            patch(
+                "fighthealthinsurance.ml.ml_citations_helper.web_search_citations",
+                side_effect=slow_web,
+            ),
+        ):
+            run = asyncio.ensure_future(
+                MLCitationsHelper._generate_citations_for_denial(
+                    denial=denial, timeout=30
+                )
+            )
+            await asyncio.wait_for(ml_started.wait(), 5)
+            run.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await run
+            await asyncio.wait_for(web_cancelled.wait(), 1)

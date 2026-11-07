@@ -59,6 +59,11 @@ MAX_KEPT = 3
 CITED_EXCERPT_CHARS = 300
 # Below this much time left, judging is not started.
 _MIN_JUDGE_SECONDS = 2.0
+# Of a result's judging time, the most Jev is waited for when our own model
+# could take over (as in the Appeal Arena's _judge_evidence): Jev normally
+# answers within seconds, and our own model, which writes its answer,
+# needs the rest.
+JEV_SHARE_OF_JUDGING = 0.5
 
 # Counts, for tests and the shell: searches, results found, kept, dropped
 # (judged off topic or against) and unjudged (dropped too).
@@ -133,19 +138,30 @@ async def judge_result(
     """Jev's judgment of one result when ``may_ask_jev`` (the person's
     external-models consent, the caller's to check) and research judging
     is on and may send now, else (or when Jev gives none) ``judge_model``'s,
-    else None. Never raises (cancellation aside)."""
+    else None, all within ``timeout_seconds``: with ``judge_model`` there to
+    take over, Jev gets JEV_SHARE_OF_JUDGING of it and our own model the
+    rest. Never raises (cancellation aside)."""
+    started = time.monotonic()
     title, excerpt = result.page_title, result.excerpt
     if (
         may_ask_jev
         and research_judging.enabled()
         and research_judging.skip_reason() is None
     ):
+        jev_seconds = (
+            timeout_seconds * JEV_SHARE_OF_JUDGING
+            if judge_model is not None
+            else timeout_seconds
+        )
         judgment = await research_judging.judge_article(
-            title, excerpt, procedure, diagnosis, timeout_seconds=timeout_seconds
+            title, excerpt, procedure, diagnosis, timeout_seconds=jev_seconds
         )
         if judgment is not None:
             return judgment
     if judge_model is None:
+        return None
+    left = timeout_seconds - (time.monotonic() - started)
+    if left <= 0:
         return None
     return await research_judging.judge_article_with(
         judge_model,
@@ -153,7 +169,7 @@ async def judge_result(
         excerpt,
         procedure,
         diagnosis,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=left,
     )
 
 
@@ -168,16 +184,22 @@ async def _judge_all(
     rest are cancelled and stay unjudged."""
     judge_model = ml_router.best_internal_model()
     gate = asyncio.Semaphore(JUDGE_CONCURRENCY)
+    deadline = time.monotonic() + seconds
 
     async def one(result: WebCitation) -> Optional[research_judging.Judgment]:
         async with gate:
+            # What is left once a slot frees, not the whole window, so the
+            # split between Jev and our own model fits in it.
+            left = deadline - time.monotonic()
+            if left <= 0:
+                return None
             return await judge_result(
                 result,
                 procedure,
                 diagnosis,
                 judge_model=judge_model,
                 may_ask_jev=may_ask_jev,
-                timeout_seconds=seconds,
+                timeout_seconds=left,
             )
 
     tasks = {asyncio.ensure_future(one(r)): r for r in results}

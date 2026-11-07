@@ -617,84 +617,93 @@ class MLCitationsHelper:
         )
 
         try:
-            model_timeout = timeout - 10
+            try:
+                model_timeout = timeout - 10
 
-            no_context_awaitable = cls.generate_generic_citations(
-                denial=denial,
-                timeout=model_timeout,
-            )
-
-            # If we have context look for it otherwise short circuit:
-            usable_history = (
-                denial.health_history if history_may_be_used(denial) else None
-            )
-            if (not denial.denial_text or len(denial.denial_text) < 5) and (
-                not usable_history or len(usable_history) < 5
-            ):
-                ml_result = await no_context_awaitable
-            else:
-                context_awaitable = cls.generate_specific_citations(
+                no_context_awaitable = cls.generate_generic_citations(
                     denial=denial,
                     timeout=model_timeout,
-                    used_history_sink=used_history_sink,
                 )
 
-                def is_full_backend(awaitable: Coroutine) -> int:
-                    if awaitable == context_awaitable:
-                        return 2
-                    return 1
-
-                ml_result = (
-                    await best_within_timelimit(
-                        [no_context_awaitable, context_awaitable],
-                        score_fn=cls.make_score_fn(is_full_backend),
-                        timeout=timeout,
+                # If we have context look for it otherwise short circuit:
+                usable_history = (
+                    denial.health_history if history_may_be_used(denial) else None
+                )
+                if (not denial.denial_text or len(denial.denial_text) < 5) and (
+                    not usable_history or len(usable_history) < 5
+                ):
+                    ml_result = await no_context_awaitable
+                else:
+                    context_awaitable = cls.generate_specific_citations(
+                        denial=denial,
+                        timeout=model_timeout,
+                        used_history_sink=used_history_sink,
                     )
-                    or []
-                )
-        except Exception as e:
-            logger.warning(f"Failed to generate citations ({type(e).__name__})")
-            ml_result = []
 
-        # Check the identifiers the backends wrote (DOIs, PubMed IDs, CFR
-        # sections) before they can reach a letter: malformed or missing ones
-        # go, ones that could not be checked are labelled unverified (see
-        # ml/citation_verification.py). Time-boxed to a tenth of this run's
-        # timeout, between 2 and 6 seconds. The lookups only happen if the
-        # person's consent allows them, read again right before the first
-        # request; without it nothing is sent and every citation with an
-        # identifier is labelled unverified, as when a registry is down.
-        # CMS citations come from the coverage database itself and are added
-        # after the check.
-        ml_result = await verify_citations(
-            ml_result,
-            budget_seconds=min(CHECK_BUDGET_SECONDS, max(2.0, timeout / 10)),
-            may_send=lambda: _may_check_citations_outside(denial),
-            guard_text=_citation_guard_text(denial),
-        )
+                    def is_full_backend(awaitable: Coroutine) -> int:
+                        if awaitable == context_awaitable:
+                            return 2
+                        return 1
 
-        try:
-            cms_citations = await cms_task
-        except Exception as e:
-            logger.debug(f"CMS coverage task failed ({type(e).__name__})")
-            cms_citations = []
+                    ml_result = (
+                        await best_within_timelimit(
+                            [no_context_awaitable, context_awaitable],
+                            score_fn=cls.make_score_fn(is_full_backend),
+                            timeout=timeout,
+                        )
+                        or []
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to generate citations ({type(e).__name__})")
+                ml_result = []
 
-        try:
-            web_citations = await web_task
-        except Exception as e:
-            logger.debug(f"Web search task failed ({type(e).__name__})")
-            web_citations = []
+            # Check the identifiers the backends wrote (DOIs, PubMed IDs, CFR
+            # sections) before they can reach a letter: malformed or missing ones
+            # go, ones that could not be checked are labelled unverified (see
+            # ml/citation_verification.py). Time-boxed to a tenth of this run's
+            # timeout, between 2 and 6 seconds. The lookups only happen if the
+            # person's consent allows them, read again right before the first
+            # request; without it nothing is sent and every citation with an
+            # identifier is labelled unverified, as when a registry is down.
+            # CMS citations come from the coverage database itself and are added
+            # after the check.
+            ml_result = await verify_citations(
+                ml_result,
+                budget_seconds=min(CHECK_BUDGET_SECONDS, max(2.0, timeout / 10)),
+                may_send=lambda: _may_check_citations_outside(denial),
+                guard_text=_citation_guard_text(denial),
+            )
 
-        # Append CMS citations, then the web search's, after ML citations,
-        # dedup by exact string. Both come from their sources rather than a
-        # model's pen, so they skip the identifier check above, as CMS's
-        # always have.
-        seen = {c for c in ml_result if isinstance(c, str)}
-        for c in [*cms_citations, *web_citations]:
-            if c not in seen:
-                ml_result.append(c)
-                seen.add(c)
-        return ml_result
+            try:
+                cms_citations = await cms_task
+            except Exception as e:
+                logger.debug(f"CMS coverage task failed ({type(e).__name__})")
+                cms_citations = []
+
+            try:
+                web_citations = await web_task
+            except Exception as e:
+                logger.debug(f"Web search task failed ({type(e).__name__})")
+                web_citations = []
+
+            # Append CMS citations, then the web search's, after ML citations,
+            # dedup by exact string. Both come from their sources rather than a
+            # model's pen, so they skip the identifier check above, as CMS's
+            # always have.
+            seen = {c for c in ml_result if isinstance(c, str)}
+            for c in [*cms_citations, *web_citations]:
+                if c not in seen:
+                    ml_result.append(c)
+                    seen.add(c)
+            return ml_result
+        finally:
+            # Cancelled (the caller stopped waiting) or failed before they
+            # were awaited, the lookups stop too: the web search would keep
+            # searching, paying for searches and judging on the backends
+            # that write appeals, with no one to read what it found.
+            for task in (cms_task, web_task):
+                if not task.done():
+                    task.cancel()
 
     @classmethod
     @spend.for_denial_channel
