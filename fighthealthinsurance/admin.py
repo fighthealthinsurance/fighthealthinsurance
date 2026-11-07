@@ -1411,7 +1411,7 @@ class PlanSponsorForm(forms.ModelForm):
     def clean(self):
         from fighthealthinsurance.plan_sponsors import normalize_name
 
-        cleaned = super().clean()
+        cleaned = super().clean() or {}
         normalized = normalize_name(cleaned.get("name") or "")
         if "name" in cleaned and not normalized:
             self.add_error("name", "Give the company's name.")

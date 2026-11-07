@@ -50,8 +50,8 @@ class Command(BaseCommand):
             if sponsor is None:
                 continue
             if options["apply"]:
-                company = link_sponsor(row.pk, sponsor)
-                key, name = ("on the list", str(company.pk)), company.name
+                linked = link_sponsor(row.pk, sponsor)
+                key, name = ("on the list", str(linked.pk)), linked.name
             else:
                 company = match_sponsor(sponsor)
                 if company is not None:
