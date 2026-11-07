@@ -607,6 +607,43 @@ class TestJudgeArticlesForADenial:
         assert all(e.startswith("Title: ") for e in entries)
         assert "PMID: 2" not in context
 
+    def _too_long_selection(self, summarize, cap=150):
+        """The person's own selection, on the row before the build: it is
+        labelled, never cut."""
+        denial = _denial(pubmed_ids_json=["1", "2", "3"])
+        for pmid in ("1", "2", "3"):
+            _article(pmid)
+        on_topic = {"Title 1": 0.9, "Title 2": 0.45, "Title 3": 0.8}
+
+        async def fake_post(state, questions, timeout):
+            title = next(t for t in on_topic if t in state)
+            return _payload(on_topic=on_topic[title], supports=0.9)
+
+        with override_settings(**ENABLED), patch.object(
+            rj, "_post", fake_post
+        ), patch(
+            "fighthealthinsurance.pubmed_tools.ml_router.summarize", new=summarize
+        ), patch(
+            "fighthealthinsurance.pubmed_tools.PUBMED_CONTEXT_MAX_CHARS", cap
+        ):
+            return async_to_sync(PubMedTools().find_context_for_denial)(denial)
+
+    def test_a_selection_is_summarized_whole_with_the_off_topic_one_noted(self):
+        summarize = AsyncMock(return_value="Three studies on MRI.")
+        context = self._too_long_selection(summarize)
+        assert "PMID: 2" in summarize.await_args.kwargs["text"]
+        assert (
+            f"PMID 2 (Title 2), judged {rj.PROBABLY_OFF_TOPIC_NOTE}" in context
+        )
+
+    def test_a_selection_without_a_summary_keeps_every_entry(self):
+        context = self._too_long_selection(AsyncMock(return_value=None))
+        assert sorted(line.split("PMID: ")[1][0] for line in context.split("\n")) == [
+            "1",
+            "2",
+            "3",
+        ]
+
     def test_under_the_cap_there_is_no_summary_of_summaries(self):
         summarize = AsyncMock(return_value="A summary.")
         self._context(

@@ -1274,7 +1274,11 @@ class PubMedTools(object):
         if len("\n".join(per_article)) <= PUBMED_CONTEXT_MAX_CHARS:
             return "\n".join(per_article)
         return await self._condensed_context(
-            articles, per_article, off_topic, summary_deadline - loop.time()
+            articles,
+            per_article,
+            off_topic,
+            summary_deadline - loop.time(),
+            selected=not searched,
         )
 
     @staticmethod
@@ -1283,6 +1287,8 @@ class PubMedTools(object):
         per_article: list[str],
         off_topic: set[str],
         budget: float,
+        *,
+        selected: bool = False,
     ) -> str:
         """The PubMed context when one entry per article (``per_article``,
         in the order of ``articles``) is too long: one summary of the
@@ -1292,11 +1298,18 @@ class PubMedTools(object):
         summary in ``budget`` seconds (none to read, no time, a failure),
         as many whole entries as fit in PUBMED_CONTEXT_MAX_CHARS, at least
         one: the relevant ones first, strongest first (``articles`` is in
-        that order), then the probably off-topic ones."""
+        that order), then the probably off-topic ones.
+
+        ``selected``: the articles are a selection already on the row
+        (possibly the person's own), which is labelled but never cut, as in
+        _judged_for_context. Every one of them is summarized, a probably
+        off-topic one with its note (its entry carries it, and the list
+        after the summary repeats it), and without a summary every entry is
+        kept, however long."""
         relevant = [
             (article, entry)
             for article, entry in zip(articles, per_article)
-            if article.pmid not in off_topic
+            if selected or article.pmid not in off_topic
         ]
         summary: Optional[str] = None
         if relevant and budget > 0:
@@ -1322,13 +1335,17 @@ class PubMedTools(object):
                 f"PMID {a.pmid}"
                 + (f" ({(a.title or '').strip()})" if (a.title or "").strip() else "")
                 + (f", DOI {a.doi}" if a.doi else "")
+                + (
+                    f", judged {research_judging.PROBABLY_OFF_TOPIC_NOTE}"
+                    if a.pmid in off_topic
+                    else ""
+                )
                 for a, _ in relevant
                 if a.pmid
             )
             logger.debug(
                 f"PubMed context too long; summarized {len(relevant)} of "
-                f"{len(articles)} article(s), leaving out {len(off_topic)} "
-                "judged probably off topic"
+                f"{len(articles)} article(s)"
             )
             condensed = (summary or "").strip()
             return (
@@ -1336,6 +1353,12 @@ class PubMedTools(object):
                 if references
                 else condensed
             )
+        if selected:
+            logger.debug(
+                "PubMed context too long and not summarized; a selection on "
+                f"the row is never cut, so all {len(per_article)} kept"
+            )
+            return "\n".join(per_article)
         # The relevant ones get the room first.
         off = [e for a, e in zip(articles, per_article) if a.pmid in off_topic]
         kept: list[str] = []
