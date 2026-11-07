@@ -571,7 +571,12 @@ def _shared_from_appeal(hashed_email: Optional[str]) -> set[str]:
             hashed_email=hashed_email,
         )
         .exclude(fingerprint="")
-        .exclude(processing_status=PolicyDocument.PROCESSING_UNREADABLE)
+        .exclude(
+            processing_status__in=(
+                PolicyDocument.PROCESSING_UNREADABLE,
+                PolicyDocument.PROCESSING_SPAM,
+            )
+        )
         .values_list("fingerprint", flat=True)
     )
 
@@ -783,6 +788,10 @@ class Share(NamedTuple):
     employer: bool
 
 
+#: Rows that count for nothing: removed at the person's request, or marked
+#: potential spam by staff.
+NOT_COUNTED = (PolicyDocument.PROCESSING_REMOVED, PolicyDocument.PROCESSING_SPAM)
+
 #: The least cleaned text a shared file needs to count as a plan's document.
 #: A short rate sheet clears it; a test upload is often a line.
 MIN_DOCUMENT_CHARS = 200
@@ -808,10 +817,10 @@ def plan_shares() -> list[Share]:
     # earlier share. Removed rows count for nothing, and so does a file
     # until its reading finds a document (is_document): a file waiting to be
     # read, a text or Word file with no text, and a line of test text are
-    # not plans; a scanned PDF is.
+    # not plans; a scanned PDF is. Potential spam counts for nothing at all.
     rows = (
         PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_SOURCES)
-        .exclude(processing_status=PolicyDocument.PROCESSING_REMOVED)
+        .exclude(processing_status__in=NOT_COUNTED)
         .order_by("shared_at", "created_at", "pk")
         .values_list(
             "pk",
@@ -1093,7 +1102,7 @@ def dashboard_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
     source_labels = dict(PolicyDocument.SOURCE_CHOICES)
     kept = PolicyDocument.objects.filter(
         source__in=PolicyDocument.SHARED_SOURCES
-    ).exclude(processing_status=PolicyDocument.PROCESSING_REMOVED)
+    ).exclude(processing_status__in=NOT_COUNTED)
     by_source: dict[str, tuple[int, int]] = {
         row["source"]: (row["shares"], row["rows"])
         for row in kept.values("source").annotate(
@@ -1130,6 +1139,7 @@ def dashboard_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
             PolicyDocument.PROCESSING_READY,
             PolicyDocument.PROCESSING_UNREADABLE,
             PolicyDocument.PROCESSING_REMOVED,
+            PolicyDocument.PROCESSING_SPAM,
         )
     ]
 
@@ -1162,7 +1172,9 @@ def dashboard_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
         timezone.localdate(created)
         for created in PolicyDocument.objects.filter(
             source=PolicyDocument.SOURCE_EXPLAIN_POLICY
-        ).values_list("created_at", flat=True)
+        )
+        .exclude(processing_status=PolicyDocument.PROCESSING_SPAM)
+        .values_list("created_at", flat=True)
         if created
     ]
     counts["explain_uploads"] = {

@@ -3,12 +3,13 @@ from urllib.parse import urlsplit
 from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from django.db import connection
+from django.db import connection, transaction
 from django.db.models import Count, DateTimeField, IntegerField
 from django.db.models.expressions import RawSQL
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
+from loguru import logger
 
 from fighthealthinsurance.constants import SITE_BANNER_CANNED_MESSAGES
 from fighthealthinsurance.templatetags.bundles import versioned
@@ -1439,7 +1440,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "processing_status",
         "processed_at",
     )
-    actions = ("read_again",)
+    actions = ("read_again", "mark_potential_spam", "not_spam")
 
     def save_model(self, request, obj, form, change):
         # Only what the form changed: the encrypted fields it excludes are
@@ -1464,6 +1465,61 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
             request,
             f"{updated} file(s) will be read again by the next hourly sweep; "
             f"{queryset.count() - updated} were not shared files marked unreadable.",
+        )
+
+    @admin.action(description="Mark as potential spam")
+    def mark_potential_spam(self, request, queryset):
+        # Kept with its file, never read again and left out of every count.
+        # Rows already removed at the person's request stay removed.
+        rows = queryset.exclude(
+            processing_status__in=(
+                PolicyDocument.PROCESSING_SPAM,
+                PolicyDocument.PROCESSING_REMOVED,
+            )
+        )
+        updated = rows.update(processing_status=PolicyDocument.PROCESSING_SPAM)
+        logger.info(
+            f"Staff user {request.user.pk} marked {updated} policy document(s) "
+            "as potential spam"
+        )
+        self.message_user(
+            request,
+            f"{updated} marked as potential spam; they stay out of every count "
+            'and are never read. Use "Not spam: read again" to undo.',
+        )
+
+    @admin.action(description="Not spam: read again")
+    def not_spam(self, request, queryset):
+        # Back to where it would be had it never been marked: a shared file
+        # waits for the hourly sweep to read it again, a shared link is a
+        # link again, and any other upload has no reading status.
+        # One transaction, and each kind of row in its own update: the last
+        # update never reaches a shared file or link, so one marked again
+        # meanwhile keeps its status instead of losing it.
+        spam = queryset.filter(processing_status=PolicyDocument.PROCESSING_SPAM)
+        with transaction.atomic():
+            files = spam.filter(source__in=PolicyDocument.SHARED_FILE_SOURCES).update(
+                processing_status=PolicyDocument.PROCESSING_RECEIVED,
+                processed_at=None,
+                cleaned_text="",
+            )
+            links = spam.filter(source=PolicyDocument.SOURCE_SHARED_LINK).update(
+                processing_status=PolicyDocument.PROCESSING_LINK
+            )
+            others = (
+                spam.exclude(source__in=PolicyDocument.SHARED_FILE_SOURCES)
+                .exclude(source=PolicyDocument.SOURCE_SHARED_LINK)
+                .update(processing_status="")
+            )
+        updated = files + links + others
+        logger.info(
+            f"Staff user {request.user.pk} marked {updated} policy document(s) "
+            "as not spam"
+        )
+        self.message_user(
+            request,
+            f"{updated} no longer marked as potential spam; {files} shared "
+            "file(s) will be read again by the next hourly sweep.",
         )
 
     def changelist_view(self, request, extra_context=None):

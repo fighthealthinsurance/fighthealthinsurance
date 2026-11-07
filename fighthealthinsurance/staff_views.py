@@ -446,6 +446,10 @@ class PolicyDocumentCleanedTextView(View):
 
     NOTES = {
         PolicyDocument.PROCESSING_RECEIVED: "Not read yet.",
+        PolicyDocument.PROCESSING_SPAM: (
+            "Marked as potential spam: kept out of every count and never read "
+            "again unless marked not spam."
+        ),
         PolicyDocument.PROCESSING_UNREADABLE: (
             "No text could be read from this file. It may be scanned pages. "
             "Download the original."

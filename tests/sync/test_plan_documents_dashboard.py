@@ -291,6 +291,7 @@ class TheReadingIsCountedTest(_DashboardTestCase):
         self.share(files=["c"], processing_status=PolicyDocument.PROCESSING_READY)
         self.share(files=["d"], processing_status=PolicyDocument.PROCESSING_UNREADABLE)
         self.share(files=["e"], processing_status=PolicyDocument.PROCESSING_REMOVED)
+        self.share(files=["f"], processing_status=PolicyDocument.PROCESSING_SPAM)
         self.share(links=[LINK])
         self.assertEqual(
             self.rows(self.page(), "reading-status"),
@@ -299,6 +300,7 @@ class TheReadingIsCountedTest(_DashboardTestCase):
                 ["Read and cleaned, ready for review", "1"],
                 ["No text could be read", "1"],
                 ["File and text deleted at the person's request", "1"],
+                ["Potential spam: kept, never read or counted", "1"],
             ],
         )
 
