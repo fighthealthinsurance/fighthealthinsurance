@@ -8,6 +8,10 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
 
+    # Landed as 0260_public_plan_documents; a database that applied it
+    # under that name counts this one as applied.
+    replaces = [("fighthealthinsurance", "0260_public_plan_documents")]
+
     dependencies = [
         ("fighthealthinsurance", "0262_plan_sponsor"),
     ]
