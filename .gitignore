@@ -189,3 +189,9 @@ geoip_data
 
 # Local files for Continue extension
 .continue/
+
+# Public plan-document corpus fetched by scripts/fetch_plan_documents.sh from
+# the release pinned in plan_documents.lock (docs/plan-document-corpus.md).
+# The image ships it; git never does.
+/plan_documents/plan-docs.zip
+/plan_documents/.plan-docs.zip.*

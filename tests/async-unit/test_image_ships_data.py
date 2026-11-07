@@ -87,3 +87,25 @@ def test_the_dockerignore_check_honours_a_later_exception(tmp_path, monkeypatch)
     (tmp_path / ".dockerignore").write_text("data\n!data/preventive_diagnosis.csv\n")
     monkeypatch.setattr(sys.modules[__name__], "REPO_DIR", tmp_path)
     assert not _dockerignore_excludes("data/preventive_diagnosis.csv")
+
+
+# The public plan-document corpus (plan_documents/plan-docs.zip, fetched by
+# scripts/fetch_plan_documents.sh) is imported by a Job that runs the web
+# image; nothing in Ray reads it, so only the web image carries it.
+RAY_DOCKERFILES = (RAY_DOCKERFILE, REPO_DIR / "k8s" / "ray" / "RayDockerfile")
+
+
+def test_the_web_image_adds_the_plan_document_corpus():
+    assert (
+        "ADD --chown=www-data:www-data plan_documents "
+        "/opt/fighthealthinsurance/plan_documents"
+    ) in _lines(WEB_DOCKERFILE)
+
+
+def test_the_ray_images_do_not_copy_the_plan_document_corpus():
+    for dockerfile in RAY_DOCKERFILES:
+        assert "plan_documents" not in dockerfile.read_text(), dockerfile.name
+
+
+def test_dockerignore_keeps_the_plan_document_corpus():
+    assert not _dockerignore_excludes("plan_documents/plan-docs.zip")

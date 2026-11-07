@@ -79,6 +79,15 @@ if [ "$NO_BUILD" = true ]; then
     echo "--no-build: skipping template/static setup (setup_templates.sh)"
 else
     source "${SCRIPT_DIR}/setup_templates.sh"
+    # The public plan-document corpus pinned in plan_documents.lock, fetched
+    # and sha256-checked into plan_documents/plan-docs.zip for k8s/Dockerfile
+    # to copy into the web image (docs/plan-document-corpus.md). Here, inside
+    # the build branch, so a --no-build host needs neither the network nor
+    # the file. A no-op while the lock's tag is empty; any failure stops the
+    # build rather than shipping a corpus other than the pinned one. Note
+    # build_django.sh skips an image whose FHI_VERSION tag already exists, so
+    # a lock bump ships only with an FHI_VERSION bump.
+    "${SCRIPT_DIR}/fetch_plan_documents.sh"
 fi
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
@@ -360,6 +369,11 @@ envsubst < k8s/ray/cluster.yaml | kubectl apply -f -
 # finished run for an hour (ttlSecondsAfterFinished) so its log can be read.
 # Delete the last run first, or a deploy within that hour fails on the apply.
 kubectl delete job web-extralink-prefetch -n totallylegitco --ignore-not-found --timeout=2m
+# Same for the plan-document import Job (also kept an hour). Deleting a run
+# still in progress is safe: the import is one database transaction, so a
+# killed run leaves the documents as they were (at worst a stored original
+# nothing points at) and the new Job imports the corpus again.
+kubectl delete job web-plan-documents-import -n totallylegitco --ignore-not-found --timeout=2m
 envsubst < k8s/deploy.yaml | kubectl apply -f -
 
 # The Temporal fax worker (k8s/temporal/worker.yaml) runs the same app image as

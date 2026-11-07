@@ -54,6 +54,35 @@ elif [ -n "$PREFETCH_EXTRALINKS" ]; then
   python manage.py launch_prefetch_actor || echo "Pre-fetch failed (non-blocking)"
   sleep 10
   exit 0
+elif [ -n "$IMPORT_PLAN_DOCUMENTS" ]; then
+  # Deploy Job web-plan-documents-import (k8s/deploy.yaml): load the public
+  # plan-document corpus this image ships, plan_documents/plan-docs.zip
+  # (fetched at build time from the release pinned in plan_documents.lock;
+  # docs/plan-document-corpus.md). No pinned corpus, no file: nothing to do.
+  PLAN_DOCUMENTS_ZIP=plan_documents/plan-docs.zip
+  if [ ! -f "$PLAN_DOCUMENTS_ZIP" ]; then
+    echo "No plan-document corpus in this image ($PLAN_DOCUMENTS_ZIP); nothing to import"
+    exit 0
+  fi
+  # web-migrations is applied in the same kubectl apply, so wait for it
+  # (bounded, about 20 minutes) instead of importing into an old schema.
+  plan_documents_waits=0
+  until python manage.py migrate --check; do
+    plan_documents_waits=$((plan_documents_waits + 1))
+    if [ "$plan_documents_waits" -ge 40 ]; then
+      echo "Migrations still pending after $plan_documents_waits checks; not importing plan documents"
+      exit 1
+    fi
+    sleep 30
+  done
+  # Records resolve their insurer against these tables; load them here too
+  # (idempotent) so the import cannot race web-migrations' loaddata.
+  python manage.py loaddata plan_source insurance_companies
+  # --deactivate-missing: the corpus owns the carriers it names, so their
+  # documents it no longer lists are retired. A refused record is skipped and
+  # counted in the log line; the Job fails only if the bundle itself cannot
+  # be read. Unchanged files are not parsed again.
+  exec python manage.py import_plan_documents --source "$PLAN_DOCUMENTS_ZIP" --store-file --deactivate-missing
 elif [ -n "$BACKFILL_APPEAL_FINGERPRINTS" ]; then
   # Post-rollout Job (k8s/temporal/backfill-fingerprints-job.yaml): second
   # pass of the ProposedAppeal fingerprint backfill. --strict exits non-zero

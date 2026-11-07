@@ -1,0 +1,198 @@
+name: Update Plan Documents
+
+# Moves plan_documents.lock to the latest release of the public plan-document
+# corpus, fighthealthinsurance/public-plan-document-collection, and opens a
+# pull request with the change for review (docs/plan-document-corpus.md).
+#
+# The corpus repository finds insurers' public plan documents, reviews them
+# in its own pull requests and publishes each merged version as a release
+# tagged corpus-YYYYMMDD-<sha7> with two assets: plan-docs.zip (a bundle in
+# FHI's import format) and plan-docs.zip.sha256. This workflow only reads
+# that release: it takes the published digest, downloads plan-docs.zip and
+# checks it against that digest with scripts/fetch_plan_documents.sh (the
+# same script the image build runs), then rewrites the lock. Merging the pull
+# request does not deploy anything: scripts/build.sh fetches the pinned
+# release, and an image is only built for a new FHI_VERSION.
+#
+# Everything the release says (tag, names, notes) is untrusted input. None of
+# it is ever written into a `run:` script with an expression; it reaches the
+# shell through `env:` only, and the tag is checked against the corpus tag
+# format before anything uses it.
+
+on:
+  schedule:
+    # 20:47 UTC on the 12th of every month: after the corpus repository's
+    # monthly refresh (the 4th) has had a week to be reviewed and released.
+    - cron: "47 20 12 * *"
+  # Allow maintainers to trigger the update on demand from the Actions tab.
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-plan-documents
+  cancel-in-progress: false
+
+jobs:
+  update-plan-documents:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Don't leave the job's write token in the local git config:
+          # create-pull-request authenticates its own push via its `token`
+          # input, so nothing here needs persisted checkout credentials.
+          persist-credentials: false
+
+      - name: Read the latest corpus release
+        id: release
+        env:
+          # Public repository: the job token only lifts the API rate limit.
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_DIR: ${{ runner.temp }}/plan-documents-release
+        run: |
+          set -euo pipefail
+          mkdir -p "$RELEASE_DIR"
+          repo=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["repo"])' plan_documents.lock)
+          case "$repo" in
+            */*) ;;
+            *) echo "::error::plan_documents.lock has no owner/name repo"; exit 1 ;;
+          esac
+          code=$(curl -sSL --proto '=https' --proto-redir '=https' \
+            --connect-timeout 10 --max-time 120 --retry 3 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -o "$RELEASE_DIR/latest.json" -w '%{http_code}' \
+            "https://api.github.com/repos/$repo/releases/latest")
+          if [ "$code" = "404" ]; then
+            echo "::notice::$repo has no release yet; the lock stays as it is."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$code" != "200" ]; then
+            echo "::error::Reading the latest release of $repo returned HTTP $code"
+            exit 1
+          fi
+          # Checks the tag and that both assets are there; prints the tag.
+          tag=$(python3 -I - "$RELEASE_DIR/latest.json" <<'PY'
+          import json
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as f:
+              release = json.load(f)
+          tag = release.get("tag_name")
+          if not isinstance(tag, str) or not re.fullmatch(r"corpus-[0-9]{8}-[0-9a-f]{7}", tag):
+              sys.exit("the latest release's tag is not corpus-YYYYMMDD-<sha7>")
+          names = {a.get("name") for a in release.get("assets") or [] if isinstance(a, dict)}
+          missing = sorted({"plan-docs.zip", "plan-docs.zip.sha256"} - names)
+          if missing:
+              sys.exit(f"the latest release lacks {missing}")
+          print(tag)
+          PY
+          )
+          echo "Latest corpus release: $tag"
+          {
+            echo "found=true"
+            echo "repo=$repo"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Take the release's digest and verify plan-docs.zip against it
+        id: verify
+        if: steps.release.outputs.found == 'true'
+        env:
+          REPO: ${{ steps.release.outputs.repo }}
+          TAG: ${{ steps.release.outputs.tag }}
+          RELEASE_DIR: ${{ runner.temp }}/plan-documents-release
+        run: |
+          set -euo pipefail
+          current=$(python3 -I -c 'import json, sys; print(json.load(open(sys.argv[1]))["tag"])' plan_documents.lock)
+          if [ "$current" = "$TAG" ]; then
+            echo "plan_documents.lock already pins $TAG; nothing to update."
+            exit 0
+          fi
+          curl -fsSL --proto '=https' --proto-redir '=https' \
+            --connect-timeout 10 --max-time 120 --retry 3 \
+            -o "$RELEASE_DIR/plan-docs.zip.sha256" \
+            "https://github.com/$REPO/releases/download/$TAG/plan-docs.zip.sha256"
+          # Exactly one coreutils line: "<64 hex>  plan-docs.zip".
+          sha=$(python3 -I - "$RELEASE_DIR/plan-docs.zip.sha256" <<'PY'
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="ascii") as f:
+              text = f.read()
+          match = re.fullmatch(r"([0-9a-f]{64})  plan-docs\.zip\n?", text)
+          if not match:
+              sys.exit("plan-docs.zip.sha256 is not one '<sha256>  plan-docs.zip' line")
+          print(match.group(1))
+          PY
+          )
+          # The new lock, written beside the release files first: the fetch
+          # script downloads plan-docs.zip and refuses it unless its bytes
+          # hash to the published digest.
+          python3 -I - "$RELEASE_DIR/plan_documents.lock" "$REPO" "$TAG" "$sha" <<'PY'
+          import json
+          import sys
+
+          path, repo, tag, sha = sys.argv[1:]
+          lock = {"repo": repo, "tag": tag, "asset": "plan-docs.zip", "sha256": sha}
+          with open(path, "w", encoding="utf-8") as f:
+              f.write(json.dumps(lock, indent=2) + "\n")
+          PY
+          scripts/fetch_plan_documents.sh \
+            --lock "$RELEASE_DIR/plan_documents.lock" \
+            --dest "$RELEASE_DIR/plan-docs.zip"
+          size=$(stat -c %s "$RELEASE_DIR/plan-docs.zip")
+          cp "$RELEASE_DIR/plan_documents.lock" plan_documents.lock
+          echo "Pinned $TAG ($size bytes, sha256 $sha)"
+          {
+            echo "previous=$current"
+            echo "sha256=$sha"
+            echo "size=$size"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create Pull Request
+        if: steps.verify.outputs.sha256 != ''
+        uses: peter-evans/create-pull-request@v7
+        with:
+          # Prefer a PAT (the same BROWSERSLIST_UPDATE_TOKEN the browser data
+          # refresh uses) so the resulting PR triggers the CI workflows; fall
+          # back to the default GITHUB_TOKEN, which opens the PR but (by
+          # design) will not kick off other workflows.
+          token: ${{ secrets.BROWSERSLIST_UPDATE_TOKEN || github.token }}
+          add-paths: |
+            plan_documents.lock
+          branch: chore/update-plan-documents
+          delete-branch: true
+          commit-message: "chore(data): pin plan-document corpus ${{ steps.release.outputs.tag }}"
+          title: "chore(data): pin plan-document corpus ${{ steps.release.outputs.tag }}"
+          body: |
+            Automated monthly update of `plan_documents.lock` to the latest
+            release of the public plan-document corpus,
+            [${{ steps.release.outputs.repo }}](https://github.com/${{ steps.release.outputs.repo }}/releases/tag/${{ steps.release.outputs.tag }}).
+
+            * Previous tag: `${{ steps.verify.outputs.previous }}` (empty means no corpus was pinned)
+            * New tag: `${{ steps.release.outputs.tag }}`
+            * `plan-docs.zip`: ${{ steps.verify.outputs.size }} bytes, sha256 `${{ steps.verify.outputs.sha256 }}`, downloaded and checked against the release's `plan-docs.zip.sha256` by `scripts/fetch_plan_documents.sh`.
+
+            Review notes:
+
+            * The documents were reviewed in the corpus repository's own
+              pull requests; the release notes there list what changed.
+            * The corpus owns the carriers it names: the import Job runs with
+              `--deactivate-missing`, so documents for those carriers that
+              this release no longer lists are retired.
+            * Merging does not ship it. The image build fetches the pinned
+              release, and `scripts/build.sh` only builds a new image for a
+              new `FHI_VERSION`. After the deploy, read the
+              `web-plan-documents-import` Job's log (`skipped=` counts).
+
+            Opened automatically by the `Update Plan Documents` workflow. If
+            the lock already pins the latest release, no pull request is
+            opened.

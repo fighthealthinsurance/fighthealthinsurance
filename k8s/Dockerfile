@@ -79,6 +79,14 @@ RUN chown -R www-data /external_data
 RUN mkdir -p /opt/fighthealthinsurance/external_data /opt/fighthealthinsurance/external_data_b \
     && chown -R www-data /opt/fighthealthinsurance/external_data /opt/fighthealthinsurance/external_data_b
 # RUN chown -R www-data:www-data /opt/fighthealthinsurance
+# The public plan-document corpus (plan_documents/plan-docs.zip, fetched and
+# sha256-checked by scripts/fetch_plan_documents.sh from the release pinned in
+# plan_documents.lock) for the web-plan-documents-import Job
+# (IMPORT_PLAN_DOCUMENTS in start-server.sh). The folder always exists (a
+# committed .gitkeep), so this works with no corpus pinned; the Job then logs
+# that there is nothing to import. Late in the file so a new corpus does not
+# invalidate the layers above. Web image only: nothing in Ray reads it.
+ADD --chown=www-data:www-data plan_documents /opt/fighthealthinsurance/plan_documents
 # start server
 EXPOSE 80
 STOPSIGNAL SIGTERM

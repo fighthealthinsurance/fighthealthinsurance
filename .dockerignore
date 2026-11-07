@@ -181,3 +181,7 @@ a.tr
 reports/
 # GeoIP city database; the image fetches its own verified copy at build time
 geoip_data
+# plan_documents/plan-docs.zip must reach the build context (the web image
+# ships it; k8s/Dockerfile). Only the fetch script's half-written temp files
+# stay out.
+plan_documents/.plan-docs.zip.*
