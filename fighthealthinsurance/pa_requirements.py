@@ -187,16 +187,16 @@ def resolve_insurance_company_by_name(
             if alt_norm and alt_norm == payer_lower:
                 logger.opt(lazy=True).debug(
                     "resolve_insurance_company_by_name: alt-name fallback hit "
-                    "for {!r} -> company id {} in {:.1f} ms",
-                    lambda p=payer_clean: p,
+                    "for a {}-character name -> company id {} in {:.1f} ms",
+                    lambda p=payer_clean: len(p),
                     lambda c=candidate: c.id,
                     lambda s=alt_start: (time.perf_counter() - s) * 1000,
                 )
                 return candidate
     logger.opt(lazy=True).debug(
         "resolve_insurance_company_by_name: alt-name fallback miss for "
-        "{!r} in {:.1f} ms",
-        lambda p=payer_clean: p,
+        "a {}-character name in {:.1f} ms",
+        lambda p=payer_clean: len(p),
         lambda s=alt_start: (time.perf_counter() - s) * 1000,
     )
 
@@ -234,8 +234,8 @@ def resolve_insurance_company_by_name(
                 continue
             logger.opt(lazy=True).debug(
                 "resolve_insurance_company_by_name: regex fallback hit for "
-                "{!r} -> company id {} after {} pattern(s) in {:.1f} ms",
-                lambda p=payer_clean: p,
+                "a {}-character name -> company id {} after {} pattern(s) in {:.1f} ms",
+                lambda p=payer_clean: len(p),
                 lambda c=resolved: c.id,
                 lambda n=regex_scanned: n,
                 lambda s=regex_start: (time.perf_counter() - s) * 1000,
@@ -248,8 +248,8 @@ def resolve_insurance_company_by_name(
             continue
     logger.opt(lazy=True).debug(
         "resolve_insurance_company_by_name: regex fallback miss for "
-        "{!r} after {} pattern(s) in {:.1f} ms",
-        lambda p=payer_clean: p,
+        "a {}-character name after {} pattern(s) in {:.1f} ms",
+        lambda p=payer_clean: len(p),
         lambda n=regex_scanned: n,
         lambda s=regex_start: (time.perf_counter() - s) * 1000,
     )

@@ -642,7 +642,16 @@ def _phrases(record: Dict[str, Any], name: str, *, upper: bool) -> List[str]:
 
 
 def _regex(record: Dict[str, Any], name: str) -> str:
-    pattern = _string(record, name, MAX_REGEX)
+    # Whitespace is kept: it is part of a pattern ((?x) comments, a
+    # literal newline), and a regex never reaches the prompt.
+    value = record.get(name, "")
+    if value is None:
+        value = ""
+    if not isinstance(value, str):
+        raise RecordError(f"{name}: a string")
+    pattern = value.strip()
+    if len(pattern) > MAX_REGEX:
+        raise RecordError(f"{name}: longer than {MAX_REGEX} characters")
     if pattern:
         try:
             re.compile(pattern, _REGEX_FLAGS)
@@ -895,6 +904,24 @@ def store_document(
     return "updated", stored_name
 
 
+def _stored_sha256(doc: PublicPlanDocument) -> str:
+    """The sha256 of the original the row keeps, read from storage; "" when
+    it cannot be read. Not the row's source_sha256: an import without
+    --store-file updates that while the kept file stays as it was."""
+    digest = hashlib.sha256()
+    try:
+        with doc.stored_file.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(_READ_CHUNK), b""):
+                digest.update(chunk)
+    except Exception as e:  # unreadable or gone: treat as not kept
+        logger.warning(
+            f"Plan document {doc.pk}: its stored original cannot be read "
+            f"({type(e).__name__}); storing it again"
+        )
+        return ""
+    return digest.hexdigest()
+
+
 def _store_file(doc: PublicPlanDocument, prepared: PreparedDocument) -> Optional[str]:
     """Keep the original file when the import asked for it; the stored
     name when a file was written, else None. The file already kept is
@@ -906,14 +933,12 @@ def _store_file(doc: PublicPlanDocument, prepared: PreparedDocument) -> Optional
     from django.core.files.base import ContentFile
 
     ext = os.path.splitext(prepared.file_name)[1].lower()
-    same_hash = bool(doc.source_sha256) and (
-        doc.source_sha256 == prepared.fields["source_sha256"]
-    )
+    new_sha256 = hashlib.sha256(prepared.file_bytes).hexdigest()
     if (
         doc.stored_file
         and doc.stored_file.name
-        and same_hash
         and doc.stored_file.name.lower().endswith(ext)
+        and _stored_sha256(doc) == new_sha256
     ):
         return None
     if doc.stored_file:
@@ -979,7 +1004,10 @@ def import_bundle(
                 raw_key = (
                     record.get("document_key") if isinstance(record, dict) else None
                 )
-                key = raw_key if isinstance(raw_key, str) else ""
+                # As prepare_document_fields reads it, so a key with stray
+                # whitespace is the key it updates, for the duplicate check
+                # and for --deactivate-missing alike.
+                key = " ".join(raw_key.split()) if isinstance(raw_key, str) else ""
                 try:
                     if key and key in named_keys:
                         raise RecordError("document_key: given twice in this bundle")
@@ -993,9 +1021,13 @@ def import_bundle(
                     )
                     if strict and prepared.warnings:
                         raise RecordError(prepared.warnings[0])
-                    outcome, stored_name = store_document(
-                        prepared, write_files=not dry_run
-                    )
+                    # A savepoint per record: a record that fails while it
+                    # is being written leaves nothing behind it, and the
+                    # transaction stays usable for the records after it.
+                    with transaction.atomic():
+                        outcome, stored_name = store_document(
+                            prepared, write_files=not dry_run
+                        )
                     if stored_name:
                         written_files.append(stored_name)
                 except RecordError as exc:

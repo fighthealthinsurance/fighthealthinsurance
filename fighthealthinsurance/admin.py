@@ -742,6 +742,18 @@ class PublicPlanDocumentForm(forms.ModelForm):
         cleaned = super().clean() or {}
         if self.instance.pk is None and not cleaned.get("upload"):
             self.add_error("upload", "A new document needs its file.")
+        company = cleaned.get("insurance_company")
+        plan = cleaned.get("insurance_plan")
+        if company and plan and plan.insurance_company_id != company.pk:
+            self.add_error("insurance_plan", "That plan belongs to another insurer.")
+        for name in ("plan_id_prefixes", "match_keywords"):
+            value = cleaned.get(name)
+            if value in (None, ""):
+                continue
+            if not isinstance(value, list) or not all(
+                isinstance(v, str) for v in value
+            ):
+                self.add_error(name, 'A JSON list of strings, such as ["GRP"].')
         return cleaned
 
 
@@ -946,6 +958,11 @@ class PlanDocumentMatchAdmin(admin.ModelAdmin):
         return False
 
     def has_change_permission(self, request, obj=None):  # type: ignore[override]
+        return False
+
+    def has_delete_permission(self, request, obj=None):  # type: ignore[override]
+        # The matcher owns these rows: deleting a selected one by hand would
+        # leave its candidates with nothing selected.
         return False
 
 

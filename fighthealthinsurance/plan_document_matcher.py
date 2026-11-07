@@ -191,6 +191,10 @@ class DenialFacts:
     #: (or a confident triage) set; a line inferred from the letter's words
     #: is a hint, not grounds to exclude.
     lob_is_hard: bool
+    #: The claim is dental: the row says so, or the letter talks of dental
+    #: care. Only the row's flag is grounds to exclude medical documents: a
+    #: medical denial can mention dental work (anesthesia for it, an oral
+    #: surgery) without being a dental claim.
     dental: bool
     employer_name: str
     plan_id_text: str
@@ -200,6 +204,8 @@ class DenialFacts:
     letter_hash: str
     procedure: str
     diagnosis: str
+    #: True when ``dental`` comes from the row's dental_claim flag.
+    dental_is_hard: bool = False
 
 
 def _state_code(value: Optional[str]) -> str:
@@ -320,6 +326,7 @@ def denial_facts(denial: Denial, company: InsuranceCompany) -> DenialFacts:
         lob=lob,
         lob_is_hard=lob_is_hard,
         dental=bool(denial.dental_claim) or bool(_DENTAL_RE.search(denial_text)),
+        dental_is_hard=bool(denial.dental_claim),
         employer_name=(denial.employer_name or "").strip(),
         plan_id_text=(denial.plan_id or "").strip(),
         year=year,
@@ -368,6 +375,15 @@ def _pattern_or_none(value: Any) -> Optional["re.Pattern[str]"]:
     return value if pattern else None
 
 
+def _phrase_list(value: Any) -> List[str]:
+    """A stored phrase list's strings. Anything but a list of strings (an
+    admin edit that saved "GRP" for ["GRP"]) counts as no phrases: read as
+    a string, each of its characters would be a prefix or a keyword."""
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [item.strip() for item in value if isinstance(item, str) and item.strip()]
+
+
 def _candidate(doc: PublicPlanDocument, plan_name: str) -> Candidate:
     return Candidate(
         id=doc.id,
@@ -380,14 +396,8 @@ def _candidate(doc: PublicPlanDocument, plan_name: str) -> Candidate:
         region=(doc.region or "").strip(),
         employer_name=(doc.employer_name or "").strip(),
         plan_year=doc.plan_year,
-        plan_id_prefixes=tuple(
-            str(p).strip().upper()
-            for p in (doc.plan_id_prefixes or [])
-            if str(p).strip()
-        ),
-        match_keywords=tuple(
-            str(k).strip().lower() for k in (doc.match_keywords or []) if str(k).strip()
-        ),
+        plan_id_prefixes=tuple(p.upper() for p in _phrase_list(doc.plan_id_prefixes)),
+        match_keywords=tuple(k.lower() for k in _phrase_list(doc.match_keywords)),
         match_regex=_pattern_or_none(doc.match_regex),
         negative_regex=_pattern_or_none(doc.negative_regex),
         insurance_plan_id=doc.insurance_plan_id,
@@ -492,9 +502,14 @@ def score_candidate(c: Candidate, facts: DenialFacts) -> Optional[Scored]:
         and c.line_of_business != facts.lob
     ):
         return None
-    # E5 the wrong kind of coverage.
+    # E5 the wrong kind of coverage: a dental document for a claim nothing
+    # calls dental, or a medical one for a claim the row flags dental. A
+    # letter that only mentions dental care rules neither out; the two
+    # kinds conflict (conflicts), so a close call goes to the tie-break.
     is_dental_doc = c.coverage_kind == PublicPlanDocument.COVERAGE_KIND_DENTAL
-    if facts.dental != is_dental_doc:
+    if is_dental_doc and not facts.dental:
+        return None
+    if facts.dental_is_hard and not is_dental_doc:
         return None
     # E6 the document rules itself out.
     if blob.negative_hit:
@@ -542,7 +557,11 @@ def score_candidate(c: Candidate, facts: DenialFacts) -> Optional[Scored]:
 
 def conflicts(a: Candidate, b: Candidate) -> bool:
     """Whether two documents cannot both be the member's: another plan,
-    state, region, year or employer, or another specific line of business."""
+    state, region, year or employer, another specific line of business, or
+    dental coverage against medical."""
+    dental = PublicPlanDocument.COVERAGE_KIND_DENTAL
+    if (a.coverage_kind == dental) != (b.coverage_kind == dental):
+        return True
     if (
         a.insurance_plan_id
         and b.insurance_plan_id
@@ -658,7 +677,7 @@ def _inputs_hash(
         "letter": facts.letter_hash,
         "company": facts.company_id,
         "state": facts.state,
-        "dental": facts.dental,
+        "dental": [facts.dental, facts.dental_is_hard],
         "corpus_n": stamp[0],
         "corpus_latest": stamp[1],
         "answers": [
@@ -779,7 +798,7 @@ def _tie_break_prompt(denial_text: str, candidates: Sequence[Scored]) -> str:
             f"{number}. {c.title}; plan: {c.plan_name or '-'}; region: "
             f"{c.region or '-'}; state: {c.state or 'national'}; year: "
             f"{c.plan_year or '-'}; line of business: {c.line_of_business}; "
-            f"employer: {c.employer_name or '-'}"
+            f"coverage: {c.coverage_kind}; employer: {c.employer_name or '-'}"
         )
     excerpt = truncate_at_boundary(denial_text, 2000)
     return (
@@ -938,7 +957,9 @@ def _store_relevance(
     ).update(
         relevant_text=relevant[: PASSAGE_BUDGET_CHARS * 2],
         summary=summary or "",
-        relevance_key=outcome.relevance_key,
+        # No passages found: leave the key unset, so the next refresh tries
+        # again (with the model, if this one had to make do without).
+        relevance_key=outcome.relevance_key if relevant.strip() else "",
     )
 
 
@@ -1149,5 +1170,10 @@ def get_plan_document_context_for_denial(denial: Any) -> str:
         # Selected, but the passages are not built yet (a refresh timed out
         # before the text stage): nothing to quote, so no section. The next
         # refresh rebuilds the text and keeps the selection.
+        return ""
+    if rows[0].relevance_key != hashes[1]:
+        # The passages were chosen for another procedure or diagnosis, and
+        # their rebuild has not finished: quoting them would argue the wrong
+        # treatment. No section until the rebuild lands.
         return ""
     return format_plan_document_context(rows)

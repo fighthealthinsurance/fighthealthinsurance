@@ -1286,3 +1286,56 @@ class TextCleanupTest(_ImportTestCase):
     def test_a_nul_in_pages_is_dropped(self):
         self.run_import([self.record(pages=["Bene\x00fits."])])
         self.assertIn("Benefits.", self.the_document().text)
+
+
+class ReviewFindingsImportTest(_ImportTestCase):
+    """Regressions for the review of the importer."""
+
+    def test_a_verbose_regex_keeps_its_line_breaks(self):
+        pattern = "(?x)north # the region\n\\s+california"
+        self.run_import([self.record(match_regex=pattern)])
+        self.assertEqual(self.the_document().match_regex.pattern, pattern)
+
+    def test_a_key_with_stray_whitespace_is_not_retired_by_deactivate_missing(self):
+        self.run_import([self.record()])
+        out, _ = self.run_import(
+            [self.record(document_key=f"  {EOC_KEY} ")], deactivate_missing=True
+        )
+        self.assertIn("deactivated=0", out)
+        self.assertTrue(self.the_document().is_active)
+
+    def test_a_record_that_fails_while_being_written_leaves_nothing_behind(self):
+        real = plan_document_bundle.store_document
+
+        def failing(prepared, **kwargs):
+            if prepared.document_key == SBC_KEY:
+                real(prepared, **kwargs)  # the row is written...
+                raise OSError("storage is down")  # ...then storage fails
+            return real(prepared, **kwargs)
+
+        with patch.object(plan_document_bundle, "store_document", side_effect=failing):
+            out, err = self.run_import(self.two_records())
+        self.assertIn("skipped=1", out)
+        self.assertIn(f"Skipped record 1 ({SBC_KEY})", err)
+        self.assertEqual(
+            list(PublicPlanDocument.objects.values_list("document_key", flat=True)),
+            [EOC_KEY],
+        )
+
+    def test_a_revision_imported_without_store_file_is_stored_when_store_file_returns(
+        self,
+    ):
+        backend = self.temporary_storage()
+        root, _ = self.pdf_under_root()
+        with self.captureOnCommitCallbacks(execute=True):
+            self.run_import([self.file_record()], files_root=root, store_file=True)
+        # The revision arrives first without --store-file: the row's
+        # source_sha256 moves on, the kept original does not.
+        root, revised = self.pdf_under_root(pages=REVISED_PDF_PAGES)
+        self.run_import([self.file_record()], files_root=root)
+        with self.captureOnCommitCallbacks(execute=True):
+            out, _ = self.run_import([self.file_record()], files_root=root, store_file=True)
+        self.assertIn("updated=1", out)
+        doc = self.the_document(SBC_KEY)
+        with backend.open(doc.stored_file.name, "rb") as fh:
+            self.assertEqual(fh.read(), revised)

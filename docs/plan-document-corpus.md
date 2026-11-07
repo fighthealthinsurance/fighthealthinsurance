@@ -438,7 +438,7 @@ another insurer's denial.
 | State | `denial.state`, else `denial.your_state`; a code or a state's name, normalised to the two-letter code |
 | Line of business, confirmed | The denial's plan sources, when exactly one line follows from them: Medicare Advantage; Medicaid; State Marketplace / Affordable Care Act (exchange); Employer -- State Government, Employer -- Federal Government, Employer -- Other Government, Employer -- Private, Union and Other Group (commercial). Medicare Regular, Veterans Affairs, Other and Don't know say nothing |
 | Line of business, inferred | Otherwise `pa_requirements.infer_line_of_business` over the letter and plan fields; a hint, never grounds to exclude, since its patterns are loose |
-| Dental | `denial.dental_claim`, or the words dental, dentist or orthodont- in the letter |
+| Dental | `denial.dental_claim` (a hard fact), or the words dental, dentist or orthodont- in the letter (a soft one: a medical denial can mention dental work) |
 | Plan | `denial.insurance_plan_obj` |
 | Plan id text | `denial.plan_id`, upper-cased for prefix matching |
 | Employer | `denial.employer_name` |
@@ -456,7 +456,7 @@ another insurer's denial.
 | E2 inactive | `is_active` is false (also the candidate query) |
 | E3 state | Its `state` and the denial's state are both set and differ |
 | E4 line of business | Its line is specific (not `all` or `other`), the denial's line is confirmed by a plan source, and they differ. A line inferred from the letter never excludes |
-| E5 coverage kind | It is a dental document and the claim is not dental, or the claim is dental and it is not a dental document |
+| E5 coverage kind | It is a dental document and nothing says the claim is dental, or `dental_claim` is set and it is not a dental document. A letter that only mentions dental care rules out neither kind: dental and medical documents conflict, so a close call goes to the tie-break |
 | E6 negative regex | Its `negative_regex` matches the blob |
 | E7 plan | Its `insurance_plan` and the denial's plan are both set and differ |
 
@@ -509,12 +509,13 @@ is selected. Each later one that conflicts with a selected document is a
 skipped when the margin holds; one that conflicts with nothing selected rides
 along, up to `MAX_SELECTED` (3), which is how a plan's SBC sits beside its
 EOC. Two documents conflict (`conflicts`) when their plan, state, region,
-plan year or employer are both set and differ, or both have a specific line
-of business and the lines differ.
+plan year or employer are both set and differ, both have a specific line
+of business and the lines differ, or one is dental coverage and the other
+is not.
 
 Any rival means the rules select nothing. The top and its rivals go to
 `tie_break`: a prompt listing them as numbered lines (title, plan, region,
-state or national, year, line of business, employer) over the first 2,000
+state or national, year, line of business, coverage, employer) over the first 2,000
 characters of the letter, asking for the number of the member's plan or 0,
 answered by `infer_with_fallback` at temperature 0 with a 20 s timeout over
 at most 2 of the internal general-purpose models (`models=` is never passed,
@@ -576,13 +577,13 @@ again and the rows replaced.
 |---|---|
 | The letter is replaced | The rows are deleted, and the new letter is matched afresh |
 | The carrier changes (a correction on the review page, a typed insurer) | A new hash: re-matched at the next refresh |
-| The state, or whether the claim is dental, changes | A new hash |
+| The state, or whether the claim is dental (or flagged so), changes | A new hash |
 | A plan id, employer, plan context or date arrives that changes what a document's regex, keywords, employer name, prefixes or plan year say about the letter | A new hash |
 | The carrier's corpus changes: an import creates or updates one of its documents, a document is activated or deactivated in the admin, `--deactivate-missing` retires one | The stamp moves: every denial of that carrier is re-matched at its next refresh |
 | The plan or line of business changes | A new hash only when a document of the carrier keys on that fact |
-| The procedure or diagnosis changes | `relevance_key` differs: the passages and summary are rebuilt, the selection kept |
+| The procedure or diagnosis changes | `relevance_key` differs: the passages and summary are rebuilt, the selection kept. Until the rebuild lands the reader returns no section, rather than quote passages chosen for the old treatment |
 | A re-import that changes nothing | Nothing: the row is not saved and `updated_at` stays |
-| A refresh timed out before the text was built | `relevance_key` is blank, so the next refresh builds the text and keeps the selection |
+| A refresh timed out before the text was built, or found no passages | `relevance_key` is blank, so the next refresh builds the text (with the model, if this one went without) and keeps the selection |
 
 ### What the reader returns
 
@@ -590,8 +591,9 @@ again and the rows replaced.
 It returns the section, or `""` when: the denial is not a saved `Denial`;
 the person uploaded plan documents of their own (`PlanDocuments` rows exist
 for the denial); no carrier resolves; no selected row carries the current
-`inputs_hash` with an active document; or the rank-1 selected row has no
-passages yet. Rows are read in rank order with `document__is_active=True`, so
+`inputs_hash` with an active document; the rank-1 selected row has no
+passages yet; or its passages were built for another procedure or diagnosis
+(its `relevance_key` is not the current one). Rows are read in rank order with `document__is_active=True`, so
 deactivating a document stops its text at once.
 
 ### What is logged

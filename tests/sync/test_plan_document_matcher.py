@@ -459,11 +459,25 @@ class MatchDocumentsTests(_CorpusMixin, TestCase):
             {self.deductible_hmo_eoc.id, self.norcal_eoc.id, self.norcal_sbc.id},
         )
 
-    def test_a_dental_claim_matches_only_the_dental_document(self):
-        outcome = match_documents(self.denial(DENTAL_LETTER))
+    def test_a_flagged_dental_claim_matches_only_the_dental_document(self):
+        outcome = match_documents(self.denial(DENTAL_LETTER, dental_claim=True))
         self.assertEqual(set(self.scored_by_id(outcome)), {self.kaiser_dental.id})
         self.assertEqual(self.selected_ids(outcome), [self.kaiser_dental.id])
         self.assertEqual(outcome.selected[0].score, 39)
+
+    def test_a_letter_that_only_mentions_dental_care_is_a_tie_for_the_model(self):
+        # The letter may be a dental claim, or a medical one about dental
+        # work: the medical documents stay in, the dental one is a rival
+        # within the margin, and nothing is selected without the tie-break.
+        outcome = match_documents(self.denial(DENTAL_LETTER))
+        scored = self.scored_by_id(outcome)
+        self.assertIn(self.kaiser_dental.id, scored)
+        self.assertIn(self.norcal_eoc.id, scored)
+        self.assertEqual(outcome.selected, [])
+        top = max(outcome.scored, key=lambda s: s.score)
+        kinds = {top.candidate.coverage_kind}
+        kinds |= {s.candidate.coverage_kind for s in outcome.rivals}
+        self.assertEqual(kinds, {"dental", "medical"})
 
     def test_a_dental_claim_flagged_on_the_row_counts_without_the_word(self):
         denial = self.denial(
@@ -630,10 +644,14 @@ class ReaderTests(_CorpusMixin, TestCase):
             "an MRI ordered by a plan physician is covered."
         )
 
-    def current_rows(self, *, inputs_hash=None, documents=None, relevant_text=None):
+    def current_rows(
+        self, *, inputs_hash=None, documents=None, relevant_text=None, relevance_key=None
+    ):
         """Selected rows for the denial, rank 1 carrying the passages and
-        the summary, with the hash the denial has now unless given."""
-        inputs_hash = inputs_hash or current_hashes(self.denial_row)[0]
+        the summary, with the hashes the denial has now unless given."""
+        hashes = current_hashes(self.denial_row)
+        inputs_hash = inputs_hash or hashes[0]
+        relevance_key = relevance_key or hashes[1]
         documents = documents or [self.norcal_eoc, self.norcal_sbc]
         if relevant_text is None:
             relevant_text = self.passage
@@ -651,7 +669,7 @@ class ReaderTests(_CorpusMixin, TestCase):
                     inputs_hash=inputs_hash,
                     relevant_text=relevant_text if rank == 1 else "",
                     summary=SUMMARY if rank == 1 and relevant_text else "",
-                    relevance_key="0123456789abcdef" if rank == 1 else "",
+                    relevance_key=relevance_key if rank == 1 else "",
                 )
             )
         return rows
@@ -684,6 +702,16 @@ class ReaderTests(_CorpusMixin, TestCase):
             )
             PlanDocumentMatch.objects.filter(denial=self.denial_row).delete()
             self.assertEqual(get_plan_document_context_for_denial(self.denial_row), "")
+
+    def test_passages_built_for_another_procedure_are_not_quoted(self):
+        # The selection still holds (same inputs hash), but the passages
+        # were chosen for an earlier procedure and their rebuild has not
+        # run: the section waits for it rather than argue the old treatment.
+        self.current_rows()
+        self.assertIn(self.passage, get_plan_document_context_for_denial(self.denial_row))
+        self.denial_row.procedure = "Knee arthroscopy"
+        self.denial_row.save(update_fields=["procedure"])
+        self.assertEqual(get_plan_document_context_for_denial(self.denial_row), "")
 
     def test_rows_with_a_stale_hash_are_ignored(self):
         self.current_rows(inputs_hash="0" * 64)

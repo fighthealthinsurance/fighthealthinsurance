@@ -241,11 +241,19 @@ class TestScoreCandidateHardExcludes:
             is None
         )
 
-    def test_a_medical_document_is_excluded_from_a_dental_claim(self):
-        assert (
-            score_candidate(candidate(coverage_kind=MEDICAL), facts(dental=True))
-            is None
-        )
+    def test_a_medical_document_is_excluded_from_a_flagged_dental_claim(self):
+        flagged = facts(dental=True, dental_is_hard=True)
+        assert score_candidate(candidate(coverage_kind=MEDICAL), flagged) is None
+
+    def test_a_letter_mentioning_dental_care_leaves_medical_documents_in(self):
+        # "Dental anesthesia for a medical procedure" is not a dental claim.
+        result = score_candidate(candidate(coverage_kind=MEDICAL), facts(dental=True))
+        assert result is not None
+        assert "coverage_kind" not in result.signals
+
+    def test_dental_and_medical_documents_conflict(self):
+        assert conflicts(candidate(coverage_kind=DENTAL), candidate(coverage_kind=MEDICAL))
+        assert not conflicts(candidate(coverage_kind=MEDICAL), candidate(id=2))
 
     def test_a_dental_document_scores_for_a_dental_claim(self):
         result = score_candidate(candidate(coverage_kind=DENTAL), facts(dental=True))
@@ -802,3 +810,18 @@ class TestTruncatePlanDocumentContext:
             assert result.count(PLAN_DOCUMENT_END) == 1, max_chars
             assert result.endswith(PLAN_DOCUMENT_END + "\n"), max_chars
             assert len(result) <= max_chars, max_chars
+
+
+class TestStoredPhraseLists:
+    """A phrase list an admin saved as a string counts as no phrases: read
+    as a string, each character would be a prefix or a keyword."""
+
+    def test_a_string_is_no_phrases(self):
+        from fighthealthinsurance.plan_document_matcher import _phrase_list
+
+        assert _phrase_list("GRP") == []
+
+    def test_a_list_keeps_its_non_blank_strings(self):
+        from fighthealthinsurance.plan_document_matcher import _phrase_list
+
+        assert _phrase_list([" GRP ", "", 7, "HMO"]) == ["GRP", "HMO"]

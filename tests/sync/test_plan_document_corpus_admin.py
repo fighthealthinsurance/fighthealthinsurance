@@ -13,6 +13,7 @@ from django.urls import reverse
 from fighthealthinsurance.models import (
     Denial,
     InsuranceCompany,
+    InsurancePlan,
     PlanDocumentMatch,
     PublicPlanDocument,
 )
@@ -359,3 +360,43 @@ class ExperimentsPageTest(TestCase):
         response = self.client.get("/timbit/help/experiments")
         self.assertContains(response, "Plan document matching")
         self.assertContains(response, "PLAN_DOCUMENT_MATCHING_ENABLED")
+
+
+class ReviewFindingsAdminTest(_CorpusAdminTestCase):
+    """The match admin is read-only all the way down, and the document form
+    refuses a plan of another insurer and phrase lists that are not lists."""
+
+    def test_a_match_cannot_be_deleted_from_the_admin(self):
+        row = self.match(self.document())
+        response = self.client.get(self.admin_url("plandocumentmatch", "delete", row.pk))
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(PlanDocumentMatch.objects.filter(pk=row.pk).exists())
+
+    def change_post(self, doc, **overrides):
+        return self.client.post(
+            self.admin_url("publicplandocument", "change", doc.pk),
+            self.form_data(
+                document_key=doc.document_key,
+                title=doc.title,
+                document_type=doc.document_type,
+                negative_regex="",
+                source_url="",
+                **overrides,
+            ),
+        )
+
+    def test_a_plan_of_another_insurer_is_refused(self):
+        aetna = InsuranceCompany.objects.create(name="Aetna", regex=r"aetna")
+        plan = InsurancePlan.objects.create(insurance_company=aetna, plan_name="Aetna HMO")
+        doc = self.document()
+        response = self.change_post(doc, insurance_plan=str(plan.pk))
+        self.assertIn("That plan belongs to another insurer.", self.form_errors(response))
+        doc.refresh_from_db()
+        self.assertIsNone(doc.insurance_plan_id)
+
+    def test_a_phrase_list_given_as_a_string_is_refused(self):
+        doc = self.document()
+        response = self.change_post(doc, plan_id_prefixes='"GRP"')
+        self.assertIn("A JSON list of strings", self.form_errors(response))
+        doc.refresh_from_db()
+        self.assertEqual(doc.plan_id_prefixes, [])
