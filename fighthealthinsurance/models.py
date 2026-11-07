@@ -1027,6 +1027,10 @@ class PublicPlanDocument(models.Model):
     #: The most text one document keeps, about a thousand pages
     #: (ml_document_extraction.MAX_PDF_CHARS).
     MAX_TEXT_CHARS = 3_000_000
+    #: The import_batch of a row whose text came from an admin upload: that
+    #: text was not parsed from the row's source_sha256, so an import parses
+    #: the record's file again rather than reuse it.
+    ADMIN_IMPORT_BATCH = "admin"
 
     id = models.AutoField(primary_key=True)
     document_key = models.CharField(

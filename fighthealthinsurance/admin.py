@@ -889,7 +889,7 @@ class PublicPlanDocumentAdmin(admin.ModelAdmin):
             obj.text_sha256 = PublicPlanDocument.text_hash(text)
             obj.page_count = page_count
             obj.char_count = len(text)
-            obj.import_batch = "admin"
+            obj.import_batch = PublicPlanDocument.ADMIN_IMPORT_BATCH
         super().save_model(request, obj, form, change)
         if parsed and change:
             # The passages built from the old text no longer quote it.

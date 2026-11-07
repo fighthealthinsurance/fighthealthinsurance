@@ -143,7 +143,9 @@ equals the record's. The row's text and page count are reused, so a deploy
 that re-imports the whole corpus does not re-read every unchanged PDF; the
 record's metadata still applies, and the record counts as `unchanged` only
 when nothing else differs either. New bytes, a new `pipeline_version`, a
-row without text, or `--reparse` parse the file again.
+row without text, a row whose text came from an admin upload
+(`import_batch` `admin`), or `--reparse` parse the file again, so a
+re-import restores the corpus text over an upload.
 
 ### Zip bundles
 
@@ -170,9 +172,11 @@ is read. The caps:
 - `bundle.json` at `MAX_BUNDLE_BYTES`;
 - each original at `MAX_FILE_BYTES` (50 MiB);
 - `SHA256SUMS` at 1 MiB;
-- the members' declared total at `MAX_ARCHIVE_BYTES` (1 GiB), which bounds
-  what the archive can expand to whatever its size on disk. A corpus of a
-  few hundred megabytes of PDFs fits well inside it.
+- the members' declared total, which bounds what the archive can expand
+  to whatever its size: `MAX_ARCHIVE_PATH_TOTAL_BYTES` (4 GiB, twice the
+  on-disk cap) for an archive read from a path, so a 2 GiB archive of
+  PDFs, which deflate barely shrinks, is never refused for its total; and
+  `MAX_ARCHIVE_BYTES` (1 GiB) for one on stdin.
 
 Every member is read in chunks against its own cap, so a member whose declared
 size is forged cannot inflate past it. An archive never takes `--files-root`.
@@ -263,6 +267,17 @@ request there, and every published document is fetched again monthly. That
 repository's README covers the layout, discovery, review, the variant rule
 and takedown requests.
 
+**Order of rollout.** That repository's CI imports each change into a
+checkout of this repository's `main` (a dry run), and its releases are
+imported by whatever this repository deploys. Both need this repository's
+`main` to carry the importer described here first: a single migration leaf
+(`0263_merge_public_plan_documents_plan_sponsor`; without it `migrate`
+refuses), a zip read from a path accepted up to `MAX_ARCHIVE_PATH_BYTES`
+(before, the full collection was refused at `MAX_BUNDLE_BYTES`), and the
+contract refusals above (a top-level `defaults` key, a file whose bytes do
+not match its `source_sha256`, a Git LFS pointer). Merge that here before
+enabling the corpus repository's CI or publishing its first release.
+
 **The release.** Each merge to that repository's `main` that touches its
 records or PDFs publishes a release tagged `corpus-YYYYMMDD-<sha7>` with
 exactly two assets: `plan-docs.zip` (one deterministic zip in this bundle
@@ -312,9 +327,12 @@ it).
 web image with `IMPORT_PLAN_DOCUMENTS=1`. `scripts/start-server.sh` then
 exits 0 with a log line when the image has no zip; otherwise it waits (about
 20 minutes at most) for `manage.py migrate --check` to pass, since the
-`web-migrations` Job is applied in the same `kubectl apply`, loads the
-`plan_source` and `insurance_companies` fixtures (idempotent) so insurer
-names resolve, and runs
+`web-migrations` Job is applied in the same `kubectl apply`, and for a load
+of the `plan_source` and `insurance_companies` fixtures (idempotent) to
+succeed, so insurer names resolve. That load can run at the same time as
+web-migrations' own and fail on a duplicate key when a fixture adds rows;
+it is retried in the same wait loop, and web-migrations' Job retries its
+own. Then it runs
 
 ```bash
 python manage.py import_plan_documents --source plan_documents/plan-docs.zip \
@@ -602,20 +620,22 @@ along, up to `MAX_SELECTED` (3), which is how a plan's SBC sits beside its
 EOC. Two documents conflict (`conflicts`) when their plan, state, region,
 plan year or employer are both set and differ, both have a specific line
 of business and the lines differ, one is dental coverage and the other
-is not, or they are plan-code variants: both have `plan_id_prefixes` and
-the two lists share none, or both have a `match_regex` and the patterns
-differ.
+is not, or they are plan-code variants: both have the same
+`document_type` and either both have `plan_id_prefixes` and no prefix of
+one list starts with a prefix of the other (so no plan id could match
+both), or both have a `match_regex` and the patterns differ.
 
-Variants are documents with the same metadata told apart only by the plan
-codes or the pattern they key on, such as two small-group EOCs of one
-carrier, region and year. Without the variant rule both would ride along.
+Variants are documents of one type with the same metadata told apart only
+by the plan codes or the pattern they key on, such as two small-group EOCs
+of one carrier, region and year. Without the variant rule both would ride along.
 With it, a denial whose plan id starts with one variant's prefix gives that
 variant the 30 prefix points (or 25 for its regex), which clear the margin,
 so it alone is selected; a denial carrying neither code leaves the two
 within the margin, so they go to the tie-break, and nothing is selected
-without an answer. Identical prefix lists, overlapping ones, or prefixes on
-only one side do not conflict, so an EOC and its SBC keyed on the same
-codes still ride together. Give each variant its own prefixes (or regex):
+without an answer. Identical prefix lists, overlapping ones, nested ones
+(`AB1` and `AB1-0042`), or prefixes on only one side do not conflict, and
+documents of different types are never variants, so an EOC and its SBC
+still ride together even when their codes or patterns differ. Give each variant its own prefixes (or regex):
 two variants with neither are not told apart at all.
 
 Any rival means the rules select nothing. The top and its rivals go to
@@ -803,7 +823,9 @@ validated, with `page_marked_text_from_bytes`, the way the importer parses
 a `file` record; a file that yields no text (a scanned PDF) is a form error.
 A new document needs its file. On save the text, hashes and counts are
 replaced and `import_batch` is set to `admin`; saving an upload onto an
-existing row deletes that document's match rows. The two regex fields show
+existing row deletes that document's match rows. The upload lasts until the
+next import of that `document_key`, which puts the record's text back (a
+`file` record's file is parsed again, not reused). The two regex fields show
 their pattern text, not the compiled pattern. The prefixes and keywords are
 JSON lists of strings; a cleared box saves the empty list. "Read the text" links to the
 staff text view. The actions **Activate**

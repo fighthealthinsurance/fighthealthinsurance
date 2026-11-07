@@ -284,6 +284,19 @@ def test_start_server_waits_for_migrations_then_loads_insurers_before_importing(
     assert order == sorted(order)
 
 
+def test_a_failed_insurer_loaddata_is_retried_in_the_wait_loop():
+    # It can race web-migrations' identical loaddata; under set -e a bare
+    # command there would fail the Job instead of trying again.
+    branch = _import_branch()
+    condition = branch[
+        branch.index("until python manage.py migrate --check") : branch.index(
+            "; do"
+        )
+    ]
+    assert "&&" in condition
+    assert "python manage.py loaddata plan_source insurance_companies" in condition
+
+
 def test_the_migrations_wait_is_bounded():
     branch = _import_branch()
     loop = branch[branch.index("until python manage.py migrate --check") :]

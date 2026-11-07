@@ -66,18 +66,23 @@ elif [ -n "$IMPORT_PLAN_DOCUMENTS" ]; then
   fi
   # web-migrations is applied in the same kubectl apply, so wait for it
   # (bounded, about 20 minutes) instead of importing into an old schema.
+  # Records resolve their insurer against plan_source and
+  # insurance_companies, so load them here too (idempotent) rather than
+  # import before web-migrations has. That loaddata can run at the same time
+  # as web-migrations' own (migrate --check passes as soon as migrate is
+  # done), and when a fixture adds rows one of the two can fail on a
+  # duplicate key. Here that failure is retried inside this loop, not a Job
+  # failure; web-migrations' Job retries its own.
   plan_documents_waits=0
-  until python manage.py migrate --check; do
+  until python manage.py migrate --check &&
+    python manage.py loaddata plan_source insurance_companies; do
     plan_documents_waits=$((plan_documents_waits + 1))
     if [ "$plan_documents_waits" -ge 40 ]; then
-      echo "Migrations still pending after $plan_documents_waits checks; not importing plan documents"
+      echo "Migrations or insurer fixtures still pending after $plan_documents_waits checks; not importing plan documents"
       exit 1
     fi
     sleep 30
   done
-  # Records resolve their insurer against these tables; load them here too
-  # (idempotent) so the import cannot race web-migrations' loaddata.
-  python manage.py loaddata plan_source insurance_companies
   # --deactivate-missing: the corpus owns the carriers it names, so their
   # documents it no longer lists are retired. A refused record is skipped and
   # counted in the log line; the Job fails only if the bundle itself cannot

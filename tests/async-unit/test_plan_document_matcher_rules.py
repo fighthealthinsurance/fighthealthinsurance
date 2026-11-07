@@ -603,6 +603,28 @@ class TestPlanCodeVariants:
             candidate(id=2, plan_id_prefixes=("AB2",)),
         )
 
+    def test_nested_plan_id_prefixes_do_not_conflict(self):
+        assert not conflicts(self.variant(1, "AB1"), self.variant(2, "AB1-0042"))
+
+    def test_an_eoc_and_an_sbc_with_disjoint_prefixes_do_not_conflict(self):
+        assert not conflicts(
+            self.variant(1, "AB1"),
+            candidate(id=2, document_type=SBC, plan_id_prefixes=("XY9",)),
+        )
+
+    def test_an_eoc_and_an_sbc_with_different_patterns_do_not_conflict(self):
+        assert not conflicts(
+            candidate(id=1, match_regex=regex(r"\bgold\s+ppo\b")),
+            candidate(id=2, document_type=SBC, match_regex=regex(r"\bgold\b")),
+        )
+
+    def test_an_eoc_and_its_sbc_on_nested_prefixes_are_selected_together(self):
+        eoc = self.variant(1, "AB1")
+        sbc = candidate(id=2, document_type=SBC, plan_id_prefixes=("AB1-0042",))
+        f = facts(plan_id_text="AB1-0042-77")
+        selected, _ = select([score_candidate(eoc, f), score_candidate(sbc, f)])
+        assert [s.candidate.id for s in selected] == [1, 2]
+
     def test_prefixes_on_one_side_only_do_not_conflict(self):
         assert not conflicts(self.variant(1, "AB1"), candidate(id=2))
 

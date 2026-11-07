@@ -61,7 +61,8 @@ BUNDLE_VERSION = 1
 MAX_BUNDLE_BYTES = 256 * 1024 * 1024
 #: The largest zip archive read from a path. It is read in place, never
 #: loaded whole, so it may be far larger than what stdin may carry; what is
-#: inside it stays bounded by MAX_ARCHIVE_BYTES and the per-member caps.
+#: inside it stays bounded by MAX_ARCHIVE_PATH_TOTAL_BYTES and the
+#: per-member caps.
 MAX_ARCHIVE_PATH_BYTES = 2 * 1024 * 1024 * 1024
 #: The largest file a record may point at.
 MAX_FILE_BYTES = 50 * 1024 * 1024
@@ -77,9 +78,14 @@ ARCHIVE_BUNDLE_NAMES = ("bundle.json", "bundle.jsonl")
 ARCHIVE_FILES_DIR = "files/"
 ARCHIVE_SUMS_NAME = "SHA256SUMS"
 MAX_ARCHIVE_MEMBERS = MAX_DOCUMENTS + 8
-#: The declared uncompressed total: an expansion bound. A corpus of a few
-#: hundred megabytes of PDFs (which deflate barely shrinks) fits well inside.
+#: The declared uncompressed total of an archive held in memory (stdin): an
+#: expansion bound. A corpus of a few hundred megabytes of PDFs (which
+#: deflate barely shrinks) fits well inside.
 MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
+#: The same bound for an archive read from a path: twice the largest archive
+#: on disk, so an archive up to MAX_ARCHIVE_PATH_BYTES of barely deflated
+#: PDFs is never refused for its total, and expansion stays bounded.
+MAX_ARCHIVE_PATH_TOTAL_BYTES = 2 * MAX_ARCHIVE_PATH_BYTES
 MAX_SUMS_BYTES = 1024 * 1024
 _READ_CHUNK = 1 << 20
 
@@ -419,13 +425,15 @@ class BundleArchive:
     stands in for ``--files-root``.
     """
 
-    def __init__(self, archive: zipfile.ZipFile) -> None:
+    def __init__(self, archive: zipfile.ZipFile, *, on_disk: bool = False) -> None:
         self._zip = archive
         self.bundle_name = ""
         self.has_sums = False
         self._files: Dict[str, zipfile.ZipInfo] = {}
         try:
-            self._validate()
+            self._validate(
+                MAX_ARCHIVE_PATH_TOTAL_BYTES if on_disk else MAX_ARCHIVE_BYTES
+            )
         except BaseException:
             archive.close()
             raise
@@ -444,7 +452,7 @@ class BundleArchive:
             archive = zipfile.ZipFile(path)
         except (zipfile.BadZipFile, OSError, ValueError, EOFError):
             raise BundleError("not a zip archive") from None
-        return cls(archive)
+        return cls(archive, on_disk=True)
 
     @classmethod
     def open_bytes(cls, data: bytes) -> "BundleArchive":
@@ -470,7 +478,9 @@ class BundleArchive:
 
     # -- what is in it ------------------------------------------------------------
 
-    def _validate(self) -> None:
+    def _validate(self, max_total: int) -> None:
+        """Refuse what is not a bundle archive; ``max_total`` caps the
+        members' declared uncompressed total."""
         infos = self._zip.infolist()
         if len(infos) > MAX_ARCHIVE_MEMBERS:
             raise BundleError(f"an archive holds at most {MAX_ARCHIVE_MEMBERS} members")
@@ -523,9 +533,9 @@ class BundleArchive:
             shown = ", ".join(refused[:5])
             more = f" and {len(refused) - 5} more" if len(refused) > 5 else ""
             raise BundleError(f"archive member(s) refused: {shown}{more}")
-        if total > MAX_ARCHIVE_BYTES:
+        if total > max_total:
             raise BundleError(
-                f"the archive's members add up to more than {MAX_ARCHIVE_BYTES} bytes"
+                f"the archive's members add up to more than {max_total} bytes"
             )
         if len(bundles) != 1:
             raise BundleError(
@@ -927,8 +937,10 @@ def _reusable_text(
     """The existing row's ``(text, page_count)`` when that row was parsed
     from these very bytes (``source_sha256``) by the same pipeline version
     and holds text; else None, and the file is parsed. Saves a deploy from
-    re-parsing every unchanged PDF of the corpus. The file's name is still
-    checked as a parse would check it."""
+    re-parsing every unchanged PDF of the corpus. A row whose text an admin
+    upload replaced is parsed again: the upload left source_sha256 and
+    pipeline_version as they were, so they do not describe that text. The
+    file's name is still checked as a parse would check it."""
     if not file_name.lower().endswith(FILE_EXTENSIONS):
         return None
     row = (
@@ -938,6 +950,7 @@ def _reusable_text(
             pipeline_version=pipeline_version,
         )
         .exclude(text="")
+        .exclude(import_batch=PublicPlanDocument.ADMIN_IMPORT_BATCH)
         .values_list("text", "page_count")
         .first()
     )

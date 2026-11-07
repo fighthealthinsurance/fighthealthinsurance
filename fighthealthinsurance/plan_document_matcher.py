@@ -578,28 +578,32 @@ def conflicts(a: Candidate, b: Candidate) -> bool:
     state, region, year or employer, another specific line of business,
     dental coverage against medical, or another plan-code variant.
 
-    Variants are documents with the same metadata told apart only by the
-    plan codes or the pattern they key on (two small-group EOCs of one
-    carrier): disjoint ``plan_id_prefixes``, or different ``match_regex``
-    patterns, both sides set. Without this they would ride along together.
-    With it, a letter carrying one variant's code wins by the prefix (or
-    regex) points, which clear MARGIN, and a letter carrying neither goes
-    to the tie-break, which selects nothing without an answer."""
+    Variants are documents of one type with the same metadata told apart
+    only by the plan codes or the pattern they key on (two small-group EOCs
+    of one carrier): ``plan_id_prefixes`` no plan id could match both of,
+    or different ``match_regex`` patterns, both sides set. Without this
+    they would ride along together. With it, a letter carrying one
+    variant's code wins by the prefix (or regex) points, which clear
+    MARGIN, and a letter carrying neither goes to the tie-break, which
+    selects nothing without an answer. Documents of different types (an
+    EOC and its plan's SBC) are never variants of each other: they key on
+    the codes each was published with, often one nested in the other."""
     dental = PublicPlanDocument.COVERAGE_KIND_DENTAL
     if (a.coverage_kind == dental) != (b.coverage_kind == dental):
         return True
-    if (
-        a.plan_id_prefixes
-        and b.plan_id_prefixes
-        and not set(a.plan_id_prefixes) & set(b.plan_id_prefixes)
-    ):
-        return True
-    if (
-        a.match_regex is not None
-        and b.match_regex is not None
-        and a.match_regex.pattern != b.match_regex.pattern
-    ):
-        return True
+    if a.document_type == b.document_type:
+        if (
+            a.plan_id_prefixes
+            and b.plan_id_prefixes
+            and not _prefixes_overlap(a.plan_id_prefixes, b.plan_id_prefixes)
+        ):
+            return True
+        if (
+            a.match_regex is not None
+            and b.match_regex is not None
+            and a.match_regex.pattern != b.match_regex.pattern
+        ):
+            return True
     if (
         a.insurance_plan_id
         and b.insurance_plan_id
@@ -625,6 +629,13 @@ def conflicts(a: Candidate, b: Candidate) -> bool:
     ):
         return True
     return False
+
+
+def _prefixes_overlap(a: Sequence[str], b: Sequence[str]) -> bool:
+    """Whether one plan id could match a prefix of each list: blob_signals
+    matches with startswith, so "AB1" and "AB1-0042" both match
+    "AB1-0042-77"."""
+    return any(x.startswith(y) or y.startswith(x) for x in a for y in b)
 
 
 def ranked(scored: Sequence[Scored]) -> List[Scored]:

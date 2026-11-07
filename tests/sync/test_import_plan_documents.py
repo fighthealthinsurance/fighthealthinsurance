@@ -1225,7 +1225,7 @@ class ArchiveSourcesTest(_ArchiveTestCase):
         with patch.object(plan_document_bundle, "MAX_FILE_BYTES", 10), opened as open_:
             self.assert_refused(data, ARCHIVE_PDF, "larger than 10 bytes")
         open_.assert_not_called()
-        with patch.object(plan_document_bundle, "MAX_ARCHIVE_BYTES", 10):
+        with patch.object(plan_document_bundle, "MAX_ARCHIVE_PATH_TOTAL_BYTES", 10):
             self.assert_refused(data, "add up to more than 10 bytes")
 
     def test_too_many_members_refuses_the_archive(self):
@@ -1391,6 +1391,25 @@ class ArchivePathCapTest(_ArchiveTestCase):
         with patch(f"{COMMAND_MODULE}.MAX_ARCHIVE_PATH_BYTES", 10):
             self.assert_refused(path, "larger than 10 bytes")
 
+    def test_a_path_archives_total_may_be_twice_its_on_disk_cap(self):
+        self.assertEqual(
+            plan_document_bundle.MAX_ARCHIVE_PATH_TOTAL_BYTES,
+            2 * plan_document_bundle.MAX_ARCHIVE_PATH_BYTES,
+        )
+
+    def test_a_zip_on_disk_may_expand_past_the_in_memory_total_cap(self):
+        data = self.zip_bytes([self.record()])
+        with patch.object(plan_document_bundle, "MAX_ARCHIVE_BYTES", 10):
+            out, _ = self.run_source(self.write_raw(data))
+        self.assertIn("created=1", out)
+
+    def test_the_same_zip_on_stdin_is_held_to_the_in_memory_total_cap(self):
+        data = self.zip_bytes([self.record()])
+        with patch.object(plan_document_bundle, "MAX_ARCHIVE_BYTES", 10):
+            with self.assertRaises(CommandError) as caught:
+                self.run_zip_from_stdin(data)
+        self.assertIn("add up to more than 10 bytes", str(caught.exception))
+
     def test_bundle_archive_open_path_enforces_the_cap_itself(self):
         path = self.write_zip([self.record()])
         with patch.object(plan_document_bundle, "MAX_ARCHIVE_PATH_BYTES", 10):
@@ -1462,6 +1481,29 @@ class UnchangedOriginalTest(_ImportTestCase):
         out, parse = self.reimport()
         parse.assert_called_once()
         self.assertEqual(self.the_document(SBC_KEY).text, self.before.text)
+
+    def admin_upload(self):
+        """What PublicPlanDocumentAdmin.save_model does with an upload: the
+        text, its hash and counts and import_batch change; source_sha256
+        and pipeline_version (not on the form) stay."""
+        doc = self.the_document(SBC_KEY)
+        doc.text = "[Page 1]\nADMIN UPLOAD TEXT"
+        doc.text_sha256 = PublicPlanDocument.text_hash(doc.text)
+        doc.char_count = len(doc.text)
+        doc.page_count = 1
+        doc.import_batch = PublicPlanDocument.ADMIN_IMPORT_BATCH
+        doc.save()
+
+    def test_a_reimport_after_an_admin_upload_restores_the_corpus_text(self):
+        self.admin_upload()
+        self.reimport()
+        self.assertEqual(self.the_document(SBC_KEY).text, self.before.text)
+
+    def test_a_reimport_after_an_admin_upload_parses_the_file(self):
+        self.admin_upload()
+        out, parse = self.reimport()
+        parse.assert_called_once()
+        self.assertIn("updated=1", out)
 
     def test_reparse_parses_an_unchanged_file_and_counts_it_unchanged(self):
         out, parse = self.reimport(reparse=True)
