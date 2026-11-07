@@ -105,6 +105,18 @@ class EveryPageRefusesPastTheLimitTestCase(TestCase):
         self.client = Client()
         _use_up_the_hour()
 
+    def test_a_refused_form_keeps_each_field_as_typed(self):
+        from django.http import QueryDict
+
+        from fighthealthinsurance.chat_forms import UnderstandPolicyForm
+
+        form = upload_rate_limit.refused_form(
+            UnderstandPolicyForm,
+            "policy_document",
+            QueryDict("email=mary.walker%40test-fhi.com"),
+        )
+        self.assertEqual(form.initial["email"], "mary.walker@test-fhi.com")
+
     def test_explain_my_policy(self):
         response = self.client.post(
             reverse("understand_policy"),

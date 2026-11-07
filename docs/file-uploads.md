@@ -24,7 +24,9 @@ and one signed-in account may each upload 20 files an hour and 60 a day (`FHI_UP
 counted when they arrive, before any check, so files that fail the checks
 count too; an upload over the limit is refused whole and counts nothing.
 Logged-in staff are not counted. A typed email is not counted: anyone can
-type anyone's. The counts are kept in the database
+type anyone's. When the count can't be read or updated, for instance while
+the database is down, the upload goes ahead: the limit is there to stop a
+flood, so nothing should rely on it to refuse an upload. The counts are kept in the database
 (`UploadCount`), since each web pod has its own cache, as keyed digests that
 change every period, never the address itself. The share page
 keeps its own daily budgets on top of these.

@@ -130,7 +130,9 @@ def refused_form(
     checks run for a refused upload."""
     from django.forms.utils import ErrorDict
 
-    form = form_class(initial=dict(initial))
+    # A QueryDict (request.POST) as one value per field, not lists.
+    values = initial.dict() if hasattr(initial, "dict") else dict(initial)
+    form = form_class(initial=values)
     form.cleaned_data = {}
     form._errors = ErrorDict()
     form.add_error(field, refusal_message(files))
