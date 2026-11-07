@@ -747,6 +747,21 @@ def test_womens_health_matching_handles_ob_gyn_but_not_cervical_spine():
     )
 
 
+
+def test_gender_affirming_care_matching_covers_treatments_and_diagnoses():
+    area = "gender-affirming-care"
+    assert practice_area_text_matches(area, "Vaginoplasty")
+    assert practice_area_text_matches(area, "Gender dysphoria (F64.0)")
+    assert practice_area_text_matches(area, "Gender-affirming hormone therapy")
+    assert practice_area_text_matches(area, "My insurer denied my top surgery")
+    assert practice_area_text_matches(area, "I'm a trans woman on estradiol")
+
+
+def test_gender_affirming_care_matching_skips_transplants_and_transfusions():
+    area = "gender-affirming-care"
+    assert not practice_area_text_matches(area, "Kidney transplant")
+    assert not practice_area_text_matches(area, "Blood transfusion for anemia")
+
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
 class TestPracticeAreaChatGeneration:

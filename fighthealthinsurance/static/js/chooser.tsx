@@ -256,6 +256,7 @@ const PRACTICE_AREA_OPTIONS = [
   { value: "neurology", label: "Neurology" },
   { value: "mental-health", label: "Mental health / psychiatry" },
   { value: "womens-health", label: "Women's health / OB-GYN" },
+  { value: "gender-affirming-care", label: "Gender-affirming / trans care" },
   { value: "pediatrics", label: "Pediatrics" },
   { value: "gastroenterology", label: "Gastroenterology / digestive health" },
   {
