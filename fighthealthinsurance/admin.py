@@ -1743,6 +1743,32 @@ class PlanSponsorAdmin(admin.ModelAdmin):
         super().save_model(request, obj, form, change)
 
 
+class CompanyCheckFilter(admin.SimpleListFilter):
+    """Shared documents by whether staff have checked the company the
+    reading found. Optional: a company counts as soon as it's linked."""
+
+    title = "company check"
+    parameter_name = "company_check"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("unchecked", "Company found, not checked"),
+            ("checked", "Company checked"),
+            ("none", "No company"),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == "unchecked":
+            return queryset.filter(
+                plan_sponsor__isnull=False, plan_sponsor_checked_at__isnull=True
+            )
+        if self.value() == "checked":
+            return queryset.filter(plan_sponsor_checked_at__isnull=False)
+        if self.value() == "none":
+            return queryset.filter(plan_sponsor__isnull=True)
+        return queryset
+
+
 @admin.register(PolicyDocument)
 class PolicyDocumentAdmin(admin.ModelAdmin):
     list_display = (
@@ -1752,6 +1778,8 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "document_type",
         "plan_category",
         "plan_sponsor",
+        "plan_sponsor_source",
+        "company_checked",
         "processing_status",
         "created_at",
         "file",
@@ -1760,6 +1788,8 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     list_filter = (
         "source",
         "processing_status",
+        CompanyCheckFilter,
+        "plan_sponsor_source",
         "document_type",
         "plan_category",
         "created_at",
@@ -1790,16 +1820,60 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "shared_link_fingerprint",
         "processing_status",
         "processed_at",
+        "plan_sponsor_source",
+        "plan_sponsor_evidence",
+        "plan_sponsor_checked_at",
+        "plan_sponsor_checked_by",
     )
-    actions = ("read_again", "mark_potential_spam", "not_spam")
+    actions = (
+        "read_again",
+        "mark_potential_spam",
+        "not_spam",
+        "confirm_company",
+    )
+
+    @admin.display(boolean=True, description="checked")
+    def company_checked(self, obj):
+        if obj.plan_sponsor_id is None:
+            return None
+        return obj.plan_sponsor_checked_at is not None
 
     def save_model(self, request, obj, form, change):
+        # A company staff set or changed is theirs, and checked.
+        fields = list(form.changed_data)
+        if "plan_sponsor" in fields:
+            obj.plan_sponsor_source = "staff" if obj.plan_sponsor_id else ""
+            obj.plan_sponsor_evidence = ""
+            obj.plan_sponsor_checked_at = (
+                timezone.now() if obj.plan_sponsor_id else None
+            )
+            obj.plan_sponsor_checked_by = request.user if obj.plan_sponsor_id else None
+            fields += [
+                "plan_sponsor_source",
+                "plan_sponsor_evidence",
+                "plan_sponsor_checked_at",
+                "plan_sponsor_checked_by",
+            ]
         # Only what the form changed: the encrypted fields it excludes are
         # never written back from what this request read.
         if change:
-            obj.save(update_fields=form.changed_data)
+            obj.save(update_fields=fields)
             return
         super().save_model(request, obj, form, change)
+
+    @admin.action(description="Confirm the company found")
+    def confirm_company(self, request, queryset):
+        # Optional: the company already counts. This records that a person
+        # looked at it.
+        updated = queryset.filter(plan_sponsor__isnull=False).update(
+            plan_sponsor_checked_at=timezone.now(),
+            plan_sponsor_checked_by=request.user,
+        )
+        self.message_user(
+            request,
+            f"{updated} compan{'y' if updated == 1 else 'ies'} confirmed. To fix "
+            "one, open the document and pick the right company.",
+        )
 
     @admin.action(description="Read again (shared files marked unreadable)")
     def read_again(self, request, queryset):

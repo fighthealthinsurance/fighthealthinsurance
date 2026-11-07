@@ -684,6 +684,12 @@ PLAN_FACT_FIELDS = (
     "insurance_company_obj",
     "insurance_plan_obj",
     "plan_sponsor",
+    # How the company was found and whether staff checked it: about the
+    # kept company, not the person. The quoted line is the document's own
+    # text, so a removal clears it with the rest of the text.
+    "plan_sponsor_source",
+    "plan_sponsor_checked_at",
+    "plan_sponsor_checked_by",
 )
 #: The record of the share itself, kept with the plan facts.
 SHARE_RECORD_FIELDS = (
@@ -707,6 +713,7 @@ REMOVED_VALUES: dict[str, Any] = {
     "session_key": None,
     "fingerprint": "",
     "cleaned_text": "",
+    "plan_sponsor_evidence": "",
     "processing_status": PolicyDocument.PROCESSING_REMOVED,
 }
 
