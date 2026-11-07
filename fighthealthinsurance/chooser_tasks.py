@@ -51,6 +51,7 @@ from fighthealthinsurance.chooser_practice_areas import (
     normalize_practice_area,
     practice_area_label,
     practice_area_text_matches,
+    practice_area_texts_match,
 )
 from fighthealthinsurance.models import (
     ChooserCandidate,
@@ -2238,9 +2239,8 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     f"Response started: {preview!r}"
                 )
                 continue
-            if practice_area and not all(
-                practice_area_text_matches(practice_area, written[field])
-                for field in ("procedure", "diagnosis")
+            if practice_area and not practice_area_texts_match(
+                practice_area, [written["procedure"], written["diagnosis"]]
             ):
                 logger.warning(
                     f"ChooserTask {task.id}: scenario from "
@@ -2408,11 +2408,17 @@ async def _generate_chat_candidates(task: ChooserTask):
                 not practice_area or practice_area_text_matches(practice_area, question)
             )
 
-        def history_matches_area() -> bool:
-            return not practice_area or all(
-                turn["role"] != "user"
-                or practice_area_text_matches(practice_area, turn["content"])
-                for turn in history
+        def conversation_matches_area(question: Optional[str]) -> bool:
+            # The user turns are read together, so a turn naming only a
+            # treatment the area shares ("will they cover my estradiol?")
+            # counts when another turn places it in the area.
+            return _usable_question(question) and (
+                not practice_area
+                or practice_area_texts_match(
+                    practice_area,
+                    [turn["content"] for turn in history if turn["role"] == "user"]
+                    + [question],
+                )
             )
 
         started = time.monotonic()
@@ -2424,7 +2430,7 @@ async def _generate_chat_candidates(task: ChooserTask):
             history, final_user_prompt = _parse_conversation(
                 conversation_response or ""
             )
-            if usable_for_area(final_user_prompt) and history_matches_area():
+            if conversation_matches_area(final_user_prompt):
                 logger.info(
                     f"ChooserTask {task.id}: conversation by "
                     f"{_model_display_name(writer)} ({len(history)} earlier "

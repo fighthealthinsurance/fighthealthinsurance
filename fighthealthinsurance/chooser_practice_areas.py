@@ -1,5 +1,5 @@
 import re
-from typing import Optional
+from typing import Optional, Sequence
 
 PRACTICE_AREAS = {
     "primary-care": "Primary care / general medicine",
@@ -149,8 +149,10 @@ _PRACTICE_AREA_TERMS = {
         "birth control",
     ),
     "gender-affirming-care": (
-        # Identity and diagnosis vocabulary. "trans" is a whole-word term
-        # (not "trans*") so transplant and transfusion stay out.
+        # Only gender-specific vocabulary; the treatments it shares with
+        # other specialties are in _PRACTICE_AREA_SHARED_TERMS. "trans" is
+        # a whole-word term (not "trans*") so transplant and transfusion
+        # stay out.
         "gender affirming",
         "gender affirmation",
         "gender confirming",
@@ -168,23 +170,6 @@ _PRACTICE_AREA_TERMS = {
         "non binary",
         "genderqueer",
         "wpath",
-        # Treatments: both the procedure and the diagnosis must match, so a
-        # shared term like "mastectomy" still needs a gender diagnosis.
-        "hormone therapy",
-        "hrt",
-        "estradiol",
-        "estrogen",
-        "testosterone",
-        "spironolactone",
-        "cyproterone",
-        "puberty blocker",
-        "puberty blockers",
-        "gnrh",
-        "leuprolide",
-        "lupron",
-        "triptorelin",
-        "histrelin",
-        "puberty suppression",
         "feminiz*",
         "masculiniz*",
         "top surgery",
@@ -192,14 +177,8 @@ _PRACTICE_AREA_TERMS = {
         "vaginoplasty",
         "phalloplasty",
         "metoidioplasty",
-        "orchiectom*",
-        "mastectom*",
-        "hysterectom*",
-        "breast augmentation",
         "tracheal shave",
         "chondrolaryngoplasty",
-        "electrolysis",
-        "hair removal",
     ),
     "pediatrics": (
         "pediatric*",
@@ -322,27 +301,35 @@ _PRACTICE_AREA_TERMS = {
 }
 
 
-# Vocabulary that rules text out of an area even when one of its terms
-# matches. Gender-affirming care shares treatment and hormone words with
-# other specialties ("mastectomy", "estrogen", "testosterone"), so without
-# this a mastectomy for estrogen-receptor-positive breast cancer, or
-# testosterone for hypogonadism, would pass as gender-affirming care.
-_PRACTICE_AREA_EXCLUDED_TERMS = {
+# Vocabulary an area shares with other specialties: it counts toward the
+# area only alongside one of the area's own terms (see
+# practice_area_texts_match). Gender-affirming care's hormones and surgeries
+# are also cancer, menopause and hypogonadism care, so "Mastectomy" for
+# "Estrogen-receptor-positive DCIS" must not pass as gender-affirming care,
+# while "Mastectomy" for "Gender dysphoria" must.
+_PRACTICE_AREA_SHARED_TERMS = {
     "gender-affirming-care": (
-        "cancer",
-        "carcinoma",
-        "malignan*",
-        "tumor",
-        "tumour",
-        "metasta*",
-        "neoplas*",
-        "oncolog*",
-        "lymphoma",
-        "leukemia",
-        "sarcoma",
-        "hypogonad*",
-        "low testosterone",
-        "testosterone deficiency",
+        "hormone therapy",
+        "hrt",
+        "estradiol",
+        "estrogen",
+        "testosterone",
+        "spironolactone",
+        "cyproterone",
+        "puberty blocker",
+        "puberty blockers",
+        "puberty suppression",
+        "gnrh",
+        "leuprolide",
+        "lupron",
+        "triptorelin",
+        "histrelin",
+        "orchiectom*",
+        "mastectom*",
+        "hysterectom*",
+        "breast augmentation",
+        "electrolysis",
+        "hair removal",
     ),
 }
 
@@ -359,17 +346,35 @@ def _has_any_term(terms: tuple, tokens: set, normalized: str) -> bool:
     return False
 
 
-def practice_area_text_matches(raw_area: object, text: object) -> bool:
-    """Whether generated text contains vocabulary for the requested area."""
-    area = normalize_practice_area(raw_area)
-    if area is None or not isinstance(text, str):
-        return False
+def _normalized(text: str) -> tuple:
+    """The text's lowercase word tokens, and those words space-joined."""
     words = re.findall(r"[a-z0-9]+", text.casefold())
-    tokens = set(words)
-    normalized = f" {' '.join(words)} "
-    if _has_any_term(_PRACTICE_AREA_EXCLUDED_TERMS.get(area, ()), tokens, normalized):
+    return set(words), f" {' '.join(words)} "
+
+
+def practice_area_texts_match(raw_area: object, texts: Sequence[object]) -> bool:
+    """Whether generated texts that describe one case (a procedure and a
+    diagnosis, or a conversation's user turns) all belong to the requested
+    area: each must contain the area's vocabulary, and at least one must
+    contain a term of the area's own rather than one it shares."""
+    area = normalize_practice_area(raw_area)
+    if area is None or not texts or not all(isinstance(t, str) for t in texts):
         return False
-    return _has_any_term(_PRACTICE_AREA_TERMS[area], tokens, normalized)
+    own = _PRACTICE_AREA_TERMS[area]
+    shared = _PRACTICE_AREA_SHARED_TERMS.get(area, ())
+    anchored = False
+    for text in texts:
+        tokens, normalized = _normalized(str(text))
+        if _has_any_term(own, tokens, normalized):
+            anchored = True
+        elif not _has_any_term(shared, tokens, normalized):
+            return False
+    return anchored
+
+
+def practice_area_text_matches(raw_area: object, text: object) -> bool:
+    """Whether one piece of generated text belongs to the requested area."""
+    return practice_area_texts_match(raw_area, [text])
 
 
 def normalize_practice_area(raw: object) -> Optional[str]:

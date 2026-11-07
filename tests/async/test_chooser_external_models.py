@@ -20,7 +20,10 @@ from django.test import override_settings
 from prometheus_client import REGISTRY
 
 from fighthealthinsurance import chooser_tasks
-from fighthealthinsurance.chooser_practice_areas import practice_area_text_matches
+from fighthealthinsurance.chooser_practice_areas import (
+    practice_area_text_matches,
+    practice_area_texts_match,
+)
 from fighthealthinsurance.chooser_tasks import (
     _external_backends_without_fresh_tasks,
     _forced_arena_models,
@@ -748,31 +751,85 @@ def test_womens_health_matching_handles_ob_gyn_but_not_cervical_spine():
 
 
 
-def test_gender_affirming_care_matching_covers_treatments_and_diagnoses():
+def test_gender_affirming_care_matching_covers_gender_specific_text():
     area = "gender-affirming-care"
     assert practice_area_text_matches(area, "Vaginoplasty")
     assert practice_area_text_matches(area, "Gender dysphoria (F64.0)")
+    assert practice_area_text_matches(area, "F64.0")
     assert practice_area_text_matches(area, "Gender-affirming hormone therapy")
     assert practice_area_text_matches(area, "My insurer denied my top surgery")
     assert practice_area_text_matches(area, "I'm a trans woman on estradiol")
-    assert practice_area_text_matches(area, "Puberty blockers")
-    assert practice_area_text_matches(area, "F64.0")
-    assert practice_area_text_matches(area, "Spironolactone")
-    assert practice_area_text_matches(area, "Leuprolide (Lupron Depot)")
-    assert practice_area_text_matches(area, "GnRH agonist")
+
+
+@pytest.mark.parametrize(
+    "procedure",
+    [
+        "Spironolactone",
+        "Leuprolide (Lupron Depot)",
+        "GnRH agonist",
+        "Puberty blockers",
+        "Bilateral mastectomy",
+        "Testosterone cypionate",
+    ],
+)
+def test_gender_affirming_care_shared_treatment_matches_with_gender_diagnosis(
+    procedure,
+):
+    assert practice_area_texts_match(
+        "gender-affirming-care", [procedure, "Gender dysphoria"]
+    )
+
+
+@pytest.mark.parametrize(
+    "procedure, diagnosis",
+    [
+        ("Mastectomy", "Estrogen-receptor-positive DCIS"),
+        ("Mastectomy", "Estrogen-receptor-positive breast cancer"),
+        ("Testosterone therapy", "Male hypogonadism (low testosterone)"),
+        ("Hysterectomy", "Estrogen-dependent endometriosis"),
+        ("Leuprolide", "Prostate cancer"),
+    ],
+)
+def test_gender_affirming_care_shared_treatment_needs_gender_context(
+    procedure, diagnosis
+):
+    assert not practice_area_texts_match(
+        "gender-affirming-care", [procedure, diagnosis]
+    )
+
+
+def test_gender_affirming_care_shared_term_alone_is_not_enough():
+    assert not practice_area_text_matches("gender-affirming-care", "Estradiol")
+
+
+def test_gender_affirming_care_case_that_mentions_cancer_still_matches():
+    assert practice_area_texts_match(
+        "gender-affirming-care",
+        [
+            "Mastectomy with chest masculinization",
+            "Gender dysphoria; family history of breast cancer",
+        ],
+    )
+
+
+def test_gender_affirming_care_user_turns_are_read_together():
+    assert practice_area_texts_match(
+        "gender-affirming-care",
+        ["I'm trans and just started HRT.", "Will my plan cover estradiol?"],
+    )
 
 
 def test_practice_area_wildcard_terms_are_single_words():
     # A wildcard is matched against one token at a time, so a prefix with a
     # space in it ("puberty blocker*") could never match anything.
     from fighthealthinsurance.chooser_practice_areas import (
-        _PRACTICE_AREA_EXCLUDED_TERMS,
+        _PRACTICE_AREA_SHARED_TERMS,
         _PRACTICE_AREA_TERMS,
     )
 
     multiword_wildcards = [
         term
-        for vocabulary in (_PRACTICE_AREA_TERMS, _PRACTICE_AREA_EXCLUDED_TERMS)
+        for vocabulary in (_PRACTICE_AREA_TERMS, _PRACTICE_AREA_SHARED_TERMS)
         for terms in vocabulary.values()
         for term in terms
         if term.endswith("*") and " " in term
@@ -785,17 +842,6 @@ def test_gender_affirming_care_matching_skips_transplants_and_transfusions():
     assert not practice_area_text_matches(area, "Kidney transplant")
     assert not practice_area_text_matches(area, "Blood transfusion for anemia")
 
-
-def test_gender_affirming_care_matching_skips_cancer_and_hypogonadism():
-    area = "gender-affirming-care"
-    assert not practice_area_text_matches(
-        area, "Estrogen-receptor-positive breast cancer"
-    )
-    assert not practice_area_text_matches(area, "Male hypogonadism (low testosterone)")
-    assert not practice_area_text_matches(area, "Leuprolide for prostate cancer")
-    assert not practice_area_text_matches(
-        area, "Estrogen-receptor-positive breast neoplasm"
-    )
 
 @pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
