@@ -2008,14 +2008,7 @@ class FindNextStepsHelper:
         elif emptied("diagnosis", diagnosis):
             denial.diagnosis = None
             changed_fields.add("diagnosis")
-        # Truthiness, not ``is not None``: an empty ModelMultipleChoiceField
-        # cleans to an empty queryset, and .set([]) would CLEAR the stored
-        # plan source (breaking Medicare detection downstream). Matches the
-        # ``if denial_type:`` guard below.
-        if plan_source:
-            denial.plan_source.set(plan_source)
-        elif emptied("plan_source", plan_source):
-            denial.plan_source.clear()
+        cls._save_review_choices(denial, denial_type, plan_source, shown_filled)
         if patient_health_history:
             denial.health_history = patient_health_history
             changed_fields.add("health_history")
@@ -2094,16 +2087,6 @@ class FindNextStepsHelper:
         if denial_type_text is not None:
             denial.denial_type_text = denial_type_text
             changed_fields.add("denial_type_text")
-        if denial_type:
-            if "denial_type" in shown_filled and not set(
-                denial.denial_type.values_list("pk", flat=True)
-            ) <= {chosen.pk for chosen in denial_type}:
-                # Unticked some: a later read of the letter can't add them back.
-                cls._note_cleared_on_review(denial, "denial_type")
-            denial.denial_type.set(denial_type)
-        elif emptied("denial_type", denial_type):
-            denial.denial_type.clear()
-
         # load_qa, not a bare json.loads: qa_context is a plain TextField and
         # historical rows hold free text -- a bare parse 500s the review POST
         # on exactly those denials (every other reader is already defensive).
@@ -2342,15 +2325,67 @@ class FindNextStepsHelper:
                 "the plan answers failed"
             )
 
+    @classmethod
+    def _save_review_choices(
+        cls,
+        denial: "Denial",
+        denial_type,
+        plan_source,
+        shown_filled: typing.Collection[str],
+    ) -> None:
+        """Save both lists under the row lock triage application also takes."""
+        if (
+            not denial_type
+            and not plan_source
+            and "denial_type" not in shown_filled
+            and "plan_source" not in shown_filled
+        ):
+            return
+        with transaction.atomic():
+            # A second review may have added a clear marker while this request
+            # waited for the lock; merge with that fresh state, not the page's.
+            denial.review_cleared = (
+                Denial.objects.select_for_update()
+                .filter(pk=denial.pk)
+                .values_list("review_cleared", flat=True)
+                .get()
+            )
+            # Truthiness, not ``is not None``: an empty ModelMultipleChoiceField
+            # cleans to an empty queryset, and .set([]) would CLEAR the stored
+            # plan source (breaking Medicare detection downstream). Only a list
+            # the page showed filled may be cleared by an empty submission.
+            if plan_source:
+                denial.plan_source.set(plan_source)
+            elif "plan_source" in shown_filled:
+                cls._note_cleared_on_review(denial, "plan_source")
+                denial.plan_source.clear()
+            if denial_type:
+                if "denial_type" in shown_filled and not set(
+                    denial.denial_type.values_list("pk", flat=True)
+                ) <= {chosen.pk for chosen in denial_type}:
+                    # Unticked some: a later read of the letter can't add them back.
+                    cls._note_cleared_on_review(denial, "denial_type")
+                denial.denial_type.set(denial_type)
+            elif "denial_type" in shown_filled:
+                cls._note_cleared_on_review(denial, "denial_type")
+                denial.denial_type.clear()
+
     @staticmethod
     def _note_cleared_on_review(denial: "Denial", field: str) -> None:
         """Add ``field`` to the review-page fields the person emptied, on the
         row at once (Denial.review_cleared)."""
-        names = set((denial.review_cleared or "").split()) | {field}
-        denial.review_cleared = f" {' '.join(sorted(names))} "
-        Denial.objects.filter(denial_id=denial.denial_id).update(
-            review_cleared=denial.review_cleared
-        )
+        with transaction.atomic():
+            stored = (
+                Denial.objects.select_for_update()
+                .filter(denial_id=denial.denial_id)
+                .values_list("review_cleared", flat=True)
+                .get()
+            )
+            names = set((stored or "").split()) | {field}
+            denial.review_cleared = f" {' '.join(sorted(names))} "
+            Denial.objects.filter(denial_id=denial.denial_id).update(
+                review_cleared=denial.review_cleared
+            )
 
     @classmethod
     def _maybe_dispatch_confirmed_speculative(
@@ -3126,6 +3161,11 @@ class DenialCreatorHelper:
         # finished flag go together or not at all, so the extraction gate
         # never sees the values cleared with the flag still set.
         with transaction.atomic():
+            # Match review and triage's lock order before deleting their
+            # relation rows, so a concurrent letter replacement cannot deadlock.
+            Denial.objects.select_for_update().filter(pk=denial.pk).values_list(
+                "pk", flat=True
+            ).first()
             # Before the mirrors are cleared below, and in the database rather
             # than on this request's copy, so a value the person typed while
             # this request ran is compared as it stands. NULL never equals
@@ -5030,7 +5070,8 @@ class DenialCreatorHelper:
         Here the bar is ml/denial_triage.APPLY_CONFIDENCE, and only what the
         case lacks is added: denial types it does not already have (from any
         source, or the type would be listed, and its questions asked, twice),
-        and a plan source only when it has none. Each row carries the
+        and a plan source only when it has none. If the case has reached
+        review, choices cleared there stay cleared. Each row carries the
         ``typesafe`` source, so a replaced letter's sweep takes it away
         (_invalidate_denial_text_artifacts); rows added while the letter was
         replaced, or the person withdrew external-model consent, are removed
@@ -5044,52 +5085,90 @@ class DenialCreatorHelper:
         )
         if not suggested.denial_type_names and not suggested.plan_source_name:
             return 0
-        letter = denial.denial_text
-        src, _ = await DataSource.objects.aget_or_create(
-            name=denial_triage.TRIAGE_DATA_SOURCE
+        return cast(
+            int,
+            await database_sync_to_async(cls._store_triage_suggestions)(
+                denial_id, suggested, denial.denial_text
+            ),
         )
-        type_pks: list[int] = []
-        source_pks: list[int] = []
-        if suggested.denial_type_names:
-            have = {
-                pk
-                async for pk in DenialTypesRelation.objects.filter(
-                    denial=denial
-                ).values_list("denial_type_id", flat=True)
-            }
-            async for denial_type in DenialTypes.objects.filter(
-                name__in=suggested.denial_type_names
-            ):
-                if denial_type.pk in have:
-                    continue
-                relation = await DenialTypesRelation.objects.acreate(
-                    denial=denial, denial_type=denial_type, src=src
-                )
-                type_pks.append(relation.pk)
-        if (
-            suggested.plan_source_name
-            and not await PlanSourceRelation.objects.filter(denial=denial).aexists()
-        ):
-            plan_source = await PlanSource.objects.filter(
-                name=suggested.plan_source_name
-            ).afirst()
-            if plan_source is not None:
-                source_relation = await PlanSourceRelation.objects.acreate(
-                    denial=denial, plan_source=plan_source, src=src
-                )
-                source_pks.append(source_relation.pk)
-        if (type_pks or source_pks) and not await Denial.objects.filter(
-            denial_id=denial_id, denial_text=letter, use_external=True
-        ).aexists():
-            await DenialTypesRelation.objects.filter(pk__in=type_pks).adelete()
-            await PlanSourceRelation.objects.filter(pk__in=source_pks).adelete()
-            logger.info(
-                f"apply_triage_suggestions({denial_id}): the letter was replaced "
-                "or consent withdrawn while its suggestions were stored; "
-                "removed them"
+
+    @classmethod
+    def _store_triage_suggestions(
+        cls, denial_id, suggested: denial_triage.Suggestions, letter
+    ) -> int:
+        """Store suggestions under the same Denial row lock review saves use.
+
+        Django 5.2 transactions cannot wrap awaited ORM calls, so the caller
+        runs this short, ORM-only transaction through database_sync_to_async.
+        """
+        with transaction.atomic():
+            denial = Denial.objects.select_for_update().get(denial_id=denial_id)
+            src, _ = DataSource.objects.get_or_create(
+                name=denial_triage.TRIAGE_DATA_SOURCE
             )
-            return 0
-        return len(type_pks) + len(source_pks)
+            type_pks: list[int] = []
+            source_pks: list[int] = []
+            if suggested.denial_type_names and not denial.cleared_on_review(
+                "denial_type"
+            ):
+                have = set(
+                    DenialTypesRelation.objects.filter(denial=denial).values_list(
+                        "denial_type_id", flat=True
+                    )
+                )
+                for denial_type in DenialTypes.objects.filter(
+                    name__in=suggested.denial_type_names
+                ):
+                    if denial_type.pk in have:
+                        continue
+                    relation = DenialTypesRelation.objects.create(
+                        denial=denial, denial_type=denial_type, src=src
+                    )
+                    type_pks.append(relation.pk)
+            if (
+                suggested.plan_source_name
+                and not denial.cleared_on_review("plan_source")
+                and not PlanSourceRelation.objects.filter(denial=denial).exists()
+            ):
+                plan_source = PlanSource.objects.filter(
+                    name=suggested.plan_source_name
+                ).first()
+                if plan_source is not None:
+                    source_relation = PlanSourceRelation.objects.create(
+                        denial=denial, plan_source=plan_source, src=src
+                    )
+                    source_pks.append(source_relation.pk)
+            if (type_pks or source_pks) and not Denial.objects.filter(
+                denial_id=denial_id, denial_text=letter, use_external=True
+            ).exists():
+                DenialTypesRelation.objects.filter(pk__in=type_pks).delete()
+                PlanSourceRelation.objects.filter(pk__in=source_pks).delete()
+                logger.info(
+                    f"apply_triage_suggestions({denial_id}): the letter was replaced "
+                    "or consent withdrawn while its suggestions were stored; "
+                    "removed them"
+                )
+                return 0
+            # Review saves take the same row lock. Keep this post-insert check
+            # for any clear from a path that does not, and remove only this
+            # run's additions, never the person's other choices.
+            if (
+                type_pks
+                and not Denial.objects.filter(
+                    Denial.not_cleared_on_review("denial_type"), denial_id=denial_id
+                ).exists()
+            ):
+                DenialTypesRelation.objects.filter(pk__in=type_pks).delete()
+                type_pks = []
+            if (
+                source_pks
+                and not Denial.objects.filter(
+                    Denial.not_cleared_on_review("plan_source"), denial_id=denial_id
+                ).exists()
+            ):
+                PlanSourceRelation.objects.filter(pk__in=source_pks).delete()
+                source_pks = []
+            return len(type_pks) + len(source_pks)
 
     @classmethod
     async def extract_set_regulator(cls, denial_id, ask_model: bool = True) -> str:
