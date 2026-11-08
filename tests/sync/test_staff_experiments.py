@@ -38,10 +38,20 @@ class ExperimentsPageTest(TestCase):
         missing = [e.setting for e in EXPERIMENTS if e.setting not in body]
         self.assertEqual(missing, [])
 
-    @override_settings(TYPESAFE_LETTER_RANKING_ENABLED=True, TYPESAFE_API_KEY=None)
+    @override_settings(
+        TYPESAFE_LETTER_RANKING_ENABLED=True,
+        TYPESAFE_API_KEY=None,
+        OPENCODE_TOKEN=None,
+    )
     def test_a_set_flag_missing_its_key_says_which_setting_is_unset(self):
+        response = self._get()
         self.assertContains(
-            self._get(), "Not in effect: unset <code>TYPESAFE_API_KEY</code>."
+            response,
+            "Not in effect: unset <code>TYPESAFE_API_KEY</code>, <code>OPENCODE_TOKEN</code>.",
+        )
+        self.assertContains(
+            response,
+            "Needs: <code>TYPESAFE_API_KEY</code> or <code>OPENCODE_TOKEN</code>",
         )
 
     @override_settings(

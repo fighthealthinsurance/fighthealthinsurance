@@ -1,14 +1,11 @@
-"""OpenCode JEV and regular-model routing stays ordered and hermetic."""
+"""OpenCode JEV routing stays ordered and hermetic."""
 
-import os
 from unittest.mock import patch
 
 import pytest
 from django.test import override_settings
 
-from fighthealthinsurance.ml import spend, typesafe
-from fighthealthinsurance.ml.ml_models import DeepInfra, OpenCode
-from fighthealthinsurance.ml.ml_router import MLRouter
+from fighthealthinsurance.ml import typesafe
 
 
 class _Response:
@@ -103,38 +100,15 @@ def test_custom_jev_model_is_not_enabled_by_opencode_token_alone():
         assert not typesafe.configured()
 
 
-def test_regular_flash_model_orders_free_opencode_before_deepinfra():
-    env = {"OPENCODE_TOKEN": "open-test-token", "DEEPINFRA_API": "deep-test-token"}
-    with patch.dict(os.environ, env, clear=False):
-        router = MLRouter()
-
-    backends = router.models_by_name[OpenCode.FLASH_NAME]
-    assert [type(backend) for backend in backends] == [OpenCode, DeepInfra]
-    assert [backend.model for backend in backends] == [
-        OpenCode.FLASH_MODEL,
-        OpenCode.FLASH_NAME,
-    ]
-
-
-def test_the_flash_roster_name_is_not_shadowed_by_a_chat_only_registration():
-    """Chat resolves the name through the ordered general pool: the free
-    OpenCode instance first, DeepInfra as the failure fallback. A chat-only
-    registration would bill DeepInfra while the free endpoint is healthy."""
-    env = {"OPENCODE_TOKEN": "open-test-token", "DEEPINFRA_API": "deep-test-token"}
-    with patch.dict(os.environ, env, clear=False):
-        router = MLRouter()
-    assert OpenCode.FLASH_NAME not in router.chat_outside_models_by_name
-    candidates = [m for m in router.models_by_name[OpenCode.FLASH_NAME] if m.external]
-    assert [type(backend) for backend in candidates] == [OpenCode, DeepInfra]
-
-
-def test_a_whitespace_only_token_is_rejected_like_a_missing_one():
-    """config_status reports it as missing_credentials; the constructor must
-    not accept what the status page calls missing."""
-    with patch.dict(os.environ, {"OPENCODE_TOKEN": "   "}, clear=False):
-        assert OpenCode.config_status()[0] == "missing_credentials"
-        with pytest.raises(Exception, match="No token found for OpenCode"):
-            OpenCode(OpenCode.FLASH_MODEL)
+def test_a_whitespace_only_opencode_token_does_not_enable_jev():
+    with override_settings(
+        OPENCODE_TOKEN="   ",
+        TYPESAFE_API_KEY=None,
+        TYPESAFE_MODEL=typesafe.DEFAULT_MODEL,
+    ):
+        assert not typesafe.configured()
+        assert not typesafe.opencode_route()
+        assert typesafe.skip_reason() == typesafe.NO_KEY
 
 
 @pytest.mark.asyncio

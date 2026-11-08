@@ -65,7 +65,6 @@ NEW_SAME_PATH = {
 GEMMA = "google/gemma-4-26B-A4B-it"
 DEEPSEEK = "deepseek-ai/DeepSeek-V4-Pro-0813"
 NEMOTRON = "nvidia/NVIDIA-Nemotron-3.5-Super-VL"
-FLASH = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
 
 
 def _is_routing_setting(name: str) -> bool:
@@ -126,10 +125,7 @@ class StatusPageTestCase(TestCase):
 
     def row(self, response, name):
         rows = [r for r in response.context["rows"] if r["model_name"] == name]
-        # Two providers can share a name (OpenCode's free copy of the 1017
-        # Flash and DeepInfra's paid one): the routed row sorts first, and
-        # the tests this helper serves read the routed one.
-        self.assertGreaterEqual(len(rows), 1, name)
+        self.assertEqual(len(rows), 1, name)
         return rows[0]
 
     # The table's columns after Model, where a row search starts.
@@ -301,7 +297,9 @@ class ModelBackendStatusContentTest(StatusPageTestCase):
         health = self.cell(response, name, "Last health check")
         self.assertIn("not checked", health)
         self.assertNotIn("NOT_CONFIGURED", health)
-        self.assertIn("ANTHROPIC_API_KEY not set", self.cell(response, name, "Config"))
+        self.assertIn(
+            "ANTHROPIC_API_KEY not set", self.cell(response, name, "Config")
+        )
 
 
 MAY = "fhi-2025-may-0.3-float16-q8-vllm-compressed"
@@ -411,14 +409,10 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.configure(**DEEPINFRA)
         response = self.get_page()
         routing = response.context["routing"]
-        # The 1017 Flash joined the general pool on 2026-10-31 (OpenCode's
-        # free copy shares the name): ranked between the Pro and Gemma.
         self.assertEqual(
             [name for name, _quality in routing.top_external],
-            [NEMOTRON, DEEPSEEK, FLASH],
+            [NEMOTRON, DEEPSEEK, GEMMA],
         )
-        flash = self.row(response, FLASH)
-        self.assertEqual(flash["quality"], 82)
         gemma = self.row(response, GEMMA)
         self.assertEqual((gemma["quality"], gemma["kind"]), (80, "external"))
         self.assertEqual(gemma["tier"], "")
@@ -636,9 +630,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 "azure-anthropic/claude-opus-4-8",
                 "anthropic/claude-sonnet-4-6",
                 DEEPSEEK,
-                # Quality 82, the default for a model DeepInfra does not
-                # list: the 1017 Flash is one of its general models now, and
-                # the chat-only roster sorts with them.
+                # DeepInfra's chat-only models (quality 82, the default for
+                # a model it does not list), then by name.
                 "Qwen/Qwen3.8-Max",
                 "deepseek-ai/DeepSeek-V4.1-Flash-1017",
                 "mistralai/Mistral-Small-3.2-24B-Instruct-2506",
@@ -652,11 +645,10 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 "azure-openai/gpt-5.5",
                 # Retired.
                 "fhi-2025-may-0.3-float16-q8-vllm-compressed",
-                # Not configured here (no OPENCODE_TOKEN, LUNA_ROUTE_KEY or
-                # OPENROUTER_API_KEY): OpenCode's free Flash copy, LunaRoute's
-                # arena models and OpenRouter's models and web search are off.
+                # Not configured here (no LUNA_ROUTE_KEY, no
+                # OPENROUTER_API_KEY): off. LunaRoute's arena models and
+                # OpenRouter's, its web search included.
                 "openrouter/anthropic/claude-sonnet-5.5",
-                "deepseek-ai/DeepSeek-V4.1-Flash-1017",
                 "lunaroute/deepseek-4.1-flash",
                 "lunaroute/glm-5.3",
                 "openrouter-web-search",

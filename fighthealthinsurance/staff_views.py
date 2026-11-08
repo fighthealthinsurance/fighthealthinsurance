@@ -759,8 +759,8 @@ class AdminStatusView(generic.TemplateView):
         model and endpoint every request names, why this pod is skipping it
         right now if it is, each use's switch and last outcome, and the
         newest deploy-time probe (ModelUsageDashboardView._jev_panel). One
-        level for the badge: ``not_configured`` without TYPESAFE_API_KEY,
-        ``skipped`` when configured but ask() would refuse (a spent or
+        level for the badge: ``not_configured`` without OPENCODE_TOKEN or
+        TYPESAFE_API_KEY, ``skipped`` when configured but ask() would refuse (a spent or
         paused budget, a cooldown, a refused setting), for every use
         (``skip``) or for every use whose switch is on (``uses_skip``: a
         use's own budget, such as chat's share, can be spent while the
@@ -1816,7 +1816,7 @@ class AdminStatusView(generic.TemplateView):
             from fighthealthinsurance.letter_quality_metrics import WINDOW
             from fighthealthinsurance.models import ExternalServiceHealth
 
-            out["key_present"] = bool(getattr(settings, "TYPESAFE_API_KEY", None))
+            out["key_present"] = typesafe.configured()
             out["flag_on"] = bool(
                 getattr(settings, "TYPESAFE_LETTER_RANKING_ENABLED", False)
             )

@@ -4,7 +4,7 @@ An experiment is a setting in settings.py that is read from the
 environment, off by default, and gates an unfinished feature (AGENTS.md).
 Each entry says what its flag turns on and what else must be set before it
 does anything, so the page can tell a flag that is on from one that is set
-but inert (a TypeSafe switch without TYPESAFE_API_KEY, say).
+but inert (a Jev switch without OPENCODE_TOKEN or TYPESAFE_API_KEY, say).
 
 scripts/run_local.sh keeps its own EXPERIMENTAL_FLAGS list for
 --all-experiments, since a shell script can't import this;
@@ -32,7 +32,7 @@ MCP = "AI assistants (MCP)"
 MODELS = "Models and chat"
 TEMPORAL = "Temporal (needs a Temporal server and worker)"
 
-_TYPESAFE_KEY = ("TYPESAFE_API_KEY",)
+_TYPESAFE_KEY = ("TYPESAFE_API_KEY", "OPENCODE_TOKEN")
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,9 @@ class Experiment:
     # Other settings that must be set as well before this one does anything.
     # Only their names are ever shown, never their values (some are keys).
     needs: Tuple[str, ...] = ()
+    # Alternative settings: at least one must be set. For Jev, either provider
+    # credential enables the feature; no credential lists both as missing.
+    needs_any: Tuple[str, ...] = ()
     # Dotted path to the function the code itself asks whether the feature
     # is live, where there is one. ON needs it and every name in needs.
     live_check: Optional[str] = None
@@ -166,7 +169,7 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
         "Jev checks our own chat reply before the paid outside models are "
         "asked, in chats that allowed outside models.",
         MODELS,
-        needs=_TYPESAFE_KEY,
+        needs_any=_TYPESAFE_KEY,
         live_check="fighthealthinsurance.ml.chat_gate.enabled",
     ),
     Experiment(
@@ -174,7 +177,7 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
         "Letter scoring (Jev)",
         "Jev scores appeal drafts so they can be ranked.",
         MODELS,
-        needs=_TYPESAFE_KEY,
+        needs_any=_TYPESAFE_KEY,
         live_check="fighthealthinsurance.ml.letter_quality.enabled",
     ),
     Experiment(
@@ -183,7 +186,7 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
         "Jev triages each denial letter. Also the kill switch for triages "
         "already stored.",
         MODELS,
-        needs=_TYPESAFE_KEY,
+        needs_any=_TYPESAFE_KEY,
         live_check="fighthealthinsurance.ml.denial_triage.enabled",
     ),
     Experiment(
@@ -192,7 +195,8 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
         "Readers are told the appeal deadline triage read from their letter, "
         "on the review and questions pages and in the REST triage field.",
         MODELS,
-        needs=_TYPESAFE_KEY + ("TYPESAFE_DENIAL_TRIAGE_ENABLED",),
+        needs_any=_TYPESAFE_KEY,
+        needs=("TYPESAFE_DENIAL_TRIAGE_ENABLED",),
     ),
     Experiment(
         "TYPESAFE_RESEARCH_JUDGING_ENABLED",
@@ -200,7 +204,7 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
         "Jev judges each PubMed article against the denial's treatment; off "
         "topic or contrary articles are left out of the appeal's research.",
         MODELS,
-        needs=_TYPESAFE_KEY,
+        needs_any=_TYPESAFE_KEY,
         live_check="fighthealthinsurance.ml.research_judging.enabled",
     ),
     Experiment(
@@ -210,7 +214,8 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
         "appeal, for people who allowed outside models. Off, one of our own "
         "models decides.",
         MODELS,
-        needs=_TYPESAFE_KEY + ("FHI_FOLLOWUP_QUESTIONS_ENABLED",),
+        needs_any=_TYPESAFE_KEY,
+        needs=("FHI_FOLLOWUP_QUESTIONS_ENABLED",),
         live_check="fighthealthinsurance.ml.followup_questions.jev_enabled",
     ),
     Experiment(
@@ -220,7 +225,7 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
         "dashboard, in chats that allowed outside models. Never on the "
         "reply's own path.",
         MODELS,
-        needs=_TYPESAFE_KEY,
+        needs_any=_TYPESAFE_KEY,
         live_check="fighthealthinsurance.ml.chat_shadow.enabled",
     ),
     Experiment(
@@ -293,6 +298,10 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
 
 def _state(experiment: Experiment) -> Dict[str, Any]:
     missing = [name for name in experiment.needs if not getattr(settings, name, None)]
+    if experiment.needs_any and not any(
+        getattr(settings, name, None) for name in experiment.needs_any
+    ):
+        missing.extend(experiment.needs_any)
     row: Dict[str, Any] = {
         "experiment": experiment,
         "state": ON,

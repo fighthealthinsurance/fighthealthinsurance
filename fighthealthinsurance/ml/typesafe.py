@@ -292,10 +292,7 @@ NO_KEY = (
 def configured() -> bool:
     if model_name() != DEFAULT_MODEL:
         return bool(getattr(settings, "TYPESAFE_API_KEY", None))
-    return bool(
-        getattr(settings, "OPENCODE_TOKEN", None)
-        or getattr(settings, "TYPESAFE_API_KEY", None)
-    )
+    return opencode_route() or bool(getattr(settings, "TYPESAFE_API_KEY", None))
 
 
 def model_name() -> str:
@@ -309,9 +306,8 @@ def opencode_route() -> bool:
     the pinned base release, the only one OpenCode serves. That route is
     free, spends no TypeSafe budget, and a TypeSafe cooldown refuses only the
     premium attempt, so none of those states holds it back."""
-    return bool(getattr(settings, "OPENCODE_TOKEN", None)) and (
-        model_name() == DEFAULT_MODEL
-    )
+    token = getattr(settings, "OPENCODE_TOKEN", None)
+    return bool(token and str(token).strip()) and model_name() == DEFAULT_MODEL
 
 
 def settings_problem() -> typing.Optional[str]:
@@ -517,6 +513,8 @@ async def ask(
                     if is_premium:
                         _end_cooldown()
                     payload = await response.json()
+                    if not isinstance(payload, dict):
+                        raise ValueError("response was not a JSON object")
                     answered_model = model
                     break
         except (

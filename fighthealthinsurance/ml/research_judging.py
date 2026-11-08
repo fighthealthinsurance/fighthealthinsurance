@@ -22,9 +22,9 @@ diagnosis), never the letter or anything about the person. The treatment
 and condition are health data about the case, so a request is only sent
 with the person's external-model consent (``denial.use_external``). A stored
 judgment names no person and no case (PubMedArticleJudgment), so it is read
-for any case about the same treatment and condition. Inert until both
-``TYPESAFE_API_KEY`` and ``TYPESAFE_RESEARCH_JUDGING_ENABLED`` are set;
-fails closed; never logs the text.
+for any case about the same treatment and condition. Inert until
+``TYPESAFE_RESEARCH_JUDGING_ENABLED`` and either ``OPENCODE_TOKEN`` or
+``TYPESAFE_API_KEY`` are set; fails closed; never logs the text.
 
 Our own models can answer the same three questions (``judge_article_with``):
 asked for a likelihood of each, as a whole number out of 100, and read

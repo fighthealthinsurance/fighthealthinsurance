@@ -18,7 +18,10 @@ from fighthealthinsurance.experiments import EXPERIMENTS, INERT, OFF, ON, UNKNOW
 
 _WITH_LIVE_CHECK = [e for e in EXPERIMENTS if e.live_check]
 # Every setting the registry names, as a flag or as a need.
-_KNOWN = sorted({e.setting for e in EXPERIMENTS} | {n for e in EXPERIMENTS for n in e.needs})
+_KNOWN = sorted(
+    {e.setting for e in EXPERIMENTS}
+    | {n for e in EXPERIMENTS for n in e.needs + e.needs_any}
+)
 
 
 def _row(setting):
@@ -59,7 +62,9 @@ def test_needs_list_everything_the_live_check_requires(experiment):
     without naming what is missing. Starting from off matters, since the
     test configuration inherits Dev, which turns some MCP flags on."""
     overrides = {name: _falsy(name) for name in _KNOWN}
-    overrides.update({name: _truthy(name) for name in experiment.needs})
+    overrides.update(
+        {name: _truthy(name) for name in experiment.needs + experiment.needs_any}
+    )
     overrides[experiment.setting] = True
     with override_settings(**overrides):
         assert _row(experiment.setting)["state"] == ON
@@ -70,15 +75,32 @@ def test_an_unset_flag_reads_off():
     assert _row("TYPESAFE_LETTER_RANKING_ENABLED")["state"] == OFF
 
 
-@override_settings(TYPESAFE_LETTER_RANKING_ENABLED=True, TYPESAFE_API_KEY=None)
-def test_a_flag_without_its_key_reads_inert_and_names_the_key():
+@override_settings(
+    TYPESAFE_LETTER_RANKING_ENABLED=True,
+    TYPESAFE_API_KEY=None,
+    OPENCODE_TOKEN=None,
+)
+def test_a_flag_without_either_key_reads_inert_and_names_both():
     row = _row("TYPESAFE_LETTER_RANKING_ENABLED")
-    assert (row["state"], row["missing"]) == (INERT, ["TYPESAFE_API_KEY"])
+    assert (row["state"], row["missing"]) == (
+        INERT,
+        ["TYPESAFE_API_KEY", "OPENCODE_TOKEN"],
+    )
 
 
 @override_settings(TYPESAFE_LETTER_RANKING_ENABLED=True, TYPESAFE_API_KEY="k")
 def test_a_flag_with_its_key_reads_on():
     assert _row("TYPESAFE_LETTER_RANKING_ENABLED")["state"] == ON
+
+
+@override_settings(
+    TYPESAFE_LETTER_RANKING_ENABLED=True,
+    TYPESAFE_API_KEY=None,
+    OPENCODE_TOKEN="open-test-token",
+)
+def test_a_flag_with_only_the_opencode_key_reads_on():
+    row = _row("TYPESAFE_LETTER_RANKING_ENABLED")
+    assert (row["state"], row["missing"]) == (ON, [])
 
 
 @override_settings(

@@ -43,10 +43,11 @@ through; a one-word name is only caught in its Capitalised and ALL-CAPS
 spellings. A draft is not clean by construction either -- the
 generation prompt asks the model to "include and fill in" the patient's and
 professional's details. So the gate for turning this on is contractual, not
-technical: TypeSafe must be under the same data terms as the other providers
-and named in the privacy policy first. If collecting the identifiers fails,
-scoring is off for the run. The module is inert until BOTH
-``TYPESAFE_API_KEY`` and ``TYPESAFE_LETTER_RANKING_ENABLED`` are set, and it
+technical: the scoring provider must be under the same data terms as the
+other providers and named in the privacy policy first. If collecting the
+identifiers fails, scoring is off for the run. The module is inert until
+``TYPESAFE_LETTER_RANKING_ENABLED`` and either ``OPENCODE_TOKEN`` or
+``TYPESAFE_API_KEY`` are set, and it
 fails closed: any error, timeout or malformed answer means "no score", never a
 broken stream and never a logged document.
 """

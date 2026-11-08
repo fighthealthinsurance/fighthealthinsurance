@@ -186,7 +186,6 @@ such as `sonar` are not listed in that line.
 | Azure AI Foundry (Claude) | `RemoteAzureClaude` | `AZURE_ANTHROPIC_API_KEY`, `AZURE_ANTHROPIC_ENDPOINT` | `azure-anthropic/` |
 | Anthropic (direct) | `RemoteAnthropic` | `ANTHROPIC_API_KEY` | `anthropic/` |
 | DeepInfra | `DeepInfra` | `DEEPINFRA_API` | the model id |
-| OpenCode | `OpenCode` | `OPENCODE_TOKEN` | `deepseek-ai/DeepSeek-V4.1-Flash-1017` |
 | Perplexity (citations only) | `RemotePerplexity` | `PERPLEXITY_API` | `sonar` |
 | LunaRoute (Appeal Arena only) | `LunaRoute` | `LUNA_ROUTE_KEY` | `lunaroute/` |
 | OpenRouter | `OpenRouter` | `OPENROUTER_API_KEY` | `openrouter/` |
@@ -265,14 +264,6 @@ citations to an appeal ([`ml/web_search_context.py`](../fighthealthinsurance/ml/
   `OPENROUTER_WEB_SEARCH_MAX_RESULTS` (1-25, default 5) sets how many pages
   a search returns. Each search costs OpenRouter's search fee on top of the
   model's tokens (about a cent).
-
-OpenCode supplies the free `deepseek-v4.1-flash-free` endpoint under the same
-friendly name as DeepInfra's DeepSeek V4.1 Flash. The router orders the free
-OpenCode instance first and DeepInfra's paid copy second, so a call OpenCode
-cannot take (no token, a submit error, no futures) goes to DeepInfra instead.
-Once OpenCode has accepted a call, its futures are awaited like any other
-backend's: an inference that fails after that fails over to the other models
-in the fan-out, not to DeepInfra's copy of the same model.
 
 **Fallback keys.** Every key above except LunaRoute's can be paired with a
 second key for the same provider, set as `SECONDARY_<name>` (`SECONDARY_ANTHROPIC_API_KEY`,

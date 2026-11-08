@@ -708,6 +708,26 @@ class TestPremiumFallback:
         assert len(free.posted) == 1 and len(premium.posted) == 1
         assert premium.posted[0][0] == "https://typesafe.invalid/v1/systemone"
 
+    def test_a_non_object_free_answer_falls_through_to_the_premium_attempt(self):
+        free = _FakeSession(200)
+
+        async def non_object_json():
+            return []
+
+        free.response.json = non_object_json
+        premium = _FakeSession()
+        sessions = [free, premium]
+
+        def factory(**kwargs):
+            return sessions.pop(0)
+
+        with override_settings(**self.CONF), patch.object(
+            typesafe.aiohttp, "ClientSession", factory
+        ):
+            payload = asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1))
+        assert payload["model"] == typesafe.DEFAULT_MODEL
+        assert len(free.posted) == 1 and len(premium.posted) == 1
+
     def test_a_nameless_free_answer_comes_back_named_for_provenance(self):
         """Downstream provenance (letter, triage and chat scores) reads
         payload["model"]: a free answer that names no model must come back
