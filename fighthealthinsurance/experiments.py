@@ -298,15 +298,20 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
 
 
 def _state(experiment: Experiment) -> Dict[str, Any]:
+    alternatives = experiment.needs_any
+    if alternatives == _TYPESAFE_KEY:
+        from fighthealthinsurance.ml import typesafe
+
+        if typesafe.model_name() != typesafe.DEFAULT_MODEL:
+            alternatives = ("TYPESAFE_API_KEY",)
     missing = [name for name in experiment.needs if not getattr(settings, name, None)]
-    if experiment.needs_any and not any(
-        getattr(settings, name, None) for name in experiment.needs_any
-    ):
-        missing.extend(experiment.needs_any)
+    if alternatives and not any(getattr(settings, name, None) for name in alternatives):
+        missing.extend(alternatives)
     row: Dict[str, Any] = {
         "experiment": experiment,
         "state": ON,
         "missing": missing,
+        "needs_any": alternatives,
         "error": None,
     }
     if not getattr(settings, experiment.setting, False):

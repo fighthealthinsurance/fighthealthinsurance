@@ -112,7 +112,8 @@ def test_a_flag_with_only_the_opencode_key_reads_on():
 )
 def test_deadlines_are_inert_when_triage_cannot_use_the_credential():
     row = _row("TYPESAFE_DEADLINE_SHOW_ENABLED")
-    assert (row["state"], row["missing"]) == (INERT, [])
+    assert (row["state"], row["missing"]) == (INERT, ["TYPESAFE_API_KEY"])
+    assert row["needs_any"] == ("TYPESAFE_API_KEY",)
 
 
 @override_settings(

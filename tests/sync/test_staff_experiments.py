@@ -55,6 +55,21 @@ class ExperimentsPageTest(TestCase):
         )
 
     @override_settings(
+        TYPESAFE_DEADLINE_SHOW_ENABLED=True,
+        TYPESAFE_DENIAL_TRIAGE_ENABLED=True,
+        TYPESAFE_MODEL="jev-custom",
+        OPENCODE_TOKEN="open-test-token",
+        TYPESAFE_API_KEY=None,
+    )
+    def test_a_custom_model_requires_only_the_typesafe_key(self):
+        response = self._get()
+        self.assertContains(
+            response, "Not in effect: unset <code>TYPESAFE_API_KEY</code>."
+        )
+        self.assertContains(response, "Needs: <code>TYPESAFE_API_KEY</code></div>")
+        self.assertNotContains(response, "Needs: <code>TYPESAFE_API_KEY</code> or")
+
+    @override_settings(
         TYPESAFE_LETTER_RANKING_ENABLED=True,
         TYPESAFE_API_KEY="sk-experiments-page-must-not-show-this",
         TEMPORAL_PAYLOAD_KEY="temporal-key-must-not-show-either",
