@@ -214,6 +214,8 @@
     </div>
   {% endif %}
 
+  <a class="back" href="{% url 'pro_signup_action' pro.id 'thankyou' %}">Send thank-you email</a>
+  <a class="back" href="{% url 'pro_signup_action' pro.id 'block' %}">Block address</a>
   <a class="back" href="{% url 'proconnector_process' %}">&larr; Pro Connector queue</a>
   <a class="back" href="{% url 'staff_dashboard' %}">&larr; Staff dashboard</a>
 

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title }}</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #ffffff;
+      color: #222222;
+    }
+    h1 {
+      color: #222222;
+      border-bottom: 2px solid #0056b3;
+      padding-bottom: 10px;
+    }
+    .signup-card {
+      background: #ffffff;
+      padding: 20px;
+      border: 1px solid #dddddd;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+    table.info {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    table.info th, table.info td {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid #eeeeee;
+      vertical-align: top;
+    }
+    table.info th {
+      width: 230px;
+      color: #444444;
+      white-space: nowrap;
+    }
+    .muted { color: #555555; font-style: italic; }
+    .blocked {
+      background: #e2e3e5;
+      border: 1px solid #c4c8cb;
+      border-radius: 4px;
+      padding: 12px 16px;
+      color: #2b2f32;
+    }
+    .error {
+      background: #f8d7da;
+      border: 1px solid #f5c2c7;
+      color: #842029;
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+    .notice {
+      background: #d1e7dd;
+      border: 1px solid #a3cfbb;
+      color: #0a3622;
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+    .hint { font-size: 0.9em; color: #444444; margin: 10px 0 0; }
+    button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 4px;
+      font-size: 15px;
+      cursor: pointer;
+      color: #ffffff;
+    }
+    button.thankyou { background-color: #0056b3; }
+    button.block { background-color: #b02a37; }
+    a { color: #0056b3; }
+    .links a { display: inline-block; margin: 10px 16px 0 0; }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+  {% if notice %}
+    <div class="notice">✅ {{ notice }} A note was replied to the signup's notification thread.</div>
+  {% endif %}
+
+  <div class="signup-card">
+    <h2>Signup #{{ pro.id }}</h2>
+    <table class="info">
+      <tr><th>Name</th><td>{% if pro.name %}{{ pro.name }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Email</th><td>{{ pro.email }}</td></tr>
+      <tr><th>Organization</th><td>{% if pro.business_name %}{{ pro.business_name }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Role / provider type</th><td>{% if pro.job_title_or_provider_type %}{{ pro.job_title_or_provider_type }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Most common denial</th><td>{% if pro.most_common_denial %}{{ pro.most_common_denial }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Comments</th><td>{% if pro.comments %}{{ pro.comments }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+      <tr><th>Signup date</th><td>{{ pro.signup_date }}</td></tr>
+    </table>
+  </div>
+
+  <div class="signup-card">
+    {% if block_reason %}
+      <div class="blocked">ℹ️ {{ block_reason }}</div>
+    {% elif action == "thankyou" %}
+      <p>Send {{ pro.email }} the "Thanks for your interest in our professional version" email.</p>
+      <form method="post">
+        {% csrf_token %}
+        <button type="submit" class="thankyou">Send thank-you email</button>
+      </form>
+    {% else %}
+      <p>Block {{ pro.email }}: nothing more is sent to this address (no thank-you, introduction or staff bulk email, and any queued email is dropped), and later submissions from it are logged and dropped without notifying the team.</p>
+      <form method="post">
+        {% csrf_token %}
+        <button type="submit" class="block">Block address</button>
+      </form>
+      <p class="hint">To undo a block, untick "Blocked" on the record in the Django admin.</p>
+    {% endif %}
+    <p class="hint">When done, a note is replied to the signup's notification thread so the rest of the team knows.</p>
+  </div>
+
+  <div class="links">
+    {% if action != "thankyou" %}<a href="{% url 'pro_signup_action' pro.id 'thankyou' %}">Send thank-you email</a>{% endif %}
+    <a href="{% url 'proconnector_quick_intro' pro.id %}">Send the Cofactor AI introduction</a>
+    {% if action != "block" %}<a href="{% url 'pro_signup_action' pro.id 'block' %}">Block address</a>{% endif %}
+    <a href="{% url 'admin:fighthealthinsurance_interestedprofessional_change' pro.id %}">Open in Django admin</a>
+    <a href="{% url 'staff_dashboard' %}">&larr; Staff dashboard</a>
+  </div>
+
+  <script>
+    // Guard against a double-click submitting the action twice.
+    (function () {
+      var form = document.querySelector("form");
+      if (!form) return;
+      var submitted = false;
+      form.addEventListener("submit", function (e) {
+        if (submitted) {
+          e.preventDefault();
+          return;
+        }
+        submitted = true;
+      });
+    })();
+  </script>
+</body>
+</html>

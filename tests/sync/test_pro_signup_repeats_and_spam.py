@@ -1,7 +1,8 @@
 """Professional interest sign-ups: the submission log, repeats, the cap and spam.
 
-A first submission works as before. The second and third get one short
-"we already have your details" email instead of another thank-you. From the
+A first submission notifies the team and sends the submitter nothing yet (the
+thank-you waits for staff; see test_pro_signup_actions.py). The second and
+third get one short "we already have your details" email. From the
 fourth on nothing is sent and the page says we already have their details.
 Spam is logged with its reason and sends nothing.
 """
@@ -104,8 +105,8 @@ class FirstSubmissionTest(_SignupCase):
             ),
         )
 
-    def test_sends_the_thankyou(self):
-        self.assertEqual(len(_mail_to(self.EMAIL, THANKYOU_SUBJECT)), 1)
+    def test_sends_no_thankyou_until_staff_act(self):
+        self.assertEqual(_mail_to(self.EMAIL, THANKYOU_SUBJECT), [])
 
     def test_notifies_the_team(self):
         self.assertEqual(
@@ -666,7 +667,7 @@ class RestSubmissionTest(TestCase):
         )
 
     def test_spam_answers_201_and_creates_no_lead(self):
-        with patch("fighthealthinsurance.utils.send_mail") as send:
+        with patch("fighthealthinsurance.utils.EmailMultiAlternatives.send") as send:
             response = self.post(comments="Top SEO and backlinks")
         self.assertEqual(
             (
