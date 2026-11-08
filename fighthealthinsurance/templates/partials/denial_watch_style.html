@@ -39,6 +39,8 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
     .dw-bars:hover .dw-bar:not(:hover) .dw-bar-fill { opacity: 0.45; }
   }
   /* A line chart's readout: a thin rule at the year pointed at, and its figures in a box. */
+  /* The readout takes no pointer events, so a tap on it reaches the chart and moves it. */
+  .dw-read { pointer-events: none; }
   .dw-read line { stroke: var(--fhi-ink-2); stroke-width: 1; stroke-dasharray: 3 3; }
   .dw-read rect { fill: var(--dw-paper); stroke: var(--fhi-line); }
   .dw-chart .dw-read text { fill: var(--fhi-ink); }
