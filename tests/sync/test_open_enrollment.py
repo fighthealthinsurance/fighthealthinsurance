@@ -202,7 +202,11 @@ class TestOpenEnrollmentPage(TestCase):
             self.assertRegex(script, r"const \{foldLinks,fmt,pct,tok,line[a-zA-Z,]*\}=window\.DWCharts;")
 
     def test_chart_motion_is_off_for_anyone_who_asks_for_less(self):
-        self.assertIn("const MOTION=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: no-preference)').matches", CHARTS_JS)
+        self.assertIn("window.matchMedia('(prefers-reduced-motion: no-preference)')", CHARTS_JS)
+        self.assertIn("let MOTION=!!(MQ&&MQ.matches", CHARTS_JS)
+        # Turning on reduced motion mid-visit, or printing, finishes every chart and stops.
+        self.assertIn("MQ.addEventListener('change',()=>{if(!MQ.matches)settle();})", CHARTS_JS)
+        self.assertIn("window.addEventListener('beforeprint',settle);", CHARTS_JS)
         for start in ("function grow(box,key){if(!MOTION", "function slide(box){if(!MOTION", "function countUp(box){if(!MOTION", "  if(!MOTION)return;\n"):
             self.assertIn(start, CHARTS_JS)
 

@@ -41,12 +41,23 @@ function line(svg,pts,{ymin,ymax,fmtY,ticks,color,ink=color,label,open,dash,also
   svg.innerHTML=h;
   if(!MOTION)return;
   const prev=svg._dwY;svg._dwY=new Map(pts.map(p=>[p.x,Y(p.y)]));
-  if(prev&&seen.has(svg))glide(svg,pts.map(p=>[X(p.x),Y(p.y),prev.has(p.x)?prev.get(p.x):H-B]));
+  const pp=pts.map(p=>[X(p.x),Y(p.y),prev&&prev.has(p.x)?prev.get(p.x):H-B]);
+  /* The same view picked again stays still. */
+  if(prev&&seen.has(svg)){if(pp.some(([,y,y0])=>Math.abs(y-y0)>0.01))glide(svg,pp);}
   else onView(svg,()=>hideLines(svg),()=>drawIn(svg));
 }
 
 /* Motion: each chart moves once as it comes into view, then stays still. Nothing moves for anyone who asks for less motion, and print shows the finished chart. */
-const MOTION=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: no-preference)').matches&&'IntersectionObserver' in window&&Element.prototype.animate);
+const MQ=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: no-preference)');
+let MOTION=!!(MQ&&MQ.matches&&'IntersectionObserver' in window&&Element.prototype.animate);
+/* Frame-by-frame steps (a glide, a count) register how to finish at once. */
+const finishers=new Set();
+/* Finish everything now and stop: every chart at its final state, nothing waiting. For printing, and for turning on reduced motion mid-visit. */
+function settle(){MOTION=false;if(io)io.disconnect();finishers.forEach(f=>f());finishers.clear();document.getAnimations().forEach(a=>{if(a.effect&&a.effect.target&&a.effect.target.closest&&a.effect.target.closest('.dw'))a.finish();});
+  document.querySelectorAll('.dw .dw-bar-fill,.dw .dw-dumb i').forEach(e=>{e.style.scale='';e.style.translate='';});
+  document.querySelectorAll('.dw .dw-line').forEach(g=>g.style.clipPath='');document.querySelectorAll('.dw .dw-end').forEach(t=>t.style.opacity='');}
+window.addEventListener('beforeprint',settle);
+if(MQ&&MQ.addEventListener)MQ.addEventListener('change',()=>{if(!MQ.matches)settle();});
 const EASE='cubic-bezier(.2,.7,.2,1)';
 const seen=new WeakSet();
 const inView=el=>{const r=el.getBoundingClientRect();return r.height>0&&r.bottom>0&&r.top<window.innerHeight;};
@@ -61,10 +72,11 @@ function drawIn(svg){
   svg.querySelectorAll('.dw-line').forEach(g=>{g.style.clipPath='';g.animate({clipPath:[HIDE,'inset(0 0% 0 0)']},{duration:1100,easing:'cubic-bezier(.4,0,.2,1)',fill:'backwards'});});
   svg.querySelectorAll('.dw-end').forEach(t=>{t.style.opacity='';t.animate({opacity:[0,1]},{duration:300,delay:1000,fill:'backwards'});});}
 /* Switching views glides the main line from its old heights to its new ones; a year the old view lacked rises from the axis. The final attributes are set exactly at the end. */
-function glide(svg,pp){cancelAnimationFrame(svg._dwRaf);const g=svg.querySelector('.dw-line-main');if(!g)return;
+function glide(svg,pp){if(svg._dwDone)svg._dwDone();const g=svg.querySelector('.dw-line-main');if(!g)return;
   const path=g.querySelector('path'),dots=[...g.querySelectorAll('circle')],end=g.querySelector('.dw-end'),d=path.getAttribute('d'),cy=dots.map(c=>c.getAttribute('cy')),t0=performance.now();
+  const done=()=>{cancelAnimationFrame(svg._dwRaf);finishers.delete(done);path.setAttribute('d',d);dots.forEach((c,i)=>c.setAttribute('cy',cy[i]));};finishers.add(done);svg._dwDone=done;
   const run=now=>{const p=Math.min(1,(now-t0)/600),e=p<.5?4*p*p*p:1-Math.pow(-2*p+2,3)/2;
-    if(p>=1){path.setAttribute('d',d);dots.forEach((c,i)=>c.setAttribute('cy',cy[i]));return;}
+    if(p>=1){done();return;}
     const ys=pp.map(([,y,y0])=>y0+(y-y0)*e);
     path.setAttribute('d',pp.map(([x],i)=>(i?'L':'M')+x.toFixed(1)+' '+ys[i].toFixed(1)).join(' '));dots.forEach((c,i)=>c.setAttribute('cy',ys[i]));
     svg._dwRaf=requestAnimationFrame(run);};
@@ -89,7 +101,8 @@ function countUp(box){if(!MOTION||!box||!inView(box))return;seen.add(box);
   box.querySelectorAll('.dw-stat-head b').forEach((b,i)=>{const t=b.textContent,m=t.match(/^(\D*)(\d[\d,]*(?:\.\d+)?)(.*)$/s);if(!m)return;
     const v=parseFloat(m[2].replace(/,/g,'')),dp=(m[2].split('.')[1]||'').length,comma=m[2].includes(','),
       f=x=>m[1]+(comma?x.toLocaleString('en-US',{minimumFractionDigits:dp,maximumFractionDigits:dp}):x.toFixed(dp))+m[3],t0=performance.now()+i*120;
-    const run=now=>{const p=Math.min(1,Math.max(0,(now-t0)/1000));b.textContent=p<1?f(v*(1-Math.pow(1-p,3))):t;if(p<1)requestAnimationFrame(run);};
+    let raf=0;const done=()=>{cancelAnimationFrame(raf);finishers.delete(done);b.textContent=t;};finishers.add(done);
+    const run=now=>{const p=Math.min(1,Math.max(0,(now-t0)/1000));if(p>=1){done();return;}b.textContent=f(v*(1-Math.pow(1-p,3)));raf=requestAnimationFrame(run);};
     run(t0-1);});}
 
 return {foldLinks,fmt,pct,tok,line,grow,slide,countUp};
