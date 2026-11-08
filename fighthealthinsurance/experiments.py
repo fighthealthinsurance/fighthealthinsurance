@@ -197,6 +197,7 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
         MODELS,
         needs_any=_TYPESAFE_KEY,
         needs=("TYPESAFE_DENIAL_TRIAGE_ENABLED",),
+        live_check="fighthealthinsurance.ml.denial_triage.enabled",
     ),
     Experiment(
         "TYPESAFE_RESEARCH_JUDGING_ENABLED",

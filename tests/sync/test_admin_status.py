@@ -2280,6 +2280,18 @@ class AdminStatusJevPanelTest(TestCase):
         self.assertEqual(response.context["jev"]["level"], "not_configured")
         self.assertFalse(response.context["jev"]["key_present"])
 
+    @override_settings(
+        TYPESAFE_API_KEY=None,
+        OPENCODE_TOKEN="open-test-token",
+        TYPESAFE_MODEL="jev-custom",
+    )
+    def test_a_custom_model_requires_the_typesafe_credential(self):
+        response = self._get()
+        self.assertContains(response, "missing (TYPESAFE_API_KEY for a custom model)")
+        self.assertContains(response, "TYPESAFE_API_KEY for a custom TYPESAFE_MODEL")
+        self.assertNotContains(response, "Neither OPENCODE_TOKEN nor")
+        self.assertEqual(response.context["jev"]["level"], "not_configured")
+
     @override_settings(TYPESAFE_API_KEY=None, OPENCODE_TOKEN="open-test-token")
     def test_the_panel_accepts_an_opencode_only_credential(self):
         response = self._get()
@@ -2532,6 +2544,18 @@ class AdminJevTestViewTest(TestCase):
         self.assertIsNone(result["answer"])
         self.assertEqual(result["category"], "NOT_CONFIGURED")
         self.assertContains(response, f"skipped: {typesafe.NO_KEY}")
+        ask.assert_not_awaited()
+
+    @override_settings(
+        TYPESAFE_API_KEY=None,
+        OPENCODE_TOKEN="open-test-token",
+        TYPESAFE_MODEL="jev-custom",
+    )
+    def test_the_test_decision_says_a_custom_model_needs_typesafe(self):
+        ask = mock.AsyncMock(return_value=self._ANSWER)
+        response = self._post(ask)
+        self.assertContains(response, "missing (TYPESAFE_API_KEY for a custom model)")
+        self.assertNotContains(response, "missing (OPENCODE_TOKEN or")
         ask.assert_not_awaited()
 
     @override_settings(TYPESAFE_API_KEY="k")

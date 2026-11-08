@@ -104,6 +104,18 @@ def test_a_flag_with_only_the_opencode_key_reads_on():
 
 
 @override_settings(
+    TYPESAFE_DEADLINE_SHOW_ENABLED=True,
+    TYPESAFE_DENIAL_TRIAGE_ENABLED=True,
+    OPENCODE_TOKEN="open-test-token",
+    TYPESAFE_API_KEY=None,
+    TYPESAFE_MODEL="jev-custom",
+)
+def test_deadlines_are_inert_when_triage_cannot_use_the_credential():
+    row = _row("TYPESAFE_DEADLINE_SHOW_ENABLED")
+    assert (row["state"], row["missing"]) == (INERT, [])
+
+
+@override_settings(
     TEMPORAL_ENABLED=True,
     TEMPORAL_PLAN_DOCUMENTS_ENABLED=True,
     TEMPORAL_RESEARCH_PAYLOAD_KEY="not-a-fernet-key",

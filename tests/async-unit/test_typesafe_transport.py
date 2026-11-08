@@ -14,6 +14,7 @@ is a WARNING once per use and day.
 import asyncio
 import datetime
 import json
+import math
 import os
 import socket
 import ssl
@@ -627,6 +628,7 @@ class TestConnectBound:
         # The fallback may not start a fresh budget: it gets what is left.
         assert timeouts[1].total == pytest.approx(2.0, abs=0.05)
         assert timeouts[1].total <= 2.0
+        assert all(timeout.ceil_threshold == math.inf for timeout in timeouts)
 
     def test_the_fallbacks_total_shrinks_by_what_the_free_attempt_spent(self):
         """The premium attempt is bounded by the one deadline, not a fresh
@@ -744,6 +746,21 @@ class TestPremiumFallback:
             payload = asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1))
         assert payload["model"] == typesafe.OPENCODE_MODEL
 
+    def test_an_error_shaped_free_answer_falls_through_to_the_premium_attempt(self):
+        free = _FakeSession(200, payload={"error": "temporarily unavailable"})
+        premium = _FakeSession()
+        sessions = [free, premium]
+
+        def factory(**kwargs):
+            return sessions.pop(0)
+
+        with override_settings(**self.CONF), patch.object(
+            typesafe.aiohttp, "ClientSession", factory
+        ):
+            payload = asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1))
+        assert payload["answers"] == {}
+        assert len(free.posted) == 1 and len(premium.posted) == 1
+
     def test_the_premium_budget_is_rechecked_before_the_fallback_posts(self):
         """The free attempt can eat its whole half of the budget; a budget
         spent meanwhile must refuse the fallback before it posts."""
@@ -751,8 +768,10 @@ class TestPremiumFallback:
         with override_settings(**self.CONF), patch.object(
             spend, "allows", side_effect=[True, False]
         ), patch.object(typesafe.aiohttp, "ClientSession", session):
-            with pytest.raises(typesafe.TypeSafeBudgetSpent):
+            with pytest.raises(typesafe.TypeSafeError) as info:
                 asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1))
+        assert info.value.status == 429
+        assert not typesafe.refused_before_sending(info.value)
         assert len(session.posted) == 1
 
     def test_a_cooldown_started_mid_free_attempt_refuses_the_fallback(self):
@@ -764,9 +783,11 @@ class TestPremiumFallback:
         with override_settings(**self.CONF), patch.object(
             typesafe, "_refuse_while_cooling", side_effect=start_and_refuse
         ), patch.object(typesafe.aiohttp, "ClientSession", session):
-            with pytest.raises(typesafe.TypeSafeCoolingDown) as info:
+            with pytest.raises(typesafe.TypeSafeError) as info:
                 asyncio.run(typesafe.ask("doc", QUESTIONS, timeout_seconds=1))
-        assert info.value.status == 401
+        assert type(info.value) is typesafe.TypeSafeError
+        assert info.value.status == 429
+        assert not typesafe.refused_before_sending(info.value)
         assert len(session.posted) == 1
 
 

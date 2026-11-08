@@ -410,7 +410,8 @@ async def ask(
 
     Raises TypeSafeError on a non-200, a spent budget or a cooldown, and
     lets aiohttp/asyncio errors propagate: callers decide what a failure
-    means for their feature.
+    means for their feature. If a premium recheck refuses the fallback after
+    OpenCode was tried, the OpenCode error is the attempted request's outcome.
     """
     premium_model = model_name()
     opencode_token = getattr(settings, "OPENCODE_TOKEN", None)
@@ -472,8 +473,13 @@ async def ask(
         else:
             attempt_total = remaining * 0.5
         attempt_connect = min(attempt_total * 0.75, CONNECT_TIMEOUT_SECONDS)
+        # aiohttp rounds timeouts of at least five seconds up to a whole
+        # second; that could let one attempt eat the next one's reserved time.
         client_timeout = aiohttp.ClientTimeout(
-            total=attempt_total, connect=attempt_connect, sock_connect=attempt_connect
+            total=attempt_total,
+            connect=attempt_connect,
+            sock_connect=attempt_connect,
+            ceil_threshold=math.inf,
         )
         body = {
             "state": state[:STATE_CHAR_CAP],
@@ -488,10 +494,17 @@ async def ask(
             # The eligibility check above ran before the free attempt, which
             # can eat its whole half of the budget: the spend ledger and the
             # cooldown can have turned while it ran.
-            if not spend.allows(spend.TYPESAFE, use):
-                _log_budget_spent(use)
-                raise TypeSafeBudgetSpent("budget spent")
-            _refuse_while_cooling()
+            try:
+                if not spend.allows(spend.TYPESAFE, use):
+                    _log_budget_spent(use)
+                    raise TypeSafeBudgetSpent("budget spent")
+                _refuse_while_cooling()
+            except (TypeSafeBudgetSpent, TypeSafeCoolingDown):
+                if last_error is not None:
+                    # OpenCode was already tried: report that attempted
+                    # request's outcome, not a skip before anything was sent.
+                    raise last_error
+                raise
         try:
             async with aiohttp.ClientSession(timeout=client_timeout) as session:
                 # No redirects: a 307 or 308 toward http would make aiohttp
@@ -513,8 +526,14 @@ async def ask(
                     if is_premium:
                         _end_cooldown()
                     payload = await response.json()
-                    if not isinstance(payload, dict):
-                        raise ValueError("response was not a JSON object")
+                    if (
+                        not isinstance(payload, dict)
+                        or payload.get("error")
+                        or not isinstance(payload.get("answers"), dict)
+                    ):
+                        # A 200 error object or a missing answer set is a
+                        # failed attempt, not an answer to stop on.
+                        raise ValueError("response was not a valid answer set")
                     answered_model = model
                     break
         except (
