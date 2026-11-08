@@ -28,6 +28,7 @@ from tests.sync.test_denial_watch import (
     MARKETPLACE_SOURCES,
     MK,
     REPO,
+    STYLE_PARTIAL,
     _between,
     _census_year,
     _load_builder,
@@ -198,7 +199,21 @@ class TestOpenEnrollmentPage(TestCase):
         for script in (JS, OE_JS):
             for own in ("function line(", "const openTo=", "const fmt=", "const pct="):
                 self.assertNotIn(own, script)
-            self.assertIn("const {foldLinks,fmt,pct,tok,line}=window.DWCharts;", script)
+            self.assertRegex(script, r"const \{foldLinks,fmt,pct,tok,line[a-zA-Z,]*\}=window\.DWCharts;")
+
+    def test_chart_motion_is_off_for_anyone_who_asks_for_less(self):
+        self.assertIn("const MOTION=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: no-preference)').matches", CHARTS_JS)
+        for start in ("function grow(box,key){if(!MOTION", "function slide(box){if(!MOTION", "function countUp(box){if(!MOTION", "  if(!MOTION)return;\n"):
+            self.assertIn(start, CHARTS_JS)
+
+    def test_printed_charts_show_finished(self):
+        printed = re.search(r"@media print \{(.*?)\n  \}", STYLE_PARTIAL, re.S).group(1)
+        for rule in ("scale: none !important", "translate: none !important", "clip-path: none !important", "opacity: 1 !important"):
+            self.assertIn(rule, printed)
+
+    def test_counting_up_only_runs_on_tiles_already_showing(self):
+        # A tile below the fold keeps its real figure rather than waiting at 0.
+        self.assertIn("function countUp(box){if(!MOTION||!box||!inView(box))return;", CHARTS_JS)
 
     def test_page_names_the_marketplace_sources(self):
         visible = _without_data(self.content)

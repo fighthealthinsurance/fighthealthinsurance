@@ -11,7 +11,7 @@ const MOVED_TO=MOVED.get(location.hash.slice(1));
 if(OE_URL&&MOVED_TO){location.replace(OE_URL+'#'+MOVED_TO);return;}
 const DATA_EL=document.getElementById('dw-data');const ROOT=document.querySelector('.dw');
 if(!DATA_EL||!ROOT||!window.DWCharts)return;
-const {foldLinks,fmt,pct,tok,line}=window.DWCharts;
+const {foldLinks,fmt,pct,tok,line,grow,slide,countUp}=window.DWCharts;
 /* Before the data is read, so a bad bundle or a chart that throws can't leave a link stuck on a closed fold. */
 foldLinks();
 const D=JSON.parse(DATA_EL.textContent);
@@ -52,6 +52,7 @@ $('stats').innerHTML=[
   [pct(won,0),'appeals won','at the insurer, '+T.year,'good'],
   [pct(imr25.r,0),'reviews won','by patients at California\'s independent review','good']
 ].map(([b,l,s,k])=>`<div class="dw-stat dw-stat-${k}"><p class="dw-stat-head"><b class="dw-num">${b}</b> <strong>${l}</strong></p><span>${s}</span></div>`).join('');
+countUp($('stats'));
 
 /* tile map engine */
 const S=48,G=2.5,OX=6,OY=6;
@@ -232,6 +233,7 @@ line($('imrline'),D.imr_trend.map(r=>({x:r.y,y:r.r})),{ymin:.3,ymax:.8,ticks:[.3
 /* reasons: all blue, as every one is a denial; the two about medical judgment darker and in bold, as the key says */
 const rmax=D.reasons[0].v, rtot=D.reasons.reduce((a,r)=>a+r.v,0);
 $('reasons').innerHTML=D.reasons.map(r=>`<div class="dw-bar ${/medically|Experimental/.test(r.k)?'dw-bar-deep':''}"><div class="dw-bar-name"><span>${esc(r.k)}</span><span class="dw-note dw-num">${big(r.v)}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${r.v/rmax*100}%"></div></div><div class="dw-bar-value dw-num">${r.v/rtot<0.01?'&lt;1%':pct(r.v/rtot,0)}</div></div>`).join('');
+grow($('reasons'),'all');
 
 /* insurers: in-network only; the note says why there are no out-of-network or all-claims rates */
 const byName=(a,b)=>NAMES[a].localeCompare(NAMES[b]);
@@ -282,7 +284,7 @@ function paDraw(k){const rows=PA.filter(r=>r.line===k&&r.std!=null).sort((a,b)=>
   if(!rows.length){$('panote').textContent=PAN[k]+' No reports in this group yet.';$('pabars').innerHTML='';return;}
   const mx=PAMAX;
   $('panote').textContent=PAN[k]+' '+rows.length+' reports, from '+pct(rows[rows.length-1].std)+' to '+pct(rows[0].std)+'. Most count requests; any that count differently say so.';
-  $('pabars').innerHTML=rows.map(r=>`<div class="dw-bar"><div class="dw-bar-name"><span><b>${esc(r.n)}</b> <span class="dw-note">${esc(r.where)}${r.req?' · '+fmt(r.req)+' '+esc(r.unit||'requests'):''}${r.exp_posted?' · urgent requests: '+esc(r.exp_posted)+'% denied':''} · <a href="${safeUrl(r.url)}" rel="noopener">source</a>${r.note?'<br>'+esc(r.note):''}</span></span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${Math.max(0.5,r.std/mx*100)}%"></div></div><div class="dw-bar-value dw-num">${esc(String(r.std_posted).replace(/^\./,'0.'))}%</div></div>`).join('');}
+  $('pabars').innerHTML=rows.map(r=>`<div class="dw-bar"><div class="dw-bar-name"><span><b>${esc(r.n)}</b> <span class="dw-note">${esc(r.where)}${r.req?' · '+fmt(r.req)+' '+esc(r.unit||'requests'):''}${r.exp_posted?' · urgent requests: '+esc(r.exp_posted)+'% denied':''} · <a href="${safeUrl(r.url)}" rel="noopener">source</a>${r.note?'<br>'+esc(r.note):''}</span></span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${Math.max(0.5,r.std/mx*100)}%"></div></div><div class="dw-bar-value dw-num">${esc(String(r.std_posted).replace(/^\./,'0.'))}%</div></div>`).join('');grow($('pabars'),k);}
 document.querySelectorAll('#pamode button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#pamode button').forEach(x=>x.setAttribute('aria-pressed',x===b));paDraw(b.dataset.m);});
 paDraw('ma');
 
@@ -302,9 +304,12 @@ $('chappeals').innerHTML='<thead><tr><th>Claim appeals reversed</th><th class="d
   apRow(`The ${AP.same.insurers} insurers`,AP.same)+apRow(`Without the ${AP.left_out} largest`,AP.without_largest)+apRow(`Oscar's ${AP.oscar.insurers} insurers`,AP.oscar)+'</tbody>';
 $('chreview').innerHTML='<thead><tr><th>Type of care</th><th class="dw-r">2021 to 2023</th><th class="dw-r">2024 and 2025</th><th class="dw-r">Change, points</th><th>On one scale</th></tr></thead><tbody>'+
   D.imr_periods.rows.map(r=>`<tr><th scope="row">${esc(r.k)}</th><td class="dw-r dw-num">${pct(r.r0,0)} <span class="dw-note">of ${fmt(r.n0)}</span></td><td class="dw-r dw-num">${pct(r.r1,0)} <span class="dw-note">of ${fmt(r.n1)}</span></td><td class="dw-r dw-num dw-nowrap">${moved(r.r0,r.r1,0)}</td><td>${dumbbell(r.r0,r.r1,1)}</td></tr>`).join('')+'</tbody>';
+slide($('chcompany'));slide($('chreview'));
 }
 
+document.querySelectorAll('.dw-bars.dw-every').forEach(b=>grow(b,'all'));
 $('imrbars').innerHTML=D.imr_cat.map(r=>`<div class="dw-bar dw-bar-good"><div class="dw-bar-name"><span>${esc(r.k)}</span><span class="dw-note dw-num">${fmt(r.n)} reviews</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${r.r*100}%"></div></div><div class="dw-bar-value dw-num">${pct(r.r,0)}</div></div>`).join('');
+grow($('imrbars'),'all');
 
 /* coverage map */
 const SA=D.sahie, PL=D.places;
@@ -329,7 +334,7 @@ function drawC(){const m=CM[cm],dir=m.mk?dirBy(m.b):undefined;drawMap($('cmap'),
   /* Uninsured and health measures in purple; a change red when it rose and green when it fell, its sign in the value. */
   const cls=v=>cm==='uchg'?(v<0?'dw-bar-good':'dw-bar-bad'):'dw-bar-health';
   const row=([s,v])=>`<div class="dw-bar ${cls(v)}"><div class="dw-bar-name"><span>${NAMES[s]}</span></div><div class="dw-bar-track"><div class="dw-bar-fill" style="width:${Math.abs(v)/mx*100}%"></div></div><div class="dw-bar-value dw-num">${m.l(v)}</div></div>`;
-  $('cbars').innerHTML=arr.slice(0,5).map(row).join('')+'<div class="dw-note dw-gap-row">···</div>'+arr.slice(-5).map(row).join('');}
+  $('cbars').innerHTML=arr.slice(0,5).map(row).join('')+'<div class="dw-note dw-gap-row">···</div>'+arr.slice(-5).map(row).join('');grow($('cbars'),cm);}
 document.querySelectorAll('#cmode button').forEach(b=>b.onclick=()=>{cm=b.dataset.m;document.querySelectorAll('#cmode button').forEach(x=>x.setAttribute('aria-pressed',x===b));drawC();});
 cRead(csel);
 
@@ -349,7 +354,7 @@ function dgDraw(k){const m=DGM[k],rows=DG[k];const mx=Math.max(...rows.map(m.v))
   $('dgprice').hidden=!rows.some(d=>d.medicare_price);
   /* Only where a drug whose price ends is listed. */
   $('dgends').hidden=!rows.some(d=>d.medicare_price&&d.medicare_price.until);
-  $('dgbars').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-cost${d.medicare_price?' dw-bar-tagged':''}"><div class="dw-bar-name"><span><b>${esc(d.Brnd_Name)}</b>${d.use?` <span class="dw-drug-use">for ${esc(d.use)}</span>`:''}${sameName(d.Brnd_Name,d.Gnrc_Name)?'':` <span class="dw-note">· ${esc(String(d.Gnrc_Name).toLowerCase())}</span>`}</span><span class="dw-note dw-num">${m.sub(d)}</span></div>${d.medicare_price?`<span class="dw-chip dw-bar-chip">${esc(d.medicare_price.label)}</span>`:''}<div class="dw-bar-track"><div class="dw-bar-fill" style="width:${m.v(d)/mx*100}%"></div></div><div class="dw-bar-value dw-num">${m.l(d)}</div></div>`).join('');}
+  $('dgbars').innerHTML=rows.map(d=>`<div class="dw-bar dw-bar-cost${d.medicare_price?' dw-bar-tagged':''}"><div class="dw-bar-name"><span><b>${esc(d.Brnd_Name)}</b>${d.use?` <span class="dw-drug-use">for ${esc(d.use)}</span>`:''}${sameName(d.Brnd_Name,d.Gnrc_Name)?'':` <span class="dw-note">· ${esc(String(d.Gnrc_Name).toLowerCase())}</span>`}</span><span class="dw-note dw-num">${m.sub(d)}</span></div>${d.medicare_price?`<span class="dw-chip dw-bar-chip">${esc(d.medicare_price.label)}</span>`:''}<div class="dw-bar-track"><div class="dw-bar-fill" style="width:${m.v(d)/mx*100}%"></div></div><div class="dw-bar-value dw-num">${m.l(d)}</div></div>`).join('');grow($('dgbars'),k);}
 document.querySelectorAll('#dgmode button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#dgmode button').forEach(x=>x.setAttribute('aria-pressed',x===b));dgDraw(b.dataset.m);});
 dgDraw('top');
 
