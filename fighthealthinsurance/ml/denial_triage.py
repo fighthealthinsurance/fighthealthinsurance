@@ -38,8 +38,8 @@ says the extraction holds up on real letters.
 
 Data protection: the denial text only, never the form fields, and only when
 the user allowed external models (``denial.use_external``). Inert until both
-``TYPESAFE_API_KEY`` and ``TYPESAFE_DENIAL_TRIAGE_ENABLED`` are set; fails
-closed; never logs the text.
+``TYPESAFE_DENIAL_TRIAGE_ENABLED`` and either ``OPENCODE_TOKEN`` or
+``TYPESAFE_API_KEY`` are set; fails closed; never logs the text.
 
 ``letter_date`` is separate from the triage: it reads the date the letter is
 dated, for the review page, on this server, and asks no model.

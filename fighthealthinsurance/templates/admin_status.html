@@ -125,9 +125,9 @@
         {% elif jev.level == "off" %}<span class="status-badge unknown">OFF</span>
         {% else %}<span class="status-badge warn">IDLE</span>{% endif %}
         <span class="pill">model: {{ jev.model }}</span>
-        <span class="pill">API key: {% if jev.key_present %}present{% else %}missing (TYPESAFE_API_KEY){% endif %}</span>
+        <span class="pill">API key: {% if jev.key_present %}present{% else %}missing ({% if jev.custom_model %}TYPESAFE_API_KEY for a custom model{% else %}OPENCODE_TOKEN or TYPESAFE_API_KEY{% endif %}){% endif %}</span>
         {% if jev.url %}<span class="pill endpoint">{{ jev.url }}</span>{% endif %}
-        {% if jev.level == "not_configured" %}<span class="error-text">TYPESAFE_API_KEY is not set: every use of Jev is skipped, and the test decision is not sent.</span>
+        {% if jev.level == "not_configured" %}<span class="error-text">{{ jev.skip }}: every use of Jev is skipped, and the test decision is not sent.</span>
         {% elif jev.skip %}<span class="error-text">this pod sends Jev nothing right now: {{ jev.skip }}</span>
         {% elif jev.uses_skip %}<span class="error-text">every use that is on is refused right now: {{ jev.uses_skip }}</span> <span class="sweep-note">(the test decision below spends the general budget, so it may still send)</span>
         {% elif jev.level == "off" %}<span class="sweep-note">configured, but every use&rsquo;s switch is off.</span>{% endif %}

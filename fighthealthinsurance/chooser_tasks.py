@@ -797,8 +797,8 @@ async def _judge_evidence(
             return {**known, **by_jev}
         if not jev_on:
             why = (
-                "Jev is not set up for research judging (TYPESAFE_API_KEY "
-                "and TYPESAFE_RESEARCH_JUDGING_ENABLED)"
+                "Jev is not set up for research judging (OPENCODE_TOKEN or "
+                "TYPESAFE_API_KEY, and TYPESAFE_RESEARCH_JUDGING_ENABLED)"
             )
         else:
             cause = research_judging.skip_reason() or (

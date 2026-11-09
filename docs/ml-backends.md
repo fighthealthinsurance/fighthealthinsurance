@@ -62,10 +62,13 @@ wins, including the ones `scripts/run_local.sh` sets.
 
 ## TypeSafe (Jev)
 
-TypeSafe's Jev is not a writer: it answers typed yes/no, multiple-choice and
-scale questions about a text, for a fraction of a cent, through one client
-(`ml/typesafe.py`, `TYPESAFE_API_KEY`). Every feature has its own switch,
-off by default, and sends text only with the person's external-models
+Jev is not a writer: it answers typed yes/no, multiple-choice and scale
+questions about a text through one client (`ml/typesafe.py`). With
+`OPENCODE_TOKEN`, the pinned base release uses OpenCode's free
+`jev-1.13-free` first; when `TYPESAFE_API_KEY` is also present, a failed or
+unsupported OpenCode request falls through to TypeSafe. A custom/FT
+`TYPESAFE_MODEL` always goes directly to TypeSafe. Every feature has its own
+switch, off by default, and sends text only with the person's external-models
 consent:
 
 | Switch | What Jev does |

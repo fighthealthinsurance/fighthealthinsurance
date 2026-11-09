@@ -36,9 +36,10 @@ identifiers held for the chat and the records linked to it
 (chat/redaction.py), and every email address and North American style phone
 number in the text, each value with its own stable token. That is a reduction, not de-identification. A request goes out
 only when the person allowed outside models for the chat, and the module is
-inert until BOTH ``TYPESAFE_API_KEY`` and ``TYPESAFE_CHAT_SHADOW_ENABLED``
-are set. Each request is counted against TypeSafe's chat budget
-(ml/spend.py), and none starts while that budget is spent. Stored: the scores, the scorer string and an outcome. The text is
+inert until ``TYPESAFE_CHAT_SHADOW_ENABLED`` and either ``OPENCODE_TOKEN``
+or ``TYPESAFE_API_KEY`` are set. The free OpenCode route spends no TypeSafe
+budget; TypeSafe requests are counted against its chat budget (ml/spend.py).
+Stored: the scores, the scorer string and an outcome. The text is
 never stored and never logged, and a failure is kept as an HTTP status,
 "timeout" or an exception class name.
 """
@@ -188,13 +189,17 @@ class ShadowResult:
 
 
 def enabled() -> bool:
-    return bool(getattr(settings, "TYPESAFE_API_KEY", None)) and bool(
+    return typesafe.configured() and bool(
         getattr(settings, "TYPESAFE_CHAT_SHADOW_ENABLED", False)
     )
 
 
 def budget_allows() -> bool:
-    """Whether TypeSafe's chat budget (ml/spend.py) allows a request now."""
+    """Whether TypeSafe's chat budget (ml/spend.py) allows a request now.
+    The default-model OpenCode route is free and records no TypeSafe spend;
+    ask() still applies the budget to any premium fallback."""
+    if typesafe.opencode_route():
+        return True
     return spend.allows(spend.TYPESAFE, spend.CHAT)
 
 

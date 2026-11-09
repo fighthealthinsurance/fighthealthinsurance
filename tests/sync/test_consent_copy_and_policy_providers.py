@@ -81,7 +81,7 @@ CHAT_BACKEND_PROVIDERS = {
 }
 # TypeSafe checks chat replies when the chat quality checks are on. It scores
 # replies rather than writing them, so it is not a chat backend.
-QUALITY_CHECK_PROVIDERS = ("TypeSafe",)
+QUALITY_CHECK_PROVIDERS = ("OpenCode", "TypeSafe")
 # Companies the site stopped using; no consent may name them.
 RETIRED_PROVIDERS = ("OctoAI", "TogetherAI")
 # Well-known AI companies and products a consent might reach for as an

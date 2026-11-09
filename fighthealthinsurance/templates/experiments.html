@@ -80,8 +80,8 @@
             </td>
             <td>
               {{ exp.description }}
-              {% if exp.needs %}
-              <div class="sub muted">Needs: {% for name in exp.needs %}<code>{{ name }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}</div>
+              {% if exp.needs or row.needs_any %}
+              <div class="sub muted">Needs: {% if exp.needs %}{% for name in exp.needs %}<code>{{ name }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}{% if row.needs_any %}{% if exp.needs %} plus {% endif %}{% for name in row.needs_any %}<code>{{ name }}</code>{% if not forloop.last %} or {% endif %}{% endfor %}{% endif %}</div>
               {% endif %}
               {% if row.state == "inert" %}
                 {% if row.missing %}

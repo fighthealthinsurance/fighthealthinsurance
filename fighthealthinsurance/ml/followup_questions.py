@@ -28,8 +28,9 @@ check is recorded on the denial (``Denial.followup_questions``:
 runs once; a correction to the procedure or diagnosis makes the record stale.
 
 On unless ``FHI_FOLLOWUP_QUESTIONS_ENABLED`` is false/0/no/off (the test
-configurations pin it off). The Jev half also needs ``TYPESAFE_API_KEY`` and
-``TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED``, which is off by default.
+configurations pin it off). The Jev half also needs either ``OPENCODE_TOKEN``
+or ``TYPESAFE_API_KEY``, plus ``TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED``, which
+is off by default.
 """
 
 import asyncio

@@ -1116,6 +1116,17 @@ class AdminStatusLetterScoringTest(TestCase):
         self.assertTrue(status["key_present"])
         self.assertFalse(status["flag_on"])
 
+    def test_an_opencode_credential_counts_as_a_configured_scorer(self):
+        with override_settings(
+            OPENCODE_TOKEN="open-test-token",
+            TYPESAFE_API_KEY=None,
+            TYPESAFE_LETTER_RANKING_ENABLED=False,
+        ):
+            status = self._status()
+        self.assertEqual(status["level"], "off")
+        self.assertTrue(status["key_present"])
+        self.assertFalse(status["flag_on"])
+
     def test_scoring_when_a_draft_was_scored_in_the_window(self):
         self._draft(self._denial(), scored=True)
         with override_settings(**_SCORING_ON):
@@ -2265,9 +2276,28 @@ class AdminStatusJevPanelTest(TestCase):
         response = self._get()
         self.assertContains(response, "Jev (TypeSafe)")
         self.assertContains(response, "NOT CONFIGURED")
-        self.assertContains(response, "missing (TYPESAFE_API_KEY)")
+        self.assertContains(response, "missing (OPENCODE_TOKEN or TYPESAFE_API_KEY)")
         self.assertEqual(response.context["jev"]["level"], "not_configured")
         self.assertFalse(response.context["jev"]["key_present"])
+
+    @override_settings(
+        TYPESAFE_API_KEY=None,
+        OPENCODE_TOKEN="open-test-token",
+        TYPESAFE_MODEL="jev-custom",
+    )
+    def test_a_custom_model_requires_the_typesafe_credential(self):
+        response = self._get()
+        self.assertContains(response, "missing (TYPESAFE_API_KEY for a custom model)")
+        self.assertContains(response, "TYPESAFE_API_KEY for a custom TYPESAFE_MODEL")
+        self.assertNotContains(response, "Neither OPENCODE_TOKEN nor")
+        self.assertEqual(response.context["jev"]["level"], "not_configured")
+
+    @override_settings(TYPESAFE_API_KEY=None, OPENCODE_TOKEN="open-test-token")
+    def test_the_panel_accepts_an_opencode_only_credential(self):
+        response = self._get()
+        self.assertContains(response, "API key: present")
+        self.assertTrue(response.context["jev"]["key_present"])
+        self.assertNotEqual(response.context["jev"]["level"], "not_configured")
 
     @override_settings(TYPESAFE_API_KEY=None)
     def test_the_test_decision_button_is_there_even_unconfigured(self):
@@ -2505,13 +2535,27 @@ class AdminJevTestViewTest(TestCase):
 
     @override_settings(TYPESAFE_API_KEY=None)
     def test_without_a_key_nothing_is_sent_and_the_page_says_so(self):
+        from fighthealthinsurance.ml import typesafe
+
         ask = mock.AsyncMock(return_value=self._ANSWER)
         response = self._post(ask)
         result = response.context["result"]
         self.assertFalse(result["ok"])
         self.assertIsNone(result["answer"])
         self.assertEqual(result["category"], "NOT_CONFIGURED")
-        self.assertContains(response, "skipped: TYPESAFE_API_KEY is not set")
+        self.assertContains(response, f"skipped: {typesafe.NO_KEY}")
+        ask.assert_not_awaited()
+
+    @override_settings(
+        TYPESAFE_API_KEY=None,
+        OPENCODE_TOKEN="open-test-token",
+        TYPESAFE_MODEL="jev-custom",
+    )
+    def test_the_test_decision_says_a_custom_model_needs_typesafe(self):
+        ask = mock.AsyncMock(return_value=self._ANSWER)
+        response = self._post(ask)
+        self.assertContains(response, "missing (TYPESAFE_API_KEY for a custom model)")
+        self.assertNotContains(response, "missing (OPENCODE_TOKEN or")
         ask.assert_not_awaited()
 
     @override_settings(TYPESAFE_API_KEY="k")

@@ -174,7 +174,9 @@ class QuestionsPageSuggestionsTest(TestCase):
 
     def test_an_unticked_suggestion_is_saved_as_an_answer(self):
         triage(self.denial)
-        answers = GenerateAppeal._unticked_checkbox_answers(self.denial, {"pre_service"})
+        answers = GenerateAppeal._unticked_checkbox_answers(
+            self.denial, {"pre_service"}
+        )
         self.assertEqual(answers.get("urgent"), "False")
         self.assertNotIn("pre_service", answers)
 
@@ -350,7 +352,9 @@ class FaxArticleOrderTest(TestCase):
             )
 
     def test_supporting_first_and_off_topic_offered_unticked(self):
-        articles = ChooseAppealHelper.candidate_articles(self.denial.denial_id, self.denial)
+        articles = ChooseAppealHelper.candidate_articles(
+            self.denial.denial_id, self.denial
+        )
         self.assertEqual([a.pmid for a in articles], ["3", "2", "1"])
 
         class FaxForm(forms.Form):
@@ -409,12 +413,15 @@ class JevDashboardPanelTest(TestCase):
         with self.settings(TYPESAFE_API_KEY="k"):
             response, panel = self.panel()
         self.assertEqual(
-            self.row(panel, rj.SERVICE)["skip"], "TYPESAFE_RESEARCH_JUDGING_ENABLED is off"
+            self.row(panel, rj.SERVICE)["skip"],
+            "TYPESAFE_RESEARCH_JUDGING_ENABLED is off",
         )
         self.assertContains(response, "TYPESAFE_RESEARCH_JUDGING_ENABLED is off")
 
     def test_an_on_use_this_pod_sends_nothing_reads_as_skipped(self):
-        with self.settings(**TRIAGE_ON), patch.object(spend, "paused", return_value=True):
+        with self.settings(**TRIAGE_ON), patch.object(
+            spend, "paused", return_value=True
+        ):
             response, panel = self.panel()
         row = self.row(panel, dt.SERVICE)
         self.assertEqual(row["level"], "skipped")
@@ -445,7 +452,8 @@ class JevDashboardPanelTest(TestCase):
 
     def test_an_old_answer_reads_as_idle(self):
         models.ExternalServiceHealth.objects.create(
-            service=dt.SERVICE, last_success_at=timezone.now() - datetime.timedelta(days=2)
+            service=dt.SERVICE,
+            last_success_at=timezone.now() - datetime.timedelta(days=2),
         )
         with self.settings(TYPESAFE_API_KEY="k", TYPESAFE_DENIAL_TRIAGE_ENABLED=True):
             _response, panel = self.panel()
@@ -497,11 +505,9 @@ class ModelBackendStatusTypeSafeRowTest(TestCase):
         self.assertTrue(row["live_skipped"])
         self.assertEqual(row["live_problem"], typesafe.NO_KEY)
         self.assertTrue(all(u["skip"] == typesafe.NO_KEY for u in row["jev_uses"]))
-        cell = BeautifulSoup(response.content, "html.parser").find(
-            string="skipped"
-        )
+        cell = BeautifulSoup(response.content, "html.parser").find(string="skipped")
         self.assertIsNotNone(cell)
-        self.assertContains(response, "TYPESAFE_API_KEY is not set")
+        self.assertContains(response, typesafe.NO_KEY)
         # The row's own reason covers every use; no list repeating it.
         self.assertNotContains(response, "Each use's last answer and failure")
 
