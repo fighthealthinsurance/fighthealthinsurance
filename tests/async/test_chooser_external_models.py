@@ -770,6 +770,14 @@ def test_gender_affirming_care_matching_covers_gender_specific_text():
         "Puberty blockers",
         "Bilateral mastectomy",
         "Testosterone cypionate",
+        "Hormone replacement therapy",
+        "Chest reconstruction surgery",
+        "Breast reduction",
+        "Gonadectomy",
+        "Scrotectomy",
+        "Voice therapy",
+        "Facial feminisation surgery",
+        "Chest masculinisation",
     ],
 )
 def test_gender_affirming_care_shared_treatment_matches_with_gender_diagnosis(

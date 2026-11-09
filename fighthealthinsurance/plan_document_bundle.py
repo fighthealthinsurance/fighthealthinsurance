@@ -852,6 +852,12 @@ def prepare_document_fields(
         "notes": record.get("notes") if isinstance(record.get("notes"), str) else "",
         "import_batch": import_batch[:MAX_VERSION],
     }
+    # Staff deactivate a wrong document and note why in the admin; a record
+    # that doesn't say otherwise must not undo that on the next import. A new
+    # row gets the model's defaults (active, no notes).
+    for name in ("is_active", "notes"):
+        if name not in record:
+            del fields[name]
     return PreparedDocument(
         document_key=key,
         fields=fields,
