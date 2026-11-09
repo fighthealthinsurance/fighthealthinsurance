@@ -677,7 +677,7 @@ class TestOpenEnrollmentPopulation(TestCase):
 
     def test_shared_chart_draws_a_second_line_dashed_under_the_first(self):
         charts = (REPO / "fighthealthinsurance" / "static" / "js" / "denial_watch_charts.js").read_text()
-        self.assertIn("for(const s of also)series(s.pts,s);\n  series(pts,{color,ink,label,open,dash});", charts)
+        self.assertIn("for(const s of also){h+='<g class=\"dw-line\">';series(s.pts,s);h+='</g>';}\n  h+='<g class=\"dw-line dw-line-main\">';series(pts,{color,ink,label,open,dash});h+='</g>';", charts)
         self.assertIn('${dash?` stroke-dasharray="${dash}"`:\'\'}', charts)
 
     def test_key_names_both_lines_without_colour(self):

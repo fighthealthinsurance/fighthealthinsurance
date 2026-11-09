@@ -31,6 +31,18 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
     /* Not data: the page, the dark label ink on a light tile, and a bar's empty track. */
     --dw-paper: #ffffff; --dw-tile-ink: #15202b; --dw-track: #eef1f4; --dw-gone: var(--dw-paper);
   }
+  /* Chart motion (js/denial_watch_charts.js): bars grow from the left; hovering a list of bars dims the other bars; print shows every chart finished. */
+  .dw-bar-fill { transform-origin: left center; }
+  @media (prefers-reduced-motion: no-preference) and (hover: hover) {
+    .dw-bars .dw-bar-fill { transition: opacity 0.2s; }
+    /* Only the marks dim, so every label keeps its contrast. */
+    .dw-bars:hover .dw-bar:not(:hover) .dw-bar-fill { opacity: 0.45; }
+  }
+  @media print {
+    .dw-bar-fill, .dw-dumb i { scale: none !important; translate: none !important; }
+    .dw-line { clip-path: none !important; }
+    .dw-end { opacity: 1 !important; }
+  }
   /* Clear the sticky header, 143px tall below 992px wide, so a jump to any anchor lands below it. */
   .dw [id] { scroll-margin-top: calc(2 * var(--fhi-space-11)); }
   @media (min-width: 992px) { .dw [id] { scroll-margin-top: calc(var(--fhi-space-11) + var(--fhi-space-7)); } }

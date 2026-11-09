@@ -5,11 +5,12 @@
 (function(){
 const DATA_EL=document.getElementById('dw-data');const ROOT=document.querySelector('.dw');
 if(!DATA_EL||!ROOT||!window.DWCharts)return;
-const {foldLinks,fmt,pct,tok,line}=window.DWCharts;
+const {foldLinks,fmt,pct,tok,line,countUp}=window.DWCharts;
 /* Before the data is read, so a bad bundle or a chart that throws can't leave a link stuck on a closed fold. */
 foldLinks();
 const D=JSON.parse(DATA_EL.textContent);
 const $=id=>document.getElementById(id);
+countUp($('enroll-numbers'));
 
 /* marketplace coverage: every February from one CMS file, in the count colour, the year CMS is still counting drawn hollow */
 const MK=D.marketplace;

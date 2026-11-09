@@ -225,5 +225,5 @@
 </div>
 <script src="{% versioned 'js/denial_watch_charts.js' %}" defer></script>
 {# The shared opener, so a link into the closed Sources and method opens it first. #}
-<script>document.addEventListener("DOMContentLoaded", () => window.DWCharts && window.DWCharts.foldLinks());</script>
+<script>document.addEventListener("DOMContentLoaded", () => { if (window.DWCharts) { window.DWCharts.foldLinks(); window.DWCharts.countUp(document.getElementById("costs-numbers")); } });</script>
 {% endblock content %}
