@@ -1,0 +1,18 @@
+{% comment %}form_utils.PlanSourcePicker: where a plan comes from, in two steps. The first answers post as <name>_group, and one that is a single kind names it in data-plan-source; under an answer that covers several kinds, a follow-up whose answer posts as <name>. The stylesheet shows a follow-up only under its ticked answer.{% endcomment %}
+<div id="{{ widget.base_id }}" class="fhi-plan-picker" role="radiogroup"{% if widget.group_label %} aria-label="{{ widget.group_label }}"{% endif %}{% if widget.group_help %} aria-describedby="{{ widget.base_id }}_helptext"{% endif %}>
+  <div class="fhi-check-list">{% for group in widget.groups %}
+    <div class="fhi-check-row">
+      <input type="radio" name="{{ widget.group_name }}" value="{{ group.key }}" id="{{ group.id }}"{% if widget.attrs.class %} class="{{ widget.attrs.class }}"{% endif %}{% if group.rows|length == 1 %} data-plan-source="{{ group.rows.0.pk }}"{% endif %}{% if group.checked %} checked{% endif %}>
+      <label for="{{ group.id }}">{{ group.label }}</label>{% if group.rows|length > 1 %}
+      <fieldset class="fhi-plan-picker-follow-up">
+        <legend>{{ group.question }}</legend>
+        <div class="fhi-check-list">{% for row in group.rows %}
+          <div class="fhi-check-row">
+            <input type="radio" name="{{ widget.name }}" value="{{ row.pk }}" id="{{ row.id }}"{% if widget.attrs.class %} class="{{ widget.attrs.class }}"{% endif %}{% if row.checked %} checked{% endif %}>
+            <label for="{{ row.id }}">{{ row.label }}</label>
+          </div>{% endfor %}
+        </div>
+      </fieldset>{% endif %}
+    </div>{% endfor %}
+  </div>
+</div>

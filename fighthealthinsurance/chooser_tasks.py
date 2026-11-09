@@ -22,7 +22,7 @@ import re
 import threading
 import time
 from types import SimpleNamespace
-from typing import Any, Awaitable, Callable, List, Optional, Tuple, Union, cast
+from typing import Any, Awaitable, Callable, List, Mapping, Optional, Tuple, Union, cast
 
 from django.conf import settings
 from django.db.models import Count, Q, QuerySet
@@ -44,12 +44,14 @@ from fighthealthinsurance.ml.question_parsing import (
     MAX_QUESTION_CHARS,
     is_junk_question,
 )
+from fighthealthinsurance.ml.web_search_context import judged_web_results
 from fighthealthinsurance import chooser_complexity, condition_rankings
 from fighthealthinsurance.chooser_chat_tools import ToolAnswer, answer_with_tools
 from fighthealthinsurance.chooser_practice_areas import (
     normalize_practice_area,
     practice_area_label,
     practice_area_text_matches,
+    practice_area_texts_match,
 )
 from fighthealthinsurance.models import (
     ChooserCandidate,
@@ -127,6 +129,9 @@ CHOOSER_SIMPLE_CASE_SHARE = getattr(settings, "CHOOSER_SIMPLE_CASE_SHARE", 0.25)
 CHOOSER_EVIDENCE_LIMIT = getattr(settings, "CHOOSER_EVIDENCE_LIMIT", 5)
 # Seconds a live PubMed search for a scenario's evidence may take.
 CHOOSER_PUBMED_SEARCH_TIMEOUT = getattr(settings, "CHOOSER_PUBMED_SEARCH_TIMEOUT", 20.0)
+# Seconds a web search for a scenario's evidence, with its judging, may take
+# (see _web_evidence_for). It runs beside the PubMed lookup.
+CHOOSER_WEB_SEARCH_TIMEOUT = getattr(settings, "CHOOSER_WEB_SEARCH_TIMEOUT", 25.0)
 # Seconds a case waits for the verdicts on its evidence (see
 # _judge_evidence), Jev's and then our own model's, before going on without
 # them; verdicts that landed in time are stored either way.
@@ -143,9 +148,18 @@ CHOOSER_MAX_FACTS = 6
 _MAX_FACT_CHARS = 240
 # Evidence rows carry a PMID, a title, (when known) a link, and (when one is
 # on file) a short summary: the summary real appeals were given for the
-# article, else the start of its abstract. The voter is shown exactly what
-# the drafts were given, summaries included.
-_EVIDENCE_KEYS = ("pmid", "title", "url", "summary")
+# article, else the start of its abstract. A web page a search found
+# (_web_evidence_for) has no PMID; it carries source "web", its link, the
+# excerpt the search returned as its summary, and the judgment that kept it
+# (web_judgment, shown to voters as the PubMed verdicts are, never to the
+# drafts). The voter is shown exactly what the drafts were given, summaries
+# included.
+# An item judged probably off topic for the pair (and kept, there being too
+# little plainly on topic to leave it out) carries "relevance":
+# EVIDENCE_PROBABLY_OFF_TOPIC, and the drafts are told so (_focus_evidence).
+_EVIDENCE_KEYS = ("pmid", "title", "url", "summary", "source", "relevance")
+WEB_EVIDENCE_SOURCE = "web"
+EVIDENCE_PROBABLY_OFF_TOPIC = "probably_off_topic"
 _EVIDENCE_SUMMARY_CHARS = 600
 # The case-building pipeline that writes a new task of each type (stored as
 # ChooserTask.case_version). Appeal cases at 2 also carry article summaries
@@ -154,9 +168,13 @@ _EVIDENCE_SUMMARY_CHARS = 600
 # fresh (see _fresh_tasks), so the refill keeps the new kind coming while
 # older tasks stay votable. Bump a type's version when its cases change in
 # a way votes should be told apart by.
+# Appeal cases at 3 can also carry web pages a search found, each judged on
+# topic and not against the treatment (_web_evidence_for).
+# Appeal cases at 4 tell the drafts which evidence is probably off topic,
+# and leave it out when enough is plainly on topic (_focus_evidence).
 # Chat cases at 2 have their drafts' lookups (PubMed and the chat's other
 # read-only tools) run and shown to the voter (see chooser_chat_tools).
-CASE_VERSIONS = {"appeal": 2, "chat": 2}
+CASE_VERSIONS = {"appeal": 4, "chat": 2}
 # The simulated interview (see _interview): how many of the app's questions
 # the fictional patient is asked, how long the question generators may take,
 # and the longest answer kept.
@@ -212,6 +230,13 @@ def _pubmed_live_search_allowed() -> bool:
     Read per call so tests, and an operator short on NCBI quota, can turn
     it off; the seeded path rarely needs it."""
     return bool(getattr(settings, "CHOOSER_PUBMED_LIVE_SEARCH", True))
+
+
+def _web_search_allowed() -> bool:
+    """Whether a scenario's evidence also gets a web search (see
+    _web_evidence_for). Read per call: off in tests, which would otherwise
+    reach OpenRouter."""
+    return bool(getattr(settings, "CHOOSER_WEB_SEARCH", True))
 
 
 def _evidence_judging_allowed() -> bool:
@@ -670,17 +695,19 @@ def _evidence_summary(summary: Optional[str], abstract: Optional[str]) -> str:
 
 async def _judge_evidence(
     procedure: str, diagnosis: str, articles: List[PubMedMiniArticle]
-) -> None:
+) -> dict:
     """Have a case's articles judged for its pair (is each about this
     treatment for this condition, does it support it, does it argue against
     it), storing the answers in PubMedArticleJudgment the way a real
     appeal's research context does (pubmed_tools.judge_missing; a judgment
-    already stored for the pair is not asked for again). The voter's page
-    reads the stored judgments back (annotate_evidence_verdicts). Nothing is
-    kept on the case itself: the drafts are given the summaries and never
-    the verdicts, so the stored case stays exactly what they were shown, and
-    a draft that leans on a study judged against the treatment is doing so
-    on its own reading of the summary.
+    already stored for the pair is not asked for again), and return them by
+    PMID (Jev's where both judged one). The voter's page reads the stored
+    judgments back (annotate_evidence_verdicts). The drafts are told only
+    whether an article is on topic, as a real appeal's are
+    (_focus_evidence: with enough plainly on topic the rest are left out,
+    else the probably off-topic ones are labelled), never whether it is for
+    or against the treatment: a draft that leans on a study judged against
+    the treatment is doing so on its own reading of the summary.
 
     Jev judges first, while research judging is on. Whatever it does not
     judge (it is off or not set up, a request failed, its budget is spent,
@@ -695,7 +722,7 @@ async def _judge_evidence(
     CHOOSER_EVIDENCE_JUDGING_TIMEOUT: a case whose evidence could not be
     judged is still worth a vote, without verdicts."""
     if not articles or not _evidence_judging_allowed():
-        return
+        return {}
     from fighthealthinsurance import pubmed_tools
 
     loop = asyncio.get_running_loop()
@@ -703,9 +730,11 @@ async def _judge_evidence(
     jev_on = research_judging.enabled()
     key = research_judging.treatment_key(procedure, diagnosis)
     pmids = [a.pmid for a in articles if a.pmid]
+    by_jev: dict = {}
+    by_ours: dict = {}
+    # Our own model's answers land here as they arrive (judge_missing).
+    known: dict = {}
     try:
-        by_jev: dict = {}
-        by_ours: dict = {}
         async for row in pubmed_tools.judgment_rows(
             pmids, key, jev=jev_on, own_models=True
         ):
@@ -716,7 +745,7 @@ async def _judge_evidence(
             )
             judged[row.pmid] = pubmed_tools.judgment_of(row)
         if all(pmid in (by_jev if jev_on else by_ours) for pmid in pmids):
-            return
+            return {**by_ours, **by_jev}
         # The article is what is read. One stored without an abstract (an
         # older row, or a fetch that brought only the title) may have it on
         # the row an appeal summarized.
@@ -760,12 +789,12 @@ async def _judge_evidence(
             except asyncio.TimeoutError:
                 jev_timed_out = True
                 logger.info("Chooser: Jev ran out of time judging a case's evidence")
-        known = {**by_ours, **by_jev}
+        known.update({**by_ours, **by_jev})
         left = [
             a.pmid for a in to_judge if a.pmid and a.pmid not in known and a.abstract
         ][: research_judging.MAX_ARTICLES]
         if not left:
-            return
+            return {**known, **by_jev}
         if not jev_on:
             why = (
                 "Jev is not set up for research judging (TYPESAFE_API_KEY "
@@ -784,7 +813,7 @@ async def _judge_evidence(
                 f"Chooser: {why}, and there is no internal model to judge "
                 f"them instead; {len(left)} article(s) go without a verdict"
             )
-            return
+            return {**known, **by_jev}
         logger.warning(
             f"Chooser: {why}; falling back to our own model "
             f"{_model_display_name(ours)} for {len(left)} article(s)"
@@ -792,7 +821,7 @@ async def _judge_evidence(
         remaining = deadline - loop.time()
         if remaining <= 0:
             logger.info("Chooser: no time left to judge a case's evidence")
-            return
+            return {**known, **by_jev}
         await asyncio.wait_for(
             pubmed_tools.judge_missing(
                 to_judge, procedure, diagnosis, known, own_model=ours
@@ -805,6 +834,63 @@ async def _judge_evidence(
         logger.opt(exception=True).warning(
             f"Chooser: could not judge a case's evidence: {e}"
         )
+    return {**by_ours, **known, **by_jev}
+
+
+def _focus_evidence(
+    evidence: List[dict], judgments: Mapping[str, research_judging.Judgment]
+) -> List[dict]:
+    """``evidence`` (one source's rows, PubMed's) as the drafts are given
+    it, by the rule a real appeal's references follow
+    (research_judging.focus): with enough plainly on topic, only those; else
+    all of them, each one judged probably off topic marked so
+    (EVIDENCE_PROBABLY_OFF_TOPIC, which _build_appeal_prompt tells the
+    drafts). Stored on the case, so the voter is shown what the drafts were.
+    """
+
+    def pmid_of(item: dict) -> str:
+        return str(item.get("pmid") or "")
+
+    quoted, set_aside = research_judging.focus(evidence, judgments, pmid_of=pmid_of)
+    if set_aside:
+        logger.info(
+            f"Chooser evidence: {len(set_aside)} article(s) probably off topic "
+            f"or unjudged left out beside {len(quoted)} on topic"
+        )
+    off_topic = research_judging.probably_off_topic(quoted, judgments, pmid_of=pmid_of)
+    return [
+        (
+            {**item, "relevance": EVIDENCE_PROBABLY_OFF_TOPIC}
+            if pmid_of(item) in off_topic
+            else item
+        )
+        for item in quoted
+    ]
+
+
+def _web_verdicts_for_voters(evidence: List[Any]) -> Tuple[List[Any], bool]:
+    """``evidence`` with each web page's stored judgment (web_judgment) moved
+    to ``judgment``, the key the voter's page reads, while the switch for
+    its judge is on (research judging for Jev's, CHOOSER_JUDGE_EVIDENCE for
+    our own model's), and dropped otherwise; and whether anything changed."""
+    changed = False
+    shown: List[Any] = []
+    for item in evidence:
+        if not isinstance(item, dict) or "web_judgment" not in item:
+            shown.append(item)
+            continue
+        changed = True
+        item = dict(item)
+        stored = item.pop("web_judgment")
+        if isinstance(stored, dict):
+            by_jev = bool(stored.get("by_jev"))
+            allowed = (
+                research_judging.enabled() if by_jev else _evidence_judging_allowed()
+            )
+            if allowed:
+                item["judgment"] = {k: v for k, v in stored.items() if k != "by_jev"}
+        shown.append(item)
+    return shown, changed
 
 
 def annotate_evidence_verdicts(context: dict) -> dict:
@@ -824,7 +910,9 @@ def annotate_evidence_verdicts(context: dict) -> dict:
     CHOOSER_JUDGE_EVIDENCE is (pubmed_tools.stored_judgments_for: each
     switch is the kill switch for its stored judgments). Returns a new dict;
     ``context`` is left as it is."""
-    evidence = context.get("evidence") or []
+    evidence, web_changed = _web_verdicts_for_voters(context.get("evidence") or [])
+    if web_changed:
+        context = {**context, "evidence": evidence}
     pmids = [
         str(item["pmid"])
         for item in evidence
@@ -854,7 +942,78 @@ def annotate_evidence_verdicts(context: dict) -> dict:
 
 
 async def _evidence_for(procedure: str, diagnosis: str) -> List[dict]:
-    """The evidence a scenario's drafts may cite: up to CHOOSER_EVIDENCE_LIMIT
+    """The evidence a scenario's drafts may cite: the PubMed articles on file
+    for the pair (_pubmed_evidence_for), then the web pages a search found
+    and judged relevant (_web_evidence_for). The two run at once, and either
+    failing leaves the other's rows."""
+    found_by_source: List[Union[List[dict], BaseException]] = list(
+        await asyncio.gather(
+            _pubmed_evidence_for(procedure, diagnosis),
+            _web_evidence_for(procedure, diagnosis),
+            return_exceptions=True,
+        )
+    )
+    evidence: List[dict] = []
+    for name, found in zip(("PubMed", "web"), found_by_source):
+        if isinstance(found, BaseException):
+            if isinstance(found, asyncio.CancelledError):
+                raise found
+            logger.warning(f"Chooser: {name} evidence failed for a scenario: {found}")
+            continue
+        evidence.extend(found)
+    return evidence
+
+
+def _web_evidence_item(result: Any, judgment: research_judging.Judgment) -> dict:
+    """One kept web page as an evidence row (see _EVIDENCE_KEYS). The pages
+    are already focused (judged_web_results applies research_judging.focus);
+    one kept though probably off topic is marked so, as an article is."""
+    item: dict = {
+        "title": (result.page_title or result.url)[:300],
+        "url": result.url,
+        "source": WEB_EVIDENCE_SOURCE,
+        "web_judgment": {
+            **judgment.as_dict(),
+            "by_jev": judgment.scorer.startswith(research_judging.JEV_SCORER_PREFIX),
+        },
+    }
+    if judgment.probably_off_topic:
+        item["relevance"] = EVIDENCE_PROBABLY_OFF_TOPIC
+    summary = _evidence_summary(None, result.excerpt)
+    if summary:
+        item["summary"] = summary
+    return item
+
+
+async def _web_evidence_for(procedure: str, diagnosis: str) -> List[dict]:
+    """Web pages a search on the pair found (OpenRouter's web search, see
+    ml/web_search_context.py), each judged on topic and not against the
+    treatment, at most web_search_context.MAX_KEPT, strongest support first,
+    within CHOOSER_WEB_SEARCH_TIMEOUT; [] when the search is off, not
+    configured, or found nothing that passed. Pages are kept only once
+    judged, so with CHOOSER_JUDGE_EVIDENCE off there are none. The case is
+    synthetic and the pair is a k-anonymous one, so Jev may judge them,
+    as it judges the PubMed articles."""
+    if not procedure or not _web_search_allowed() or not _evidence_judging_allowed():
+        return []
+
+    async def jev_may_judge() -> bool:
+        return True
+
+    kept = await judged_web_results(
+        procedure,
+        diagnosis,
+        budget_seconds=CHOOSER_WEB_SEARCH_TIMEOUT,
+        may_ask_jev=jev_may_judge,
+        label="an arena case",
+    )
+    if kept:
+        logger.info(f"Chooser evidence: {len(kept)} web page(s) judged relevant")
+    return [_web_evidence_item(result, judgment) for result, judgment in kept]
+
+
+async def _pubmed_evidence_for(procedure: str, diagnosis: str) -> List[dict]:
+    """The PubMed evidence a scenario's drafts may cite: up to CHOOSER_EVIDENCE_LIMIT
     articles for the procedure and diagnosis, each a PMID, a title, a link
     and, when one is on file, a summary (see _evidence_summary). Cached
     searches first; a live search only when nothing is cached and
@@ -922,10 +1081,11 @@ async def _evidence_for(procedure: str, diagnosis: str) -> List[dict]:
         if len(evidence) >= CHOOSER_EVIDENCE_LIMIT:
             break
     # Jev's verdict on each article, stored for the voter's page; the
-    # drafts are not told it (see _judge_evidence).
-    await _judge_evidence(
+    # drafts are told only whether it is on topic (see _judge_evidence).
+    judgments = await _judge_evidence(
         procedure, diagnosis, [titles[item["pmid"]] for item in evidence]
     )
+    evidence = _focus_evidence(evidence, judgments)
     logger.info(
         f"Chooser evidence for {query!r}: {len(evidence)} article(s) "
         f"({sum(1 for e in evidence if e.get('summary'))} with a summary) from "
@@ -2126,9 +2286,8 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     f"Response started: {preview!r}"
                 )
                 continue
-            if practice_area and not all(
-                practice_area_text_matches(practice_area, written[field])
-                for field in ("procedure", "diagnosis")
+            if practice_area and not practice_area_texts_match(
+                practice_area, [written["procedure"], written["diagnosis"]]
             ):
                 logger.warning(
                     f"ChooserTask {task.id}: scenario from "
@@ -2296,11 +2455,17 @@ async def _generate_chat_candidates(task: ChooserTask):
                 not practice_area or practice_area_text_matches(practice_area, question)
             )
 
-        def history_matches_area() -> bool:
-            return not practice_area or all(
-                turn["role"] != "user"
-                or practice_area_text_matches(practice_area, turn["content"])
-                for turn in history
+        def conversation_matches_area(question: Optional[str]) -> bool:
+            # The user turns are read together, so a turn naming only a
+            # treatment the area shares ("will they cover my estradiol?")
+            # counts when another turn places it in the area.
+            return _usable_question(question) and (
+                not practice_area
+                or practice_area_texts_match(
+                    practice_area,
+                    [turn["content"] for turn in history if turn["role"] == "user"]
+                    + [question],
+                )
             )
 
         started = time.monotonic()
@@ -2312,7 +2477,7 @@ async def _generate_chat_candidates(task: ChooserTask):
             history, final_user_prompt = _parse_conversation(
                 conversation_response or ""
             )
-            if usable_for_area(final_user_prompt) and history_matches_area():
+            if conversation_matches_area(final_user_prompt):
                 logger.info(
                     f"ChooserTask {task.id}: conversation by "
                     f"{_model_display_name(writer)} ({len(history)} earlier "
@@ -2430,16 +2595,29 @@ def _build_appeal_prompt(context: dict) -> str:
             parts.append(f"Q: {pair['question']}")
             parts.append(f"A: {pair['answer']}")
     evidence = [e for e in (context.get("evidence") or []) if e.get("title")]
+    has_web = any(
+        e.get("source") == WEB_EVIDENCE_SOURCE and e.get("url") for e in evidence
+    )
     if evidence:
-        parts.append("\nEvidence on file (the only studies you may cite):")
+        parts.append(
+            "\nEvidence on file (the only studies and web pages you may cite):"
+            if has_web
+            else "\nEvidence on file (the only studies you may cite):"
+        )
         for e in evidence:
-            parts.append(
-                f"- {e['title']} (PMID {e['pmid']})"
-                if e.get("pmid")
-                else f"- {e['title']}"
-            )
+            if e.get("pmid"):
+                parts.append(f"- {e['title']} (PMID {e['pmid']})")
+            elif e.get("source") == WEB_EVIDENCE_SOURCE and e.get("url"):
+                parts.append(f"- {e['title']} (web page: {e['url']})")
+            else:
+                parts.append(f"- {e['title']}")
             if e.get("summary"):
                 parts.append(f"  Summary: {e['summary']}")
+            if e.get("relevance") == EVIDENCE_PROBABLY_OFF_TOPIC:
+                parts.append(
+                    "  Relevance note: judged "
+                    f"{research_judging.PROBABLY_OFF_TOPIC_NOTE}"
+                )
 
     parts.append(
         "\nPlease write a professional appeal letter that argues why this treatment "
@@ -2452,6 +2630,7 @@ def _build_appeal_prompt(context: dict) -> str:
         + " above; where a detail is not given, leave it out or "
         "say the records will show it, rather than inventing it. Cite only the "
         "evidence on file, by title or PMID"
+        + (" (a web page by its title or link)" if has_web else "")
         + (
             ", and claim no more for a study than its summary says"
             if any(e.get("summary") for e in evidence)

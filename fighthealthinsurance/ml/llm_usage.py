@@ -92,6 +92,7 @@ TASKS = (
     "doc_summary",
     "policy_analysis",
     "pubmed_summary",
+    "web_search",
     # TypeSafe (Jev) checks.
     "triage",
     "letter_scoring",

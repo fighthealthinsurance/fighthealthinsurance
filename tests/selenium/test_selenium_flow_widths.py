@@ -53,6 +53,9 @@ const rows = Array.from(document.querySelectorAll('.fhi-form-table tr')).map(tr 
     const th = tr.querySelector('th');
     const td = tr.querySelector('td');
     if (!th || !td) { return null; }
+    // A row the page hides until an answer calls for it (the employer's name
+    // until "Through a job" is ticked, say) takes no width to measure.
+    if (getComputedStyle(tr).display === 'none') { return null; }
     // Boxes and radios are not fill-width controls, so they are not asked to fill.
     const field = td.querySelector(
         'input:not([type=hidden]):not([type=checkbox]):not([type=radio]), select, textarea'

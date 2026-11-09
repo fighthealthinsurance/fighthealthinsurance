@@ -64,7 +64,7 @@ LINK = "https://benefits.crumpler-clinic.example.org/2026/plan-documents"
 LINK_B = "http://www.crumplermutual.example.com/plans/gold-ppo"
 EMAIL = "rebecca.crumpler@example.com"
 OTHER_EMAIL = "mary.mahoney@example.com"
-TXT = b"Summary of Benefits, Crumpler Mutual Gold PPO. Overall deductible: $1,500"
+TXT = b"Summary of Benefits, Crumpler Mutual Gold PPO. Overall deductible: $1,500. " * 20
 DASHES = ("\u2014", "\u2013")
 LINKS = PolicyDocument.SOURCE_SHARED_LINK
 

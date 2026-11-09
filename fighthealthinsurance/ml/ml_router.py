@@ -897,6 +897,16 @@ class MLRouter(object):
                 return up
         return []
 
+    def web_search_backend(self) -> Optional[OpenRouterWebSearch]:
+        """OpenRouter's web search model (context only), or None when it is
+        not registered (no OPENROUTER_API_KEY, or turned off) or is down,
+        backing off or paused for credit. Never fails open: web search is
+        extra context, and without it the citations go ahead as before."""
+        for model in self.cheapest(OpenRouterWebSearch.NAME):
+            if isinstance(model, OpenRouterWebSearch) and self._selectable(model):
+                return model
+        return None
+
     def get_prior_auth_backends(self) -> list[RemoteModelLike]:
         """
         Return models for generating prior authorizations.

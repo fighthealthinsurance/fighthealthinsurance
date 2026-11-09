@@ -112,7 +112,7 @@ class AppealAttachmentTests(TestCase):
         )
 
         self.test_file = SimpleUploadedFile(
-            "test.pdf", b"file_content", content_type="application/pdf"
+            "test.pdf", b"%PDF-1.4 file_content", content_type="application/pdf"
         )
         self.client.force_login(self._professional_user_domain_admin)
 
@@ -215,7 +215,7 @@ class AppealAttachmentTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(b"".join(response.streaming_content), b"file_content")
+        self.assertEqual(b"".join(response.streaming_content), b"%PDF-1.4 file_content")
         self.assertEqual(response["Content-Type"], "application/pdf")
         self.assertIn('filename="test.pdf"', response["Content-Disposition"])
 

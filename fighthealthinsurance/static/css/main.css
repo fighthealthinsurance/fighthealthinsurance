@@ -67,6 +67,13 @@ label,
 .scroll-x {
     max-width: 100%;
     overflow-x: auto;
+    /* Sideways only. overflow-x:auto alone makes y auto as well, so anything
+       that pokes a pixel past the bottom (a password manager's or
+       Grammarly's badge in a field, a sub-pixel rounding at some zooms) gave
+       the box its own vertical scrollbar inside the page's: the review page's
+       occasional double scroll. The box is as tall as what it holds, so
+       there is nothing below to scroll to. */
+    overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     min-width: 0;
     /* Room for a focus ring. The fields inside fill their cells and the

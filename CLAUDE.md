@@ -127,7 +127,7 @@ REST API uses drf-spectacular for OpenAPI docs. API endpoints are under `/ziggy/
 ## Environment Variables
 
 ML backends (at least one; either kind works on its own):
-- `ANTHROPIC_API_KEY`, `DEEPINFRA_API`, or the Azure settings - hosted models, used as the backup tier (see docs/ml-backends.md)
+- `ANTHROPIC_API_KEY`, `DEEPINFRA_API`, `OPENROUTER_API_KEY`, or the Azure settings - hosted models, used as the backup tier (see docs/ml-backends.md); `OPENROUTER_API_KEY` also turns on OpenRouter web search for extra, relevance-judged appeal citations
 - `HEALTH_BACKEND_HOST` / `HEALTH_BACKEND_PORT` - a self-hosted backend
 
 Development:

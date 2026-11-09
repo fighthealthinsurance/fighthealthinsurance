@@ -162,6 +162,16 @@
                 {% endif %}
             </div>
         </div>
+
+        {% if state.keep_your_care_url %}
+        <div class="fhi-card keep-your-care-card">
+            <h3>Keeping Medicaid under the work requirements</h3>
+            <p class="fhi-hint">Keep Your Care, a nonprofit, explains {{ state.name }}'s deadlines and who is exempt, and connects you with navigators who can help you keep your coverage.</p>
+            <a href="{{ state.keep_your_care_url }}" target="_blank" rel="noopener noreferrer" class="fhi-button fhi-button-outbound fhi-button-small">
+                Keep Your Care: {{ state.name }} {% include 'partials/opens_in_new_tab.html' %}
+            </a>
+        </div>
+        {% endif %}
     </div>
 </section>
 

@@ -50,9 +50,9 @@ class ProVersionSignupSuccessTest(TestCase):
     def test_creates_interested_professional_record(self):
         self.assertEqual(self.pro.name, "Jane Doe")
 
-    def test_marks_thankyou_email_sent(self):
-        # ThankyouEmailSender.dosend() flips this on a successful send.
-        self.assertTrue(self.pro.thankyou_email_sent)
+    def test_does_not_mark_thankyou_email_sent(self):
+        # The thank-you waits for staff to act on the team notification.
+        self.assertFalse(self.pro.thankyou_email_sent)
 
     def test_records_clicked_for_paid_as_false(self):
         # Pay-to-express-interest is no longer collected.
@@ -80,8 +80,9 @@ class ProVersionSignupSuccessTest(TestCase):
         ):
             self.assertIn(value, body)
 
-    def test_sends_thankyou_email_to_signer(self):
-        self.assertTrue(
+    def test_sends_no_thankyou_email_to_signer_yet(self):
+        # Staff send it from the notification (see test_pro_signup_actions.py).
+        self.assertFalse(
             any(
                 "Thanks for your interest" in m.subject
                 and "jane@clinic.example" in m.to
@@ -157,7 +158,8 @@ class ProVersionSignupEdgeCaseTest(TestCase):
 
     def test_team_notification_failure_does_not_block_signup(self):
         with patch(
-            "fighthealthinsurance.utils.send_mail", side_effect=Exception("smtp down")
+            "fighthealthinsurance.utils.EmailMultiAlternatives.send",
+            side_effect=Exception("smtp down"),
         ):
             response = self.client.post(
                 reverse("pro_version"),
@@ -172,27 +174,26 @@ class ProVersionSignupEdgeCaseTest(TestCase):
 
     def test_post_rejects_mass_assignment_of_internal_fields(self):
         """Public submitters can't preset thankyou_email_sent/paid via POST."""
-        # Patch out the immediate thank-you sender so the only path that could
-        # flip thankyou_email_sent is the POST body itself — which Meta.exclude
-        # must block. Without this patch, dosend() would always set it to True
-        # and we couldn't distinguish a real save-path flip from a leaked POST.
-        with patch("fighthealthinsurance.pro_signups.ThankyouEmailSender.dosend"):
-            self.client.post(
-                reverse("pro_version"),
-                {
-                    "name": "Hacky",
-                    "email": "hacky@clinic.example",
-                    "thankyou_email_sent": "true",
-                    "paid": "true",
-                },
-            )
+        # No thank-you goes out on signup, so the only path that could flip
+        # thankyou_email_sent is the POST body itself — which the form's
+        # fields allow-list must block.
+        self.client.post(
+            reverse("pro_version"),
+            {
+                "name": "Hacky",
+                "email": "hacky@clinic.example",
+                "thankyou_email_sent": "true",
+                "paid": "true",
+            },
+        )
         pro = InterestedProfessional.objects.get(email="hacky@clinic.example")
         self.assertFalse(pro.thankyou_email_sent)
         self.assertFalse(pro.paid)
 
     def test_repeat_submission_dedups_by_email(self):
         """A returning email reuses its existing lead: no duplicate row and no
-        second thank-you, though the submitter still lands on the thankyou page."""
+        thank-you (that waits for staff), though the submitter still lands on
+        the thankyou page."""
         payload = {"name": "Returning", "email": "returning@clinic.example"}
         first = self.client.post(reverse("pro_version"), payload)
         second = self.client.post(reverse("pro_version"), payload)
@@ -210,7 +211,7 @@ class ProVersionSignupEdgeCaseTest(TestCase):
             if "returning@clinic.example" in m.to
             and "Thanks for your interest" in m.subject
         ]
-        self.assertEqual(len(thankyous), 1)
+        self.assertEqual(len(thankyous), 0)
 
     def test_post_enforces_csrf(self):
         """The POST endpoint must enforce CSRF — it now writes to the DB."""
@@ -274,9 +275,9 @@ class ExternalProSignupTest(TestCase):
             )
         )
 
-    def test_valid_submission_sends_thankyou_to_signer(self):
+    def test_valid_submission_sends_no_thankyou_to_signer_yet(self):
         self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
-        self.assertTrue(
+        self.assertFalse(
             any(
                 "Thanks for your interest" in m.subject and "ext@clinic.example" in m.to
                 for m in mail.outbox
@@ -358,14 +359,13 @@ class ExternalProSignupTest(TestCase):
             if "Thanks for your interest" in m.subject
             and any("ext@clinic.example" in t.lower() for t in m.to)
         ]
-        self.assertEqual(len(thankyous), 1)
+        self.assertEqual(len(thankyous), 0)
 
     def test_rejects_mass_assignment_of_internal_fields(self):
-        with patch("fighthealthinsurance.pro_signups.ThankyouEmailSender.dosend"):
-            self.client.post(
-                reverse(self.URL_NAME),
-                {**self.PAYLOAD, "paid": "true", "thankyou_email_sent": "true"},
-            )
+        self.client.post(
+            reverse(self.URL_NAME),
+            {**self.PAYLOAD, "paid": "true", "thankyou_email_sent": "true"},
+        )
         pro = InterestedProfessional.objects.get(email="ext@clinic.example")
         self.assertFalse(pro.paid)
         self.assertFalse(pro.thankyou_email_sent)
@@ -571,9 +571,9 @@ class ProVersionThankYouDirectPostTest(TestCase):
         # direct post apart from the on-site form.
         self.assertIn("/pro_version_thankyou", notification.body)
 
-    def test_post_sends_thankyou_email_to_signer(self):
+    def test_post_sends_no_thankyou_email_to_signer_yet(self):
         self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
-        self.assertTrue(
+        self.assertFalse(
             any(
                 "Thanks for your interest" in m.subject
                 and "direct@clinic.example" in m.to

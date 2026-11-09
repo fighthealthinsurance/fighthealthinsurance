@@ -117,6 +117,7 @@ from fighthealthinsurance.models import (
     ProfessionalDomainRelation,
     ProfessionalUser,
     ProposedAppeal,
+    PublicPlanDocument,
     ScheduledEmail,
     UserDomain,
 )
@@ -179,6 +180,7 @@ from fighthealthinsurance.proconnector import (
     send_proconnector_intro_email,
     send_proconnector_test_email,
 )
+from fighthealthinsurance import pro_signup_actions
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
 
@@ -438,6 +440,45 @@ class PolicyDocumentTextView(View):
 
 
 @method_decorator(never_cache, name="dispatch")
+class PublicPlanDocumentTextView(View):
+    """The text of a public plan document we fetched (PublicPlanDocument),
+    as the importer stored it, served as plain text that can't run
+    anything. Public data; routed behind staff_member_required all the
+    same, like the other document text views."""
+
+    def get(self, request, pk: int) -> HttpResponseBase:
+        # only(): none of the regex columns, which RegexField cannot load
+        # once deferred, is read here.
+        doc = (
+            PublicPlanDocument.objects.filter(pk=pk)
+            .only(
+                "pk",
+                "title",
+                "plan_year",
+                "page_count",
+                "char_count",
+                "updated_at",
+                "text",
+            )
+            .first()
+        )
+        if doc is None:
+            raise Http404("No public plan document by that id")
+        header = (
+            f"Public plan document {pk}: {doc.citation_name()}\n"
+            f"Pages: {doc.page_count}; characters: {doc.char_count}; "
+            f"updated: {doc.updated_at:%Y-%m-%d %H:%M} UTC\n"
+        )
+        text = doc.text
+        if len(text) > PolicyDocumentTextView.MAX_CHARS:
+            text = text[: PolicyDocumentTextView.MAX_CHARS]
+            header += (
+                f"Showing the first {PolicyDocumentTextView.MAX_CHARS} characters.\n"
+            )
+        return _plain_text(header + "\n" + text)
+
+
+@method_decorator(never_cache, name="dispatch")
 class PolicyDocumentCleanedTextView(View):
     """A shared policy document's cleaned text: what its reading stored,
     with personal details taken out as best we could
@@ -446,6 +487,10 @@ class PolicyDocumentCleanedTextView(View):
 
     NOTES = {
         PolicyDocument.PROCESSING_RECEIVED: "Not read yet.",
+        PolicyDocument.PROCESSING_SPAM: (
+            "Marked as potential spam: kept out of every count and never read "
+            "again unless marked not spam."
+        ),
         PolicyDocument.PROCESSING_UNREADABLE: (
             "No text could be read from this file. It may be scanned pages. "
             "Download the original."
@@ -5977,6 +6022,18 @@ class ProConnectorQuickIntroView(View):
             f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)}) "
             "via the quick-intro flow"
         )
+        staff = pro_signup_actions.staff_display_name(request.user)
+        pro_signup_actions.post_to_signup_thread(
+            pro,
+            (
+                f"{staff} sent the Cofactor AI introduction to {pro.email}."
+                if action == "send"
+                else (
+                    f"{staff} queued the Cofactor AI introduction to {pro.email} "
+                    "to send during their likely business hours."
+                )
+            ),
+        )
         # Re-fetch rather than refresh_from_db(): a concurrent delete of the
         # record must not 500 after an email that already went out.
         pro = InterestedProfessional.objects.filter(pk=pro_id).first()
@@ -5991,6 +6048,101 @@ class ProConnectorQuickIntroView(View):
             )
         )
         return self._render(request, pro, notice=notice)
+
+
+class ProSignupActionView(View):
+    """One staff action on a new professional signup: thank them, or block.
+
+    Linked (as buttons) from the team notification each new signup sends,
+    beside the Cofactor AI introduction (:class:`ProConnectorQuickIntroView`).
+    The GET shows the signup and a confirm button; the action itself is a
+    POST, so a mail scanner prefetching the email's links can never send a
+    thank-you or block anyone. A done action replies to the notification's
+    thread so the other admins on the inbox know (see pro_signup_actions.py).
+    """
+
+    template_name = "pro_signup_action.html"
+
+    TITLES = {
+        pro_signup_actions.THANKYOU: "Send the thank-you email",
+        pro_signup_actions.BLOCK: "Block this address",
+    }
+
+    def _render(
+        self,
+        request,
+        pro: InterestedProfessional,
+        action: str,
+        *,
+        notice: Optional[str] = None,
+        error: Optional[str] = None,
+        status: int = 200,
+    ) -> HttpResponse:
+        context = {
+            "title": self.TITLES[action],
+            "pro": pro,
+            "action": action,
+            "block_reason": pro_signup_actions.action_block_reason(pro, action),
+            "notice": notice,
+            "error": error,
+        }
+        return render(request, self.template_name, context, status=status)
+
+    def _load(self, pro_id: int, action: str) -> Optional[InterestedProfessional]:
+        if action not in pro_signup_actions.ACTIONS:
+            raise Http404("Unknown signup action")
+        return InterestedProfessional.objects.filter(pk=pro_id).first()
+
+    def get(self, request, pro_id: int, action: str) -> HttpResponse:
+        pro = self._load(pro_id, action)
+        if pro is None:
+            # A stale link from an email (deleted record): the queue, not a 404.
+            return redirect("proconnector_process")
+        return self._render(request, pro, action)
+
+    def post(self, request, pro_id: int, action: str) -> HttpResponse:
+        pro = self._load(pro_id, action)
+        if pro is None:
+            return redirect("proconnector_process")
+        if pro_signup_actions.action_block_reason(pro, action) is not None:
+            # Already handled (double press, another admin); the page says why.
+            return self._render(request, pro, action)
+        staff = pro_signup_actions.staff_display_name(request.user)
+        if action == pro_signup_actions.THANKYOU:
+            if not pro_signup_actions.send_thankyou(pro):
+                pro.refresh_from_db()
+                if pro.thankyou_email_sent or pro.blocked or pro.unsubscribed:
+                    # Lost the claim to a concurrent press; nothing was sent.
+                    return self._render(request, pro, action)
+                return self._render(
+                    request,
+                    pro,
+                    action,
+                    error=(
+                        "The thank-you email failed to send. The error has "
+                        "been logged; please try again."
+                    ),
+                    status=500,
+                )
+            note = f"{staff} sent the thank-you email to {pro.email}."
+            notice = f"Thank-you email sent to {pro.email}."
+        else:
+            if not pro_signup_actions.block_address(pro):
+                pro.refresh_from_db()
+                return self._render(request, pro, action)
+            note = (
+                f"{staff} blocked {pro.email}. Nothing more will be sent to it, "
+                "and later submissions from it will be dropped."
+            )
+            notice = f"{pro.email} is blocked."
+        logger.info(
+            f"Staff user {request.user.username} took pro signup action "
+            f"{action!r} on InterestedProfessional {pro.id} "
+            f"({mask_email_for_logging(pro.email)})"
+        )
+        pro_signup_actions.post_to_signup_thread(pro, note)
+        pro.refresh_from_db()
+        return self._render(request, pro, action, notice=notice)
 
 
 class SubscriberCleanupView(View):

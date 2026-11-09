@@ -74,6 +74,7 @@ class ConsentCopyTest(TestCase):
 # OpenAI and its Claude deployments, so both are Microsoft Azure.
 CHAT_BACKEND_PROVIDERS = {
     "DeepInfra": "DeepInfra",
+    "OpenRouter": "OpenRouter",
     "RemoteAnthropic": "Anthropic",
     "RemoteAzureClaude": "Microsoft Azure",
     "RemoteAzureOpenAI": "Microsoft Azure",

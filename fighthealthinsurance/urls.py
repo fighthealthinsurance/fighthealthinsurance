@@ -196,6 +196,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="staff_policy_document_download",
     ),
     path(
+        "timbit/help/plan_document_corpus/<int:pk>/text",
+        staff_member_required(staff_views.PublicPlanDocumentTextView.as_view()),
+        name="staff_plan_document_corpus_text",
+    ),
+    path(
         "timbit/help/model_usage",
         staff_member_required(staff_views.ModelUsageDashboardView.as_view()),
         name="model_usage_dashboard",
@@ -229,6 +234,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "timbit/help/proconnector/<int:pro_id>/intro",
         staff_member_required(staff_views.ProConnectorQuickIntroView.as_view()),
         name="proconnector_quick_intro",
+    ),
+    path(
+        "timbit/help/pro_signup/<int:pro_id>/<slug:action>",
+        staff_member_required(staff_views.ProSignupActionView.as_view()),
+        name="pro_signup_action",
     ),
     path(
         "timbit/help/proconnector_extract.csv",

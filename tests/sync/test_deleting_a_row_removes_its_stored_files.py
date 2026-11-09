@@ -25,8 +25,10 @@ from fighthealthinsurance.models import (
     ExtraLinkDocument,
     FaxesToSend,
     FollowUpDocuments,
+    InsuranceCompany,
     PlanDocuments,
     PolicyDocument,
+    PublicPlanDocument,
     _file_field_names,
 )
 
@@ -133,6 +135,19 @@ class EachModelRemovesItsFilesTest(_StoredFilesTestCase):
     def test_extra_link_document_delete_removes_its_files(self):
         row = self.with_files(
             ExtraLinkDocument(url="https://example.com/sbc.pdf", url_hash="0" * 64)
+        )
+        self.assertEqual(self.delete_and_commit(row), [])
+
+    def test_public_plan_document_delete_removes_its_file(self):
+        row = self.with_files(
+            PublicPlanDocument(
+                insurance_company=InsuranceCompany.objects.create(
+                    name="Kaiser Permanente"
+                ),
+                document_key="kaiser-norcal-eoc-2025-hmo",
+                title="Kaiser Permanente Northern California 2025 HMO EOC",
+                document_type=PublicPlanDocument.DOCUMENT_TYPE_EVIDENCE_OF_COVERAGE,
+            )
         )
         self.assertEqual(self.delete_and_commit(row), [])
 

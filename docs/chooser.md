@@ -38,7 +38,9 @@ to the full page; without the JSON they show the link alone.
   symptom duration, what was tried, what the clinician documented), *what
   the patient told us* (the app's questions for the case and the made-up
   patient's answers) and the *evidence on file* (PubMed articles, with links
-  and, when one is on file, a short summary). Everything shown is exactly
+  and, when one is on file, a short summary, and on newer cases up to three
+  web pages a search found, marked "web page", with the excerpt the search
+  returned). Everything shown is exactly
   what every model-written draft was given; the synthesized draft, which
   combines them, gets the treatment, diagnosis, denial reason and the drafts,
   not the facts, answers or evidence. For a chat task: the conversation and
@@ -147,6 +149,50 @@ page carries `data-captcha-passed` on `#chooser-root`, so a reload asks
 for no second tick. The Arena is linked from the home hero as "Help Improve Our
 Models".
 
+## Review insights
+
+Each vote keeps a raw record of how the review went, so the votes can be
+studied and weighted in more than one way later. Nothing here changes how a
+vote counts today, and nothing is ever refused over it.
+
+- `served_at`: when the next-task endpoint handed this session the task,
+  kept in the session (`chooser_served_at`, the last
+  `SESSION_SERVED_LIMIT` tasks) and copied onto the vote.
+  `ChooserVote.seconds_to_vote` is `created_at - served_at`, timed on the
+  server. Null when the vote came without a recorded serve (a request with
+  no session cookie, an older client).
+- `active_ms`: the page's count of the time it was visible between the
+  case appearing and the vote (time in another tab is left out), clamped to
+  between zero and a day (`ACTIVE_MS_CAP`). Null from clients that do not send it,
+  or that send something other than a number (then listed under
+  `review_signals.dropped`). When it
+  and `seconds_to_vote` disagree by more than network time, the server
+  figure is the one measured here.
+- `expanded_candidate_ids`: the presented drafts opened with "Read it
+  all", in display order. Tokens on the way in, like the other candidate
+  references; one that names no presented draft is left out, and
+  `expanded_candidate_ids` is then listed under `review_signals.dropped`.
+- `review_signals`: the page's interaction summary, cleaned by
+  `chooser_review_signals.clean_review_signals` (which documents each
+  key): pointer moves and presses, key presses, scrolls, pick changes,
+  times the page was hidden, visible time to the first interaction
+  anywhere on the page while the case is open, the
+  pointer types seen (mouse, touch, pen), whether the vote was cast by
+  keyboard or pointer, rounds already voted in this page load, the
+  viewport width, `navigator.webdriver`, and by draft position (0 for
+  Draft A) which drafts overflowed their box and which were scrolled to
+  the end. A malformed entry is left out and named under `dropped`.
+- `network_class`, `asn_name`, `country`: the judge's network as
+  `client_network.classify` classes it (isp, hosting, ai_platform, tor,
+  unknown), the ASN's name, and Cloudflare's country. Never the address.
+  Blank when no Cloudflare address came with the request.
+- `user_agent`: the browser's user agent, cut to 400 characters.
+
+The position of the pick is already in the vote: `presented_candidate_ids`
+is in display order and the server shuffles that order every time.
+
+None of these fields leave the server in the exports.
+
 ## How a case is made (`chooser_tasks.py`)
 
 1. **Seed pair.** When `CHOOSER_SEED_FROM_RANKINGS` is on (default) the
@@ -201,6 +247,22 @@ Models".
    k-anonymous and the case synthetic, so no consent is involved, and what
    is sent is the article's public title and abstract and the pair. Best
    effort, bounded by `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` for both together.
+
+   Beside the PubMed lookup, `_web_evidence_for` runs OpenRouter's web
+   search on the pair when `OPENROUTER_API_KEY` is set and `CHOOSER_WEB_SEARCH`
+   is on (off in tests), with the same relevance guardrail real appeals use
+   (`ml/web_search_context.py`, see [ml-backends.md](ml-backends.md)): each
+   page is asked research judging's three questions about its excerpt, by
+   Jev when research judging is on, else by our own best model, and only
+   pages judged on topic and not against the treatment are kept (at most
+   three, strongest support first, after the articles). A page nobody could
+   judge is left out, so with `CHOOSER_JUDGE_EVIDENCE` off there are none.
+   A kept page is a row `{title, url, summary, source: "web", web_judgment}`:
+   the summary is the search's excerpt, and `web_judgment` is the verdict
+   that kept it, stored on the case because a web page has no PMID to look
+   a judgment up by. The drafts are given the title, link and excerpt, never
+   the verdict. Bounded by `CHOOSER_WEB_SEARCH_TIMEOUT`; a failure leaves the
+   PubMed rows.
 4. **Interview.** `_interview` runs a simulated question-and-answer
    session: the app's own question generators
    (`MLAppealQuestionsHelper.generate_specific_questions`, given the case as
@@ -295,14 +357,19 @@ case built before its articles were judged shows the verdicts too, and
 `context_json` stays exactly what the drafts were given. It reads only
 (`pubmed_tools.stored_judgments_for`). Jev's verdicts are shown only while
 research judging is switched on, the kill switch for Jev's stored judgments
-everywhere, and our own model's only while `CHOOSER_JUDGE_EVIDENCE` is. A case it cannot be read for is served
+everywhere, and our own model's only while `CHOOSER_JUDGE_EVIDENCE` is. A web
+page's verdict comes from its own row (`web_judgment`, moved to `judgment`)
+under the same two switches. A case it cannot be read for is served
 without it. The citation check needs nothing from the server.
 
 ### Case versions and what voters see first
 
 `ChooserTask.case_version` records which pipeline built the task
 (`chooser_tasks.CASE_VERSIONS`): appeal tasks built with summaries and an
-interview are version 2; older appeal tasks and every chat task are 1. The
+interview are version 2, and those whose evidence can also carry judged web
+pages are version 3 (so the first deploy with it makes the launch backfill
+due: no version 3 task has its votes yet); older appeal tasks and every chat
+task are 1. The
 version marks the pipeline, not what each step found. The next-task endpoint
 serves the newest version first (then fewest votes, then oldest), so new
 cases collect votes before old ones, which stay votable; a judge who is
@@ -515,6 +582,8 @@ environment variables of the same name.
 | `CHOOSER_EVIDENCE_LIMIT` | `5` | Articles attached to a scenario |
 | `CHOOSER_PUBMED_LIVE_SEARCH` | `True` (`False` in tests) | Search PubMed when nothing is cached for the pair |
 | `CHOOSER_PUBMED_SEARCH_TIMEOUT` | `20.0` | Seconds a live search may take |
+| `CHOOSER_WEB_SEARCH` | `True` (`False` in tests) | Also search the web (OpenRouter, when `OPENROUTER_API_KEY` is set) for a case's evidence, keeping only pages judged relevant |
+| `CHOOSER_WEB_SEARCH_TIMEOUT` | `25.0` | Seconds that search and its judging may take (25 at most) |
 | `CHOOSER_SIMULATED_QA` | `True` (`False` in tests) | Give appeal cases a simulated interview |
 | `CHOOSER_JUDGE_EVIDENCE` | `True` (`False` in tests) | Judge a case's evidence as it is built: Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on, our own model for whatever Jev does not judge. Off also hides our own model's stored verdicts |
 | `CHOOSER_SCORE_CANDIDATES` | `True` (`False` in tests) | Ask Jev and fhi-local for their highest-scoring candidate during generation and store the picks in backend-only task metadata |

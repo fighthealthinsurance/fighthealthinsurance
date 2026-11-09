@@ -37,8 +37,8 @@ from fighthealthinsurance.models import (
 
 EMAIL = "rebecca.crumpler@test-fhi.com"
 SEMI_SEKRET = "sekret-for-the-share-box"
-PDF = b"%PDF-1.4 Summary of Benefits for the Crumpler Cooperative" + b" x" * 100
-TXT = b"Summary Plan Description, Crumpler Cooperative, plan year 2026."
+PDF = b"%PDF-1.4 Summary of Benefits for the Crumpler Cooperative" + b" x" * 600
+TXT = b"Summary Plan Description, Crumpler Cooperative, plan year 2026. " * 20
 
 
 def pdf(name="Rebecca Lee Crumpler SBC.pdf", content=PDF):
@@ -275,7 +275,9 @@ class ExplainPolicyTest(_UploadsTestCase):
         self.assertEqual(self.client.session["policy_document_id"], str(own.pk))
 
     def test_a_file_that_fails_the_closer_look_is_analysed_but_not_shared(self):
-        fake = SimpleUploadedFile("policy.docx", b"PK\x03\x04 fake docx content")
+        fake = SimpleUploadedFile(
+            "policy.docx", b"PK\x03\x04 fake docx content" + b" " * 300
+        )
         response = self.upload(policy_document=fake, share_for_research="on")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(PolicyDocument.objects.count(), 1)
@@ -404,7 +406,7 @@ class AppealPlanDocumentsStepTest(_UploadsTestCase):
         self.assertEqual(self.shared_copies().get().state, "")
 
     def test_only_files_that_pass_the_closer_look_are_shared(self):
-        binary = SimpleUploadedFile("scan.txt", b"MZ\x90\x00\x00")
+        binary = SimpleUploadedFile("scan.txt", b"MZ\x90\x00\x00" + b"\x00" * 300)
         self.post([pdf(), binary], share_for_research="on")
         self.assertEqual(PlanDocuments.objects.filter(denial=self.denial).count(), 2)
         self.assertEqual(self.shared_copies().count(), 1)

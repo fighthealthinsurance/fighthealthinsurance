@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 
 import pytest
+from django.test import override_settings
 
 # Set TESTING=True to match tox.ini configuration
 # This is needed for SessionRequiredMixin and other test-aware code
@@ -189,6 +190,20 @@ skip_if_no_nice_api_key = pytest.mark.skipif(
     not os.environ.get("NICE_API_KEY"),
     reason="NICE_API_KEY environment variable is not set",
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_plan_document_matching():
+    """Pin PLAN_DOCUMENT_MATCHING_ENABLED off for every suite.
+
+    tox passes the environment through, so a developer's exported flag
+    would have extraction and appeal generation match the plan-document
+    corpus, with model calls, in any suite. A test that wants the
+    behaviour wraps itself in override_settings(PLAN_DOCUMENT_MATCHING_ENABLED=True),
+    which wins over this outer override.
+    """
+    with override_settings(PLAN_DOCUMENT_MATCHING_ENABLED=False):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -394,3 +409,16 @@ def _fresh_spend_ledger():
     yield
     spend._ledger.reset_for_tests()
     typesafe.reset_cooldown_for_tests()
+    # The worker is a daemon thread with no way to stop it: once a test
+    # starts it (FHI_SPEND_BACKGROUND=True without stubbing _ensure_worker),
+    # it keeps ticking for the rest of the process, under every later test.
+    # So report it on every test after, where a rerun can't make it pass:
+    # the first test to fail this way is the one that started it.
+    worker = spend._ledger._thread
+    if worker is not None and worker.is_alive():
+        pytest.fail(
+            "The ml/spend.py ledger worker thread is running. A test turned "
+            "on FHI_SPEND_BACKGROUND without patching "
+            "spend._Ledger._ensure_worker; the first test to fail this way "
+            "started it."
+        )

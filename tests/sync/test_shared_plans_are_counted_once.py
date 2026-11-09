@@ -6,8 +6,8 @@ their keyed fingerprint, links by the keyed hash of the link. A link-only
 share counts unless every link repeats an earlier one. Rows a removal
 request cleared count for nothing. The staff counts on the PolicyDocument
 admin list count every kind of plan this way, and call out the employer
-plans the share page's goal counts: an employer plan of either kind, or a
-plan whose kind wasn't given with an employer named.
+plans the share page's goal counts: each company a counted document names,
+once (test_shared_plans_are_counted_by_company).
 """
 
 import datetime
@@ -20,8 +20,9 @@ from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.models import PlanSponsor, PolicyDocument
 from fighthealthinsurance.shared_plan_documents import (
+    MIN_DOCUMENT_CHARS,
     distinct_plan_count,
     employer_plan_count,
     link_fingerprint,
@@ -34,14 +35,30 @@ User = get_user_model()
 LINK = "https://benefits.crumpler-clinic.example.org/2027/plan-documents"
 LINK_B = "https://www.crumplermutual.example.com/plans/gold-ppo"
 START = datetime.datetime(2026, 10, 20, 15, 0, tzinfo=datetime.timezone.utc)
+PLAN_TEXT = "Summary Plan Description, Crumpler Cooperative. " * 20
 
 
 class _PlansTestCase(TestCase):
     def setUp(self):
         self.minutes = 0
 
-    def share(self, files=(), links=(), at=None, source=PolicyDocument.SOURCE_SHARED, **facts):
-        """One share's rows, made directly: each file by its fingerprint."""
+    def share(
+        self,
+        files=(),
+        links=(),
+        at=None,
+        source=PolicyDocument.SOURCE_SHARED,
+        text=PLAN_TEXT,
+        status=PolicyDocument.PROCESSING_READY,
+        **facts,
+    ):
+        """One share's rows, made directly: each file by its fingerprint,
+        read as ``text`` unless told otherwise, naming ``company`` if given."""
+        name = facts.pop("company", None)
+        if name:
+            facts["plan_sponsor"] = PlanSponsor.objects.get_or_create(
+                normalized_name=name.lower(), defaults={"name": name}
+            )[0]
         self.minutes += 1
         when = at or START + datetime.timedelta(minutes=self.minutes)
         batch = uuid.uuid4()
@@ -53,7 +70,8 @@ class _PlansTestCase(TestCase):
                     share_batch=batch,
                     shared_at=when,
                     fingerprint=digest,
-                    processing_status=PolicyDocument.PROCESSING_RECEIVED,
+                    processing_status=status,
+                    cleaned_text=text,
                     **facts,
                 )
             )
@@ -163,21 +181,21 @@ class RemovedRowsCountForNothingTest(_PlansTestCase):
         self.assertEqual(self.plans(), 1)
 
 
-class TheGoalCountsEmployerPlansTest(_PlansTestCase):
-    def test_employer_plans_of_either_kind_and_unsure_ones_with_an_employer(self):
-        self.share(files=["a"], plan_category="employer_erisa")
-        self.share(files=["b"], plan_category="employer_non_erisa")
-        self.share(files=["c"], plan_category="unknown", employer_name="Crumpler Clinic")
-        self.share(files=["d"], plan_category="unknown")
-        self.share(files=["e"], plan_category="aca_marketplace", employer_name="Crumpler Clinic")
-        self.share(files=["f"], plan_category="medicare_advantage")
-        self.assertEqual((distinct_plan_count(), employer_plan_count()), (6, 3))
+class TheGoalCountsCompaniesTest(_PlansTestCase):
+    def test_only_a_named_company_counts_and_only_once(self):
+        self.share(files=["a"], company="Crumpler Cooperative")
+        self.share(files=["b"], company="Mahoney Shipyards")
+        self.share(files=["c"], company="Crumpler Cooperative")
+        # Typed by the sharer, not read from the document: not counted.
+        self.share(files=["d"], plan_category="employer_erisa", employer_name="Fraser Mills")
+        self.share(files=["e"], plan_category="medicare_advantage")
+        self.assertEqual((distinct_plan_count(), employer_plan_count()), (5, 2))
 
-    def test_a_repeat_of_an_employer_plan_is_not_counted_again(self):
-        self.share(files=["a"], plan_category="employer_erisa")
-        self.share(files=["a"], plan_category="employer_erisa")
-        self.share(links=[LINK], plan_category="employer_erisa")
-        self.share(links=[LINK], plan_category="employer_erisa")
+    def test_a_repeat_of_a_companys_plan_is_not_counted_again(self):
+        self.share(files=["a"], company="Crumpler Cooperative")
+        self.share(files=["a"], company="Crumpler Cooperative")
+        self.share(links=[LINK], company="Mahoney Shipyards")
+        self.share(links=[LINK], company="Mahoney Shipyards")
         self.assertEqual(employer_plan_count(), 2)
 
 
@@ -256,8 +274,8 @@ class StaffSeeThePlansTest(_PlansTestCase):
         )
 
     def test_employer_plans_are_called_out(self):
-        self.share(files=["a"], plan_category="employer_erisa")
-        self.share(files=["b"], plan_category="unknown", employer_name="Crumpler Clinic")
+        self.share(files=["a"], company="Crumpler Cooperative")
+        self.share(files=["b"], company="Crumpler Clinic")
         self.share(files=["c"], plan_category="medicaid_chip")
         text = self.counts_on_the_page().find(id="shared-plan-employer").get_text(
             " ", strip=True
@@ -276,3 +294,43 @@ class StaffSeeThePlansTest(_PlansTestCase):
         section = self.counts_on_the_page()
         self.assertIn("0 different plans from 0 shares.", section.get_text(" ", strip=True))
         self.assertEqual(self.rows(section, "shared-plan-weeks"), [["No shares yet."]])
+
+
+class OnlyReadDocumentsCountTest(_PlansTestCase):
+    def test_a_file_not_yet_read_is_not_a_plan(self):
+        self.share(files=["sbc"], text="", status=PolicyDocument.PROCESSING_RECEIVED)
+        self.assertEqual(self.plans(), 0)
+
+    def test_an_unreadable_file_is_not_a_plan(self):
+        self.share(files=["sbc"], text="", status=PolicyDocument.PROCESSING_UNREADABLE)
+        self.assertEqual(self.plans(), 0)
+
+    def test_a_scanned_pdf_with_no_text_is_a_plan(self):
+        self.share(
+            files=["scan"],
+            text="",
+            status=PolicyDocument.PROCESSING_UNREADABLE,
+            filename="shared-1.pdf",
+        )
+        self.assertEqual(self.plans(), 1)
+
+    def test_a_line_of_text_is_not_a_plan(self):
+        self.share(files=["test"], text="hello")
+        self.assertEqual(self.plans(), 0)
+
+    def test_spaces_do_not_make_a_line_a_document(self):
+        self.share(files=["test"], text="hello" + " " * MIN_DOCUMENT_CHARS)
+        self.assertEqual(self.plans(), 0)
+
+    def test_a_document_just_long_enough_is_a_plan(self):
+        self.share(files=["sbc"], text="x" * MIN_DOCUMENT_CHARS)
+        self.assertEqual(self.plans(), 1)
+
+    def test_a_test_file_does_not_block_the_real_one_that_follows(self):
+        self.share(files=["sbc"], text="hello")
+        self.share(files=["sbc"])
+        self.assertEqual(self.plans(), 1)
+
+    def test_a_test_employer_share_does_not_count_toward_the_goal(self):
+        self.share(files=["test"], text="hello", company="Crumpler Cooperative")
+        self.assertEqual(employer_plan_count(), 0)

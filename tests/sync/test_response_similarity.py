@@ -313,7 +313,7 @@ class TestCannedSignatureTracksTheActualPrompt(TestCase):
         # module can't satisfy it.
         from fighthealthinsurance.ml import ml_models
 
-        source = inspect.getsource(ml_models.RemoteModelLike.generate_chat_response)
+        source = inspect.getsource(ml_models.RemoteModelLike.build_chat_system_prompt)
         self.assertIn("MEDICAID_WORK_REQUIREMENTS_BLOCK", source)
 
     def test_signature_carries_no_date_marker(self):

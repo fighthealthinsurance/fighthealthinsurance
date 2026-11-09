@@ -147,7 +147,12 @@ class TestAssistantBudgets:
         self,
     ):
         spend._ledger.reset_for_tests()
-        with override_settings(FHI_SPEND_BACKGROUND=True):
+        # Without the stub, allows() starts the real worker thread, which
+        # never exits and keeps ticking (and resetting the ledger's state)
+        # under every later test in this xdist worker.
+        with override_settings(FHI_SPEND_BACKGROUND=True), patch.object(
+            spend._Ledger, "_ensure_worker"
+        ):
             for provider in (spend.DEEPINFRA, spend.TYPESAFE, spend.AZURE):
                 assert not spend.allows(provider, spend.ASSISTANT), provider
             assert spend.allows(spend.DEEPINFRA, spend.CHAT)

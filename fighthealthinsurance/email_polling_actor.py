@@ -148,6 +148,9 @@ class EmailPollingActor:
                     self._logger.info(f"Sent {sent_count} follow-up emails")
                     await self._jittered_send_delay(sent_count)
 
+                # Off for good: a thank-you now waits for staff to act on the
+                # signup notification (pro_signup_actions.py), so sweeping
+                # every unthanked lead would undo that review.
                 if False:
                     # Send thank-you emails to professionals
                     thankyou_candidates = await self.thankyou_sender.afind_candidates()

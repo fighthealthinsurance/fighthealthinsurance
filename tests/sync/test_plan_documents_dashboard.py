@@ -23,6 +23,7 @@ from fighthealthinsurance.models import (
     Denial,
     PlanDocuments,
     PlanDocumentsReminder,
+    PlanSponsor,
     PolicyDocument,
     SharedPlanDocumentsDay,
 )
@@ -49,7 +50,7 @@ def _employer_share(at: datetime.datetime) -> Share:
         plan_category="employer_erisa",
         plan_year=None,
         premium_answered=False,
-        employer=True,
+        new_companies=1,
     )
 
 
@@ -86,11 +87,8 @@ class TheGoalsPaceTest(TestCase):
         pace = goal_pace(self.today, 50, self.recent(20, days_ago=PACE_DAYS + 1))
         self.assertEqual((pace["recent"], pace["recent_per_week"]), (0, 0.0))
 
-    def test_a_repeat_or_another_kind_of_plan_is_not_pace(self):
-        shares = [
-            _employer_share(self.noon)._replace(new_plan=False),
-            _employer_share(self.noon)._replace(employer=False),
-        ]
+    def test_a_share_bringing_no_new_company_is_not_pace(self):
+        shares = [_employer_share(self.noon)._replace(new_companies=0)]
         self.assertEqual(goal_pace(self.today, 50, shares)["recent"], 0)
 
     def test_reached(self):
@@ -130,7 +128,13 @@ class _DashboardTestCase(TestCase):
         self.minutes += 1
         when = at or self.this_week + datetime.timedelta(minutes=self.minutes)
         batch = uuid.uuid4()
-        status = facts.pop("processing_status", PolicyDocument.PROCESSING_RECEIVED)
+        status = facts.pop("processing_status", PolicyDocument.PROCESSING_READY)
+        name = facts.pop("company", None)
+        if name:
+            facts["plan_sponsor"] = PlanSponsor.objects.get_or_create(
+                normalized_name=name.lower(), defaults={"name": name}
+            )[0]
+        text = facts.pop("cleaned_text", "Summary Plan Description. " * 40)
         rows = []
         for digest in files:
             rows.append(
@@ -140,6 +144,7 @@ class _DashboardTestCase(TestCase):
                     shared_at=when,
                     fingerprint=digest,
                     processing_status=status,
+                    cleaned_text=text,
                     **facts,
                 )
             )
@@ -192,7 +197,7 @@ class OnlyStaffSeeItTest(TestCase):
 class TheGoalIsShownTest(_DashboardTestCase):
     def test_the_count_the_goal_and_its_pace(self):
         for digest in ("a", "b", "c"):
-            self.share(files=[digest], plan_category="employer_erisa")
+            self.share(files=[digest], company=f"Employer {digest}")
         self.share(files=["d"], plan_category="medicaid_chip")
         page = self.page()
         line = self.text(page, "goal-line")
@@ -227,7 +232,7 @@ class TheGoalIsShownTest(_DashboardTestCase):
 
     def test_the_bar_fills_toward_the_goal(self):
         for n in range(25):
-            self.share(files=[f"plan-{n}"], plan_category="employer_non_erisa")
+            self.share(files=[f"plan-{n}"], company=f"Employer {n}")
         bar = self.page().find(id="goal").find("i")
         self.assertEqual(bar["style"], "width: 25%")
 
@@ -239,19 +244,19 @@ class TheGoalIsShownTest(_DashboardTestCase):
 
 class SharesAreCountedTest(_DashboardTestCase):
     def test_each_week_counts_shares_plans_employer_plans_files_and_links(self):
-        self.share(files=["sbc"], at=self.last_week, plan_category="employer_erisa")
+        self.share(files=["sbc"], at=self.last_week, company="Crumpler Cooperative")
         self.share(
-            files=["sbc", "spd"], at=self.this_week, plan_category="employer_erisa"
+            files=["sbc", "spd"], at=self.this_week, company="Crumpler Cooperative"
         )
         self.share(
             files=["other"],
             links=[LINK],
             at=self.this_week,
-            plan_category="medicaid_chip",
+            company="Mahoney Shipyards",
         )
         weeks = self.rows(self.page(), "weeks")
         # This week: two shares, both new plans (the one that repeats "sbc"
-        # brings "spd"), of which one is an employer plan; three files, one
+        # brings "spd"), of which one brings a new company; three files, one
         # link.
         self.assertEqual(weeks[0][1:], ["2", "2", "1", "3", "1"])
         self.assertEqual(weeks[1][1:], ["1", "1", "1", "1", "0"])
@@ -273,7 +278,7 @@ class SharesAreCountedTest(_DashboardTestCase):
         )
 
     def test_the_totals(self):
-        self.share(files=["a"], plan_category="employer_erisa", premium_amount=250)
+        self.share(files=["a"], company="Crumpler Cooperative", premium_amount=250)
         self.share(files=["a"])
         self.share(files=["b"])
         page = self.page()
@@ -285,10 +290,11 @@ class SharesAreCountedTest(_DashboardTestCase):
 
 class TheReadingIsCountedTest(_DashboardTestCase):
     def test_shared_files_by_where_their_reading_is(self):
-        self.share(files=["a", "b"])
+        self.share(files=["a", "b"], processing_status=PolicyDocument.PROCESSING_RECEIVED)
         self.share(files=["c"], processing_status=PolicyDocument.PROCESSING_READY)
         self.share(files=["d"], processing_status=PolicyDocument.PROCESSING_UNREADABLE)
         self.share(files=["e"], processing_status=PolicyDocument.PROCESSING_REMOVED)
+        self.share(files=["f"], processing_status=PolicyDocument.PROCESSING_SPAM)
         self.share(links=[LINK])
         self.assertEqual(
             self.rows(self.page(), "reading-status"),
@@ -297,6 +303,7 @@ class TheReadingIsCountedTest(_DashboardTestCase):
                 ["Read and cleaned, ready for review", "1"],
                 ["No text could be read", "1"],
                 ["File and text deleted at the person's request", "1"],
+                ["Potential spam: kept, never read or counted", "1"],
             ],
         )
 

@@ -291,8 +291,11 @@ class DenialEndToEnd(APITestCase):
             content_type="application/json",
         )
         find_next_steps_parsed: Dict[str, Any] = find_next_steps_response.json()
-        # Make sure we got back a reasonable set of questions. Reduced to 4 since in_network is handled separately for professionals
-        assert len(find_next_steps_parsed["combined_form"]) >= 4
+        # Make sure we got back a reasonable set of questions: urgent,
+        # pre-service and the medical reason (in_network is asked earlier for
+        # professionals, and the patient's history is left to the generated
+        # questions).
+        assert len(find_next_steps_parsed["combined_form"]) >= 3
         # The outcome rides along, so an empty form can be told apart later:
         # a finished run with nothing to ask, or a run that did not finish.
         assert find_next_steps_parsed["questions_outcome"] == "questions"
@@ -2076,24 +2079,28 @@ class InterestedProfessionalEndpointTest(APITestCase):
     professional-signup inboxes (default to support42@fighthealthinsurance.com
     and professional@fighthealthinsurance.com).
     The notification flows through fighthealthinsurance.utils.notify_professional_signup,
-    so that is the send_mail patch target."""
+    which sends an EmailMultiAlternatives (in mail.outbox under the test backend)."""
+
+    TEAM_INBOX = "professional@fighthealthinsurance.com"
+
+    def _team_mail(self):
+        return [m for m in mail.outbox if self.TEAM_INBOX in m.to]
 
     def test_records_lead_and_emails_professional_inbox(self):
         from fighthealthinsurance.models import InterestedProfessional
 
-        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
-            response = self.client.post(
-                reverse("interested-professional-list"),
-                data=json.dumps(
-                    {
-                        "email": "pro@example.com",
-                        "name": "Dr. Pro",
-                        "business_name": "Acme Health",
-                        "job_title_or_provider_type": "Billing Manager",
-                    }
-                ),
-                content_type="application/json",
-            )
+        response = self.client.post(
+            reverse("interested-professional-list"),
+            data=json.dumps(
+                {
+                    "email": "pro@example.com",
+                    "name": "Dr. Pro",
+                    "business_name": "Acme Health",
+                    "job_title_or_provider_type": "Billing Manager",
+                }
+            ),
+            content_type="application/json",
+        )
         self.assertEqual(response.status_code, 201)
         pro = InterestedProfessional.objects.get(email="pro@example.com")
         self.assertEqual(pro.name, "Dr. Pro")
@@ -2101,16 +2108,13 @@ class InterestedProfessionalEndpointTest(APITestCase):
         # Legacy model default is clicked_for_paid=True; the endpoint records
         # leads as not-clicked (matches the web /pro_version form).
         self.assertFalse(pro.clicked_for_paid)
-        mock_send.assert_called_once()
-        # send_mail(subject, body, from_email, recipients)
-        subject, body, _from, recipients = mock_send.call_args.args
-        self.assertIn("support42@fighthealthinsurance.com", recipients)
-        self.assertIn("professional@fighthealthinsurance.com", recipients)
-        self.assertIn("pro@example.com", body)
-        self.assertIn(str(pro.id), subject)
+        [notification] = self._team_mail()
+        self.assertIn("support42@fighthealthinsurance.com", notification.to)
+        self.assertIn("pro@example.com", notification.body)
+        self.assertIn(str(pro.id), notification.subject)
 
     def test_extra_notification_recipient_is_configurable(self):
-        with patch("fighthealthinsurance.utils.send_mail") as mock_send, self.settings(
+        with self.settings(
             PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS=[
                 "professional@fighthealthinsurance.com",
                 "sales@example.com",
@@ -2122,8 +2126,7 @@ class InterestedProfessionalEndpointTest(APITestCase):
                 content_type="application/json",
             )
         self.assertEqual(response.status_code, 201)
-        recipients = mock_send.call_args.args[3]
-        self.assertIn("sales@example.com", recipients)
+        self.assertIn("sales@example.com", self._team_mail()[0].to)
 
     def test_repeat_submission_notifies_as_returning_without_duplicate_row(self):
         # The row is deduped (case-insensitively), but the team is still
@@ -2136,14 +2139,12 @@ class InterestedProfessionalEndpointTest(APITestCase):
             data=json.dumps({"email": "again@example.com", "name": "First Try"}),
             content_type="application/json",
         )
-        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
-            second = self.client.post(
-                reverse("interested-professional-list"),
-                data=json.dumps(
-                    {"email": "Again@example.com", "phone_number": "555-0888"}
-                ),
-                content_type="application/json",
-            )
+        mail.outbox.clear()
+        second = self.client.post(
+            reverse("interested-professional-list"),
+            data=json.dumps({"email": "Again@example.com", "phone_number": "555-0888"}),
+            content_type="application/json",
+        )
         self.assertEqual(first.status_code, 201)
         self.assertEqual(second.status_code, 201)
         self.assertEqual(
@@ -2153,8 +2154,8 @@ class InterestedProfessionalEndpointTest(APITestCase):
             1,
         )
         pro = InterestedProfessional.objects.get(email__iexact="again@example.com")
-        mock_send.assert_called_once()
-        subject, body = mock_send.call_args.args[0], mock_send.call_args.args[1]
+        [notification] = self._team_mail()
+        subject, body = notification.subject, notification.body
         self.assertEqual(subject, f"New pro REST signup #{pro.id} (returning)")
         # Body reflects the repeat submission, not the stored row (which keeps
         # its original values).
@@ -2173,14 +2174,14 @@ class InterestedProfessionalEndpointTest(APITestCase):
                 data=json.dumps({"email": "again2@example.com"}),
                 content_type="application/json",
             )
-        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
-            response = self.client.post(
-                reverse("interested-professional-list"),
-                data=json.dumps({"email": "again2@example.com"}),
-                content_type="application/json",
-            )
+        mail.outbox.clear()
+        response = self.client.post(
+            reverse("interested-professional-list"),
+            data=json.dumps({"email": "again2@example.com"}),
+            content_type="application/json",
+        )
         self.assertEqual(response.status_code, 201)
-        mock_send.assert_not_called()
+        self.assertEqual(self._team_mail(), [])
 
     def test_mail_failure_does_not_fail_request(self):
         # The lead is persisted before the notification is attempted, so a mail
@@ -2188,7 +2189,7 @@ class InterestedProfessionalEndpointTest(APITestCase):
         from fighthealthinsurance.models import InterestedProfessional
 
         with patch(
-            "fighthealthinsurance.utils.send_mail",
+            "fighthealthinsurance.utils.EmailMultiAlternatives.send",
             side_effect=RuntimeError("smtp down"),
         ):
             response = self.client.post(
@@ -2206,17 +2207,16 @@ class InterestedProfessionalEndpointTest(APITestCase):
         # and must not persist a row or send a notification.
         from fighthealthinsurance.models import InterestedProfessional
 
-        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
-            response = self.client.post(
-                reverse("interested-professional-list"),
-                data=json.dumps({"name": "No Email"}),
-                content_type="application/json",
-            )
+        response = self.client.post(
+            reverse("interested-professional-list"),
+            data=json.dumps({"name": "No Email"}),
+            content_type="application/json",
+        )
         self.assertEqual(response.status_code, 400)
         self.assertFalse(
             InterestedProfessional.objects.filter(name="No Email").exists()
         )
-        mock_send.assert_not_called()
+        self.assertEqual(mail.outbox, [])
 
     def test_notification_build_failure_does_not_fail_request(self):
         # The notification body is built (including an admin reverse()) only
@@ -2227,7 +2227,7 @@ class InterestedProfessionalEndpointTest(APITestCase):
         with patch(
             "fighthealthinsurance.utils.reverse",
             side_effect=Exception("no reverse match"),
-        ), patch("fighthealthinsurance.utils.send_mail") as mock_send:
+        ):
             response = self.client.post(
                 reverse("interested-professional-list"),
                 data=json.dumps({"email": "pro4@example.com"}),
@@ -2238,7 +2238,7 @@ class InterestedProfessionalEndpointTest(APITestCase):
             InterestedProfessional.objects.filter(email="pro4@example.com").exists()
         )
         # The build failed before the send, so no notification goes out.
-        mock_send.assert_not_called()
+        self.assertEqual(self._team_mail(), [])
 
 
 class FightPaperworkMailingAndDemoRoutesAreGoneTest(APITestCase):

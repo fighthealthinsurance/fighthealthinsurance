@@ -23,8 +23,8 @@ from fighthealthinsurance.models import Denial, PlanDocuments, PolicyDocument
 
 EMAIL = "rebecca.crumpler@test-fhi.com"
 SEMI_SEKRET = "sekret-for-the-plan-documents-step"
-PDF = b"%PDF-1.4 Summary of Benefits for the Crumpler Cooperative" + b" x" * 100
-TXT = b"Summary Plan Description, Crumpler Cooperative, plan year 2026."
+PDF = b"%PDF-1.4 Summary of Benefits for the Crumpler Cooperative" + b" x" * 600
+TXT = b"Summary Plan Description, Crumpler Cooperative, plan year 2026. " * 20
 
 
 def pdf(name="SBC.pdf", content=PDF):
@@ -37,7 +37,7 @@ def txt(name="SPD.txt", content=TXT):
 
 def docx(name="EOC.docx"):
     # A zip's first bytes are what the step checks for a Word file.
-    return SimpleUploadedFile(name, b"PK\x03\x04 word document", content_type="")
+    return SimpleUploadedFile(name, b"PK\x03\x04 word document" + b" " * 300, content_type="")
 
 
 class _StepTestCase(TestCase):

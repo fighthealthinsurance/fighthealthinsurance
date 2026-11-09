@@ -1,14 +1,16 @@
+from typing import Optional
 from urllib.parse import urlsplit
 
 from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from django.db import connection
+from django.db import connection, transaction
 from django.db.models import Count, DateTimeField, IntegerField
 from django.db.models.expressions import RawSQL
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.html import format_html
+from loguru import logger
 
 from fighthealthinsurance.constants import SITE_BANNER_CANNED_MESSAGES
 from fighthealthinsurance.templatetags.bundles import versioned
@@ -50,8 +52,10 @@ from fighthealthinsurance.models import (
     MedicationContext,
     OngoingChat,
     PayerPolicyEntry,
+    PlanDocumentMatch,
     PlanDocuments,
     PlanSource,
+    PlanSponsor,
     PlanSourceRelation,
     PlanType,
     PlanTypesRelation,
@@ -60,6 +64,7 @@ from fighthealthinsurance.models import (
     ProfessionalInquiry,
     ProposedAppeal,
     ProposedPriorAuth,
+    PublicPlanDocument,
     PubMedArticleSummarized,
     PubMedQueryData,
     Regulator,
@@ -357,10 +362,12 @@ class InterestedProfessionalAdmin(admin.ModelAdmin):
         "email",
         "paid",
         "signup_date",
+        "thankyou_email_sent",
+        "blocked",
         "submissions",
     )
     search_fields = ("name", "email", "business_name")
-    list_filter = ("paid", "signup_date", "mod_date")
+    list_filter = ("paid", "blocked", "thankyou_email_sent", "signup_date", "mod_date")
     ordering = ("-signup_date",)
     readonly_fields = ("submissions",)
 
@@ -683,6 +690,283 @@ class PayerPolicyEntryAdmin(admin.ModelAdmin):
         return False
 
     def has_change_permission(self, request, obj=None):  # type: ignore[override]
+        return False
+
+
+class PublicPlanDocumentForm(forms.ModelForm):
+    """The add/change form: the text is never edited by hand; a file
+    uploaded here is parsed the way the importer parses one, and a new
+    row needs one."""
+
+    upload = forms.FileField(
+        required=False,
+        help_text=(
+            "A PDF, Word or text file of the document, up to 20MB; parsed on "
+            "save and replaces the stored text. Bulk loads go through "
+            "import_plan_documents."
+        ),
+    )
+
+    class Meta:
+        model = PublicPlanDocument
+        exclude = ("text",)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # A RegexField holds a compiled pattern; shown as is, the form would
+        # offer its repr and write that back as the pattern on save.
+        for name in ("match_regex", "negative_regex"):
+            value = self.initial.get(name)
+            if value is not None and not isinstance(value, str):
+                self.initial[name] = getattr(value, "pattern", "")
+        #: What the upload parsed to, for save_model: (text, page_count).
+        self.parsed_upload: Optional[tuple[str, int]] = None
+
+    def clean_upload(self):
+        upload = self.cleaned_data.get("upload")
+        if upload:
+            from fighthealthinsurance.plan_document_bundle import (
+                RecordError,
+                page_marked_text_from_bytes,
+            )
+            from fighthealthinsurance.upload_limits import validate_policy_document
+
+            # The policy-document checks: extension, 20MB, PDF/DOCX bytes.
+            validate_policy_document(upload)
+            upload.seek(0)
+            try:
+                self.parsed_upload = page_marked_text_from_bytes(
+                    upload.read(), upload.name or ""
+                )
+            except RecordError as exc:
+                raise forms.ValidationError(str(exc)) from None
+        return upload
+
+    def clean(self):
+        cleaned = super().clean() or {}
+        if self.instance.pk is None and not cleaned.get("upload"):
+            self.add_error("upload", "A new document needs its file.")
+        company = cleaned.get("insurance_company")
+        plan = cleaned.get("insurance_plan")
+        if company and plan and plan.insurance_company_id != company.pk:
+            self.add_error("insurance_plan", "That plan belongs to another insurer.")
+        for name in ("plan_id_prefixes", "match_keywords"):
+            value = cleaned.get(name)
+            if value in (None, ""):
+                continue
+            if not isinstance(value, list) or not all(
+                isinstance(v, str) for v in value
+            ):
+                self.add_error(name, 'A JSON list of strings, such as ["GRP"].')
+        return cleaned
+
+
+@admin.register(PublicPlanDocument)
+class PublicPlanDocumentAdmin(admin.ModelAdmin):
+    """The public plan documents we fetched (plan_document_matcher): rows
+    from import_plan_documents, or added here one at a time."""
+
+    form = PublicPlanDocumentForm
+    list_display = (
+        "document_key",
+        "insurance_company",
+        "title",
+        "document_type",
+        "coverage_kind",
+        "line_of_business",
+        "state",
+        "region",
+        "plan_year",
+        "page_count",
+        "is_active",
+        "updated_at",
+    )
+    list_select_related = ("insurance_company",)
+    list_filter = (
+        "insurance_company",
+        "document_type",
+        "coverage_kind",
+        "line_of_business",
+        "state",
+        "is_active",
+        "plan_year",
+    )
+    search_fields = ("document_key", "title", "region", "employer_name", "source_url")
+    ordering = ("insurance_company__name", "-plan_year", "title")
+    autocomplete_fields = ["insurance_company", "insurance_plan"]
+    readonly_fields = (
+        "read_text",
+        "page_count",
+        "char_count",
+        "text_sha256",
+        "source_sha256",
+        "import_batch",
+        "pipeline_version",
+        "created_at",
+        "updated_at",
+    )
+    actions = ("activate", "deactivate")
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "document_key",
+                    "insurance_company",
+                    "insurance_plan",
+                    "title",
+                    "document_type",
+                    "coverage_kind",
+                    "line_of_business",
+                    "is_active",
+                    "notes",
+                ),
+            },
+        ),
+        (
+            "Matching",
+            {
+                "fields": (
+                    "state",
+                    "region",
+                    "employer_name",
+                    "plan_year",
+                    "plan_id_prefixes",
+                    "match_keywords",
+                    "match_regex",
+                    "negative_regex",
+                ),
+                "description": (
+                    "What places a denial letter with this document. Keywords "
+                    "are matched as whole words; a negative regex rules the "
+                    "document out. Keep both away from carrier letterhead and "
+                    "grievance addresses, which appear on every letter."
+                ),
+            },
+        ),
+        (
+            "Source",
+            {
+                "fields": (
+                    "source_url",
+                    "fetched_at",
+                    "source_sha256",
+                    "stored_file",
+                    "pipeline_version",
+                    "import_batch",
+                    "created_at",
+                    "updated_at",
+                ),
+            },
+        ),
+        (
+            "Text",
+            {
+                # Never the text field itself (it runs to megabytes and the
+                # form excludes it): the upload that fills it and the link
+                # that shows it.
+                "fields": (
+                    "upload",
+                    "read_text",
+                    "page_count",
+                    "char_count",
+                    "text_sha256",
+                ),
+            },
+        ),
+    )
+
+    def get_queryset(self, request):
+        # The list never shows the text, which runs to megabytes a row.
+        return super().get_queryset(request).defer("text")
+
+    def save_model(self, request, obj, form, change):
+        parsed = getattr(form, "parsed_upload", None)
+        if parsed:
+            text, page_count = parsed
+            obj.text = text
+            obj.text_sha256 = PublicPlanDocument.text_hash(text)
+            obj.page_count = page_count
+            obj.char_count = len(text)
+            obj.import_batch = "admin"
+        super().save_model(request, obj, form, change)
+        if parsed and change:
+            # The passages built from the old text no longer quote it.
+            PlanDocumentMatch.objects.filter(document=obj).delete()
+
+    @admin.display(description="Text")
+    def read_text(self, obj: PublicPlanDocument) -> str:
+        if not obj.pk or not obj.char_count:
+            return "-"
+        return format_html(
+            '<a href="{}">Read the text</a> ({} pages, {} characters)',
+            reverse("staff_plan_document_corpus_text", kwargs={"pk": obj.pk}),
+            obj.page_count,
+            obj.char_count,
+        )
+
+    @admin.action(description="Activate: match these documents to denials")
+    def activate(self, request, queryset):
+        # updated_at moves too, so the matcher's corpus stamp changes and
+        # denials are matched again (QuerySet.update skips auto_now).
+        updated = queryset.update(is_active=True, updated_at=timezone.now())
+        self.message_user(request, f"{updated} document(s) activated.")
+
+    @admin.action(description="Deactivate: stop matching these documents")
+    def deactivate(self, request, queryset):
+        updated = queryset.update(is_active=False, updated_at=timezone.now())
+        self.message_user(request, f"{updated} document(s) deactivated.")
+
+
+@admin.register(PlanDocumentMatch)
+class PlanDocumentMatchAdmin(admin.ModelAdmin):
+    """Read-only: why a public plan document was, or was not, chosen for a
+    denial (plan_document_matcher). Rows are written by the matcher only."""
+
+    list_display = (
+        "id",
+        "denial_id",
+        "document",
+        "score",
+        "rank",
+        "selected",
+        "method",
+        "created_at",
+    )
+    list_select_related = ("document", "document__insurance_company")
+    list_filter = ("selected", "method", "document__insurance_company")
+    search_fields = ("denial__denial_id", "document__title", "document__document_key")
+    raw_id_fields = ("denial",)
+    ordering = ("-created_at", "rank")
+    readonly_fields = (
+        "denial",
+        "document",
+        "company",
+        "score",
+        "signals",
+        "rank",
+        "selected",
+        "method",
+        "relevant_text",
+        "summary",
+        "inputs_hash",
+        "relevance_key",
+        "created_at",
+    )
+
+    def get_queryset(self, request):
+        # Never the documents' text, which runs to megabytes a row.
+        return super().get_queryset(request).defer("document__text")
+
+    def has_add_permission(self, request):  # type: ignore[override]
+        return False
+
+    def has_change_permission(self, request, obj=None):  # type: ignore[override]
+        return False
+
+    def has_delete_permission(self, request, obj=None):  # type: ignore[override]
+        # The matcher owns these rows: deleting a selected one by hand would
+        # leave its candidates with nothing selected.
         return False
 
 
@@ -1335,13 +1619,17 @@ class ChooserVoteAdmin(admin.ModelAdmin):
         "chosen_candidate",
         "tied_candidate_ids",
         "all_bad",
+        "seconds_to_vote",
+        "active_ms",
+        "expanded_candidate_ids",
+        "network_class",
         "session_key",
         "created_at",
     )
     search_fields = ("task__id", "session_key", "rationale")
-    list_filter = ("all_bad", "created_at")
+    list_filter = ("all_bad", "network_class", "created_at")
     ordering = ("-created_at",)
-    readonly_fields = ("id", "created_at")
+    readonly_fields = ("id", "created_at", "seconds_to_vote")
 
 
 @admin.register(AuditLog)
@@ -1390,6 +1678,99 @@ class AuditLogAdmin(admin.ModelAdmin):
         return False
 
 
+class PlanSponsorForm(forms.ModelForm):
+    """A company's name and EIN, refused here rather than at the database
+    when the list already has that name with no EIN and this has none."""
+
+    class Meta:
+        model = PlanSponsor
+        fields = ["name", "ein"]
+
+    def clean_ein(self):
+        # Stored as 12-3456789, the form documents give, so the two match;
+        # blank is no EIN, so two companies without one don't clash on "".
+        digits = "".join(c for c in (self.cleaned_data.get("ein") or "") if c.isdigit())
+        typed = (self.cleaned_data.get("ein") or "").strip()
+        if not typed:
+            return None
+        if len(digits) != 9 or any(c not in "0123456789- " for c in typed):
+            raise forms.ValidationError("An EIN is nine digits, as 12-3456789.")
+        return f"{digits[:2]}-{digits[2:]}"
+
+    def clean(self):
+        from fighthealthinsurance.plan_sponsors import normalize_name
+
+        cleaned = super().clean() or {}
+        normalized = normalize_name(cleaned.get("name") or "")
+        if "name" in cleaned and not normalized:
+            self.add_error("name", "Give the company's name.")
+        elif normalized and not cleaned.get("ein"):
+            same = PlanSponsor.objects.filter(
+                normalized_name=normalized, ein__isnull=True
+            ).exclude(pk=self.instance.pk)
+            if same.exists():
+                self.add_error(
+                    "name",
+                    f"{same.first()} is already on the list with no EIN. "
+                    "Use that one, or give this one its EIN.",
+                )
+        return cleaned
+
+
+@admin.register(PlanSponsor)
+class PlanSponsorAdmin(admin.ModelAdmin):
+    """The running list of companies behind shared plan documents. Staff fix
+    a name or EIN here, or add a company to link a document to by hand."""
+
+    form = PlanSponsorForm
+    list_display = ("name", "ein", "documents", "created_at")
+    search_fields = ("name", "normalized_name", "ein")
+    readonly_fields = ("normalized_name", "first_document", "created_at")
+
+    def get_queryset(self, request):
+        return (
+            super()
+            .get_queryset(request)
+            .annotate(document_count=Count("policy_documents"))
+        )
+
+    @admin.display(description="Documents", ordering="document_count")
+    def documents(self, obj: PlanSponsor) -> int:
+        return getattr(obj, "document_count", 0)
+
+    def save_model(self, request, obj, form, change):
+        from fighthealthinsurance.plan_sponsors import normalize_name
+
+        obj.normalized_name = normalize_name(obj.name)
+        super().save_model(request, obj, form, change)
+
+
+class CompanyCheckFilter(admin.SimpleListFilter):
+    """Shared documents by whether staff have checked the company the
+    reading found. Optional: a company counts as soon as it's linked."""
+
+    title = "company check"
+    parameter_name = "company_check"
+
+    def lookups(self, request, model_admin):
+        return (
+            ("unchecked", "Company found, not checked"),
+            ("checked", "Company checked"),
+            ("none", "No company"),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == "unchecked":
+            return queryset.filter(
+                plan_sponsor__isnull=False, plan_sponsor_checked_at__isnull=True
+            )
+        if self.value() == "checked":
+            return queryset.filter(plan_sponsor_checked_at__isnull=False)
+        if self.value() == "none":
+            return queryset.filter(plan_sponsor__isnull=True)
+        return queryset
+
+
 @admin.register(PolicyDocument)
 class PolicyDocumentAdmin(admin.ModelAdmin):
     list_display = (
@@ -1398,6 +1779,9 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "source",
         "document_type",
         "plan_category",
+        "plan_sponsor",
+        "plan_sponsor_source",
+        "company_checked",
         "processing_status",
         "created_at",
         "file",
@@ -1406,6 +1790,8 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     list_filter = (
         "source",
         "processing_status",
+        CompanyCheckFilter,
+        "plan_sponsor_source",
         "document_type",
         "plan_category",
         "created_at",
@@ -1421,6 +1807,8 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     # never the raw fields; the cleaned text runs long. A shared link is
     # shown, never edited.
     exclude = ("document_enc", "cleaned_text", "shared_link")
+    # The company is set by the reading; staff can fix it.
+    autocomplete_fields = ("plan_sponsor",)
     readonly_fields = (
         "id",
         "created_at",
@@ -1434,16 +1822,60 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "shared_link_fingerprint",
         "processing_status",
         "processed_at",
+        "plan_sponsor_source",
+        "plan_sponsor_evidence",
+        "plan_sponsor_checked_at",
+        "plan_sponsor_checked_by",
     )
-    actions = ("read_again",)
+    actions = (
+        "read_again",
+        "mark_potential_spam",
+        "not_spam",
+        "confirm_company",
+    )
+
+    @admin.display(boolean=True, description="checked")
+    def company_checked(self, obj):
+        if obj.plan_sponsor_id is None:
+            return None
+        return obj.plan_sponsor_checked_at is not None
 
     def save_model(self, request, obj, form, change):
+        # A company staff set or changed is theirs, and checked.
+        fields = list(form.changed_data)
+        if "plan_sponsor" in fields:
+            obj.plan_sponsor_source = "staff" if obj.plan_sponsor_id else ""
+            obj.plan_sponsor_evidence = ""
+            obj.plan_sponsor_checked_at = (
+                timezone.now() if obj.plan_sponsor_id else None
+            )
+            obj.plan_sponsor_checked_by = request.user if obj.plan_sponsor_id else None
+            fields += [
+                "plan_sponsor_source",
+                "plan_sponsor_evidence",
+                "plan_sponsor_checked_at",
+                "plan_sponsor_checked_by",
+            ]
         # Only what the form changed: the encrypted fields it excludes are
         # never written back from what this request read.
         if change:
-            obj.save(update_fields=form.changed_data)
+            obj.save(update_fields=fields)
             return
         super().save_model(request, obj, form, change)
+
+    @admin.action(description="Confirm the company found")
+    def confirm_company(self, request, queryset):
+        # Optional: the company already counts. This records that a person
+        # looked at it.
+        updated = queryset.filter(plan_sponsor__isnull=False).update(
+            plan_sponsor_checked_at=timezone.now(),
+            plan_sponsor_checked_by=request.user,
+        )
+        self.message_user(
+            request,
+            f"{updated} compan{'y' if updated == 1 else 'ies'} confirmed. To fix "
+            "one, open the document and pick the right company.",
+        )
 
     @admin.action(description="Read again (shared files marked unreadable)")
     def read_again(self, request, queryset):
@@ -1462,15 +1894,71 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
             f"{queryset.count() - updated} were not shared files marked unreadable.",
         )
 
+    @admin.action(description="Mark as potential spam")
+    def mark_potential_spam(self, request, queryset):
+        # Kept with its file, never read again and left out of every count.
+        # Rows already removed at the person's request stay removed.
+        rows = queryset.exclude(
+            processing_status__in=(
+                PolicyDocument.PROCESSING_SPAM,
+                PolicyDocument.PROCESSING_REMOVED,
+            )
+        )
+        updated = rows.update(processing_status=PolicyDocument.PROCESSING_SPAM)
+        logger.info(
+            f"Staff user {request.user.pk} marked {updated} policy document(s) "
+            "as potential spam"
+        )
+        self.message_user(
+            request,
+            f"{updated} marked as potential spam; they stay out of every count "
+            'and are never read. Use "Not spam: read again" to undo.',
+        )
+
+    @admin.action(description="Not spam: read again")
+    def not_spam(self, request, queryset):
+        # Back to where it would be had it never been marked: a shared file
+        # waits for the hourly sweep to read it again, a shared link is a
+        # link again, and any other upload has no reading status.
+        # One transaction, and each kind of row in its own update: the last
+        # update never reaches a shared file or link, so one marked again
+        # meanwhile keeps its status instead of losing it.
+        spam = queryset.filter(processing_status=PolicyDocument.PROCESSING_SPAM)
+        with transaction.atomic():
+            files = spam.filter(source__in=PolicyDocument.SHARED_FILE_SOURCES).update(
+                processing_status=PolicyDocument.PROCESSING_RECEIVED,
+                processed_at=None,
+                cleaned_text="",
+            )
+            links = spam.filter(source=PolicyDocument.SOURCE_SHARED_LINK).update(
+                processing_status=PolicyDocument.PROCESSING_LINK
+            )
+            others = (
+                spam.exclude(source__in=PolicyDocument.SHARED_FILE_SOURCES)
+                .exclude(source=PolicyDocument.SOURCE_SHARED_LINK)
+                .update(processing_status="")
+            )
+        updated = files + links + others
+        logger.info(
+            f"Staff user {request.user.pk} marked {updated} policy document(s) "
+            "as not spam"
+        )
+        self.message_user(
+            request,
+            f"{updated} no longer marked as potential spam; {files} shared "
+            "file(s) will be read again by the next hourly sweep.",
+        )
+
     def changelist_view(self, request, extra_context=None):
         # How many shared files there are, how many different documents, and
         # how many shared links; then the plans they make up, by week, kind,
         # year and premium answer.
         from fighthealthinsurance.shared_plan_documents import share_counts
 
+        # Potential spam stays out of these totals, as out of every count.
         shared = PolicyDocument.objects.filter(
             source__in=PolicyDocument.SHARED_FILE_SOURCES
-        )
+        ).exclude(processing_status=PolicyDocument.PROCESSING_SPAM)
         extra_context = {
             **(extra_context or {}),
             "share_counts": share_counts(timezone.localdate()),
@@ -1482,6 +1970,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
             "shared_links": PolicyDocument.objects.filter(
                 source=PolicyDocument.SOURCE_SHARED_LINK
             )
+            .exclude(processing_status=PolicyDocument.PROCESSING_SPAM)
             .exclude(shared_link="")
             .count(),
         }

@@ -599,10 +599,19 @@ class AppealAttachmentUploadSerializer(serializers.Serializer):
     file = serializers.FileField()
 
     def validate_file(self, value):  # type: ignore[no-untyped-def]
+        from django import forms
+
+        from fighthealthinsurance import upload_limits
+
         if value.size > MAX_ATTACHMENT_BYTES:
             raise serializers.ValidationError(
                 f"Attachments can be at most {MAX_ATTACHMENT_BYTES // (1024 * 1024)} MB."
             )
+        try:
+            upload_limits.validate_attachment(value, max_bytes=MAX_ATTACHMENT_BYTES)
+        except forms.ValidationError as error:
+            raise serializers.ValidationError(error.messages)
+        value.name = upload_limits.safe_filename(value.name)
         return value
 
 
@@ -988,6 +997,16 @@ class ChooserVoteRequestSerializer(serializers.Serializer):
         max_length=500,
         trim_whitespace=True,
         default="",
+    )
+    # Review insights (ChooserVote.active_ms, expanded_candidate_ids,
+    # review_signals). Optional, so older clients still vote, and taken as
+    # plain JSON so a value of any shape reaches the view, which keeps what
+    # it can use and notes the rest under review_signals["dropped"]: they
+    # never cost a vote.
+    active_ms = serializers.JSONField(required=False, allow_null=True)
+    expanded_candidate_ids = serializers.JSONField(required=False, allow_null=True)
+    review_signals = serializers.JSONField(
+        required=False, allow_null=True, default=dict
     )
 
 

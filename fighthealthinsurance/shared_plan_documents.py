@@ -571,7 +571,12 @@ def _shared_from_appeal(hashed_email: Optional[str]) -> set[str]:
             hashed_email=hashed_email,
         )
         .exclude(fingerprint="")
-        .exclude(processing_status=PolicyDocument.PROCESSING_UNREADABLE)
+        .exclude(
+            processing_status__in=(
+                PolicyDocument.PROCESSING_UNREADABLE,
+                PolicyDocument.PROCESSING_SPAM,
+            )
+        )
         .values_list("fingerprint", flat=True)
     )
 
@@ -678,6 +683,13 @@ PLAN_FACT_FIELDS = (
     "who_is_covered",
     "insurance_company_obj",
     "insurance_plan_obj",
+    "plan_sponsor",
+    # How the company was found and whether staff checked it: about the
+    # kept company, not the person. The quoted line is the document's own
+    # text, so a removal clears it with the rest of the text.
+    "plan_sponsor_source",
+    "plan_sponsor_checked_at",
+    "plan_sponsor_checked_by",
 )
 #: The record of the share itself, kept with the plan facts.
 SHARE_RECORD_FIELDS = (
@@ -701,6 +713,7 @@ REMOVED_VALUES: dict[str, Any] = {
     "session_key": None,
     "fingerprint": "",
     "cleaned_text": "",
+    "plan_sponsor_evidence": "",
     "processing_status": PolicyDocument.PROCESSING_REMOVED,
 }
 
@@ -716,6 +729,7 @@ def has_plan_facts(doc: PolicyDocument) -> bool:
         or doc.premium_amount is not None
         or doc.insurance_company_obj_id
         or doc.insurance_plan_obj_id
+        or doc.plan_sponsor_id
     )
 
 
@@ -757,16 +771,17 @@ def remove_shared_documents(hashed_email: str) -> None:
 
 # ---- Counting plans ---------------------------------------------------------
 
-#: The share page's goal, in employer plans, shown through its day. The
-#: running count appears only from GOAL_SHOWN_FROM of them, so nobody lands
-#: on "2 of 100". Every kind of plan is welcome; only the goal is narrower.
+#: The share page's goal, in employer plans, shown through its day. It counts
+#: companies: a plan counts once a shared document names its sponsor
+#: (plan_sponsors) and that company is new to the list. The running count
+#: appears only from GOAL_SHOWN_FROM of them, so nobody lands on "2 of 100".
+#: Every kind of plan is welcome; only the goal is narrower.
 GOAL_PLANS = 100
 GOAL_DATE = datetime.date(2027, 1, 15)
 GOAL_SHOWN_FROM = 20
 #: The page's count is at most this old, and the same for every visitor.
 PLAN_COUNT_SECONDS = 10 * 60
 _PLAN_COUNT_KEY = "shared-plan-documents-employer-plans"
-EMPLOYER_CATEGORIES = ("employer_erisa", "employer_non_erisa")
 
 
 class Share(NamedTuple):
@@ -779,18 +794,44 @@ class Share(NamedTuple):
     plan_category: str
     plan_year: Optional[int]
     premium_answered: bool
-    # An employer plan of either kind, or a kind not given with an employer named.
-    employer: bool
+    # How many companies (PlanSponsor) this share is the first to bring in:
+    # the goal counts companies, each once.
+    new_companies: int
+
+
+#: Rows that count for nothing: removed at the person's request, or marked
+#: potential spam by staff.
+NOT_COUNTED = (PolicyDocument.PROCESSING_REMOVED, PolicyDocument.PROCESSING_SPAM)
+
+#: The least cleaned text a shared file needs to count as a plan's document.
+#: A short rate sheet clears it; a test upload is often a line.
+MIN_DOCUMENT_CHARS = 200
+
+
+def is_document(status: str, cleaned_text: Optional[str], filename: str) -> bool:
+    """Whether a shared file's reading found a document: read and cleaned,
+    with at least MIN_DOCUMENT_CHARS characters that are not spaces, or a PDF with no text to
+    read, as a scan is. A PDF passed the closer look on the way in
+    (validate_shared_document), so it is a real file staff can open."""
+    if status == PolicyDocument.PROCESSING_UNREADABLE:
+        return filename.lower().endswith(".pdf")
+    return (
+        status == PolicyDocument.PROCESSING_READY
+        and len("".join((cleaned_text or "").split())) >= MIN_DOCUMENT_CHARS
+    )
 
 
 def plan_shares() -> list[Share]:
     """Every share still holding a file or link, oldest first, marked with
     whether it is a new plan."""
     # Each share is one plan unless every file and link in it came in an
-    # earlier share. Removed rows count for nothing.
+    # earlier share. Removed rows count for nothing, and so does a file
+    # until its reading finds a document (is_document): a file waiting to be
+    # read, a text or Word file with no text, and a line of test text are
+    # not plans; a scanned PDF is. Potential spam counts for nothing at all.
     rows = (
         PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_SOURCES)
-        .exclude(processing_status=PolicyDocument.PROCESSING_REMOVED)
+        .exclude(processing_status__in=NOT_COUNTED)
         .order_by("shared_at", "created_at", "pk")
         .values_list(
             "pk",
@@ -803,7 +844,10 @@ def plan_shares() -> list[Share]:
             "plan_category",
             "plan_year",
             "premium_amount",
-            "employer_name",
+            "processing_status",
+            "cleaned_text",
+            "filename",
+            "plan_sponsor_id",
         )
     )
     batches: dict[Any, dict[str, Any]] = {}
@@ -818,7 +862,10 @@ def plan_shares() -> list[Share]:
         category,
         year,
         premium,
-        employer_name,
+        status,
+        cleaned_text,
+        filename,
+        sponsor_id,
     ) in rows:
         found = batches.setdefault(
             batch or pk,
@@ -832,11 +879,15 @@ def plan_shares() -> list[Share]:
                 "category": category,
                 "year": year,
                 "premium": premium is not None,
-                "employer_name": bool(employer_name),
+                "companies": set(),
             },
         )
         is_link = source == PolicyDocument.SOURCE_SHARED_LINK
         found["link_count" if is_link else "file_count"] += 1
+        if not is_link and not is_document(status, cleaned_text, filename or ""):
+            continue
+        if sponsor_id is not None:
+            found["companies"].add(sponsor_id)
         digest = link_hash if is_link else file_hash
         if digest:
             found["links" if is_link else "files"].add(digest)
@@ -844,6 +895,7 @@ def plan_shares() -> list[Share]:
             found["unknown"] = True
     seen_files: set[str] = set()
     seen_links: set[str] = set()
+    seen_companies: set[int] = set()
     shares = []
     for found in batches.values():
         new_plan = bool(
@@ -853,6 +905,8 @@ def plan_shares() -> list[Share]:
         )
         seen_files |= found["files"]
         seen_links |= found["links"]
+        new_companies = len(found["companies"] - seen_companies)
+        seen_companies |= found["companies"]
         category = found["category"] or "unknown"
         shares.append(
             Share(
@@ -863,10 +917,7 @@ def plan_shares() -> list[Share]:
                 plan_category=category,
                 plan_year=found["year"],
                 premium_answered=found["premium"],
-                employer=bool(
-                    category in EMPLOYER_CATEGORIES
-                    or (category == "unknown" and found["employer_name"])
-                ),
+                new_companies=new_companies,
             )
         )
     return shares
@@ -878,11 +929,12 @@ def distinct_plan_count() -> int:
 
 
 def employer_plan_count() -> int:
-    """How many different employer plans have been shared, the goal's count,
-    counted at most once every PLAN_COUNT_SECONDS for all visitors alike."""
+    """How many different companies' plans have been shared, the goal's
+    count: each company (PlanSponsor) once, from a document still counted.
+    Counted at most once every PLAN_COUNT_SECONDS for all visitors alike."""
     count = cache.get(_PLAN_COUNT_KEY)
     if count is None:
-        count = sum(1 for share in plan_shares() if share.new_plan and share.employer)
+        count = sum(share.new_companies for share in plan_shares())
         cache.set(_PLAN_COUNT_KEY, count, PLAN_COUNT_SECONDS)
     return int(count)
 
@@ -918,14 +970,14 @@ def share_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
 
     shares = plan_shares()
     plans = [share for share in shares if share.new_plan]
-    # Each week: shares, new plans, new employer plans, files and links.
+    # Each week: shares, new plans, new companies, files and links.
     by_week: dict[datetime.date, list[int]] = {}
     for share in shares:
         week = week_start(timezone.localdate(share.shared_at))
         counts = by_week.setdefault(week, [0, 0, 0, 0, 0])
         counts[0] += 1
         counts[1] += int(share.new_plan)
-        counts[2] += int(share.new_plan and share.employer)
+        counts[2] += share.new_companies
         counts[3] += share.files
         counts[4] += share.links
     week_rows: list[dict[str, Any]] = []
@@ -952,7 +1004,7 @@ def share_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
     return {
         "shares": len(shares),
         "plans": len(plans),
-        "employer_plans": sum(1 for share in plans if share.employer),
+        "employer_plans": sum(share.new_companies for share in shares),
         "goal": GOAL_PLANS,
         "goal_date": GOAL_DATE,
         "weeks": week_rows,
@@ -997,11 +1049,7 @@ def goal_pace(
         datetime.time.min,
         tzinfo=timezone.get_current_timezone(),
     )
-    recent = sum(
-        1
-        for share in shares
-        if share.new_plan and share.employer and share.shared_at >= since
-    )
+    recent = sum(share.new_companies for share in shares if share.shared_at >= since)
     recent_per_week = recent * 7 / PACE_DAYS
     weeks_left = days_left / 7
     needed_per_week = remaining / weeks_left if weeks_left and remaining else 0.0
@@ -1064,7 +1112,7 @@ def dashboard_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
     source_labels = dict(PolicyDocument.SOURCE_CHOICES)
     kept = PolicyDocument.objects.filter(
         source__in=PolicyDocument.SHARED_SOURCES
-    ).exclude(processing_status=PolicyDocument.PROCESSING_REMOVED)
+    ).exclude(processing_status__in=NOT_COUNTED)
     by_source: dict[str, tuple[int, int]] = {
         row["source"]: (row["shares"], row["rows"])
         for row in kept.values("source").annotate(
@@ -1101,6 +1149,7 @@ def dashboard_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
             PolicyDocument.PROCESSING_READY,
             PolicyDocument.PROCESSING_UNREADABLE,
             PolicyDocument.PROCESSING_REMOVED,
+            PolicyDocument.PROCESSING_SPAM,
         )
     ]
 
@@ -1133,7 +1182,9 @@ def dashboard_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
         timezone.localdate(created)
         for created in PolicyDocument.objects.filter(
             source=PolicyDocument.SOURCE_EXPLAIN_POLICY
-        ).values_list("created_at", flat=True)
+        )
+        .exclude(processing_status=PolicyDocument.PROCESSING_SPAM)
+        .values_list("created_at", flat=True)
         if created
     ]
     counts["explain_uploads"] = {

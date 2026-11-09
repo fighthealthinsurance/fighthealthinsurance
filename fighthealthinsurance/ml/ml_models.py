@@ -82,6 +82,10 @@ def _served_sample(probe_model: str, served: set[str], limit: int = 8) -> list[s
 
 
 from fighthealthinsurance.env_utils import get_env_variable
+from fighthealthinsurance.keep_your_care import (
+    KEEP_YOUR_CARE_URL,
+    keep_your_care_prompt_links,
+)
 from fighthealthinsurance.ml import llm_usage, spend
 from fighthealthinsurance.ml.ml_metrics import (
     labelled_ml_calls,
@@ -98,6 +102,7 @@ from fighthealthinsurance.utils import (
     ensure_message_alternation,
     is_real_appeal,
 )
+from fighthealthinsurance.context_utils import CHARS_PER_TOKEN
 
 # Every backend setting in this module is read with get_env_variable. This
 # names where such a setting can come from, for the missing-setting errors.
@@ -259,7 +264,8 @@ PRIOR_AUTH_SYSTEM_PROMPT = (
     "and medical questions. Provide accurate, helpful, and concise information."
 )
 
-MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (ages 19-64) who got Medicaid through the ACA expansion to meet a work rule to get or keep Medicaid. Most states start on January 1, 2027, and a few started earlier.
+MEDICAID_WORK_REQUIREMENTS_BLOCK = (
+    """New federal rules require many adults (ages 19-64) who got Medicaid through the ACA expansion to meet a work rule to get or keep Medicaid. Most states start on January 1, 2027, and a few started earlier.
 
 **Key Points:**
 - Each month, any one of these counts: 80 hours per month of work, job training, school or volunteering (any mix), half-time school on its own, or at least $580 in household income
@@ -269,7 +275,22 @@ MEDICAID_WORK_REQUIREMENTS_BLOCK = """New federal rules require many adults (age
 - To keep Medicaid during an appeal, ask for a fair hearing before the end date on your notice
 - Details vary by state
 
-For who is exempt and what to do if you get a notice, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)"""
+For who is exempt and what to do if you get a notice, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)
+
+For free help keeping your coverage, including your state's deadlines and navigators, see [Keep Your Care]("""
+    + KEEP_YOUR_CARE_URL
+    + """)"""
+)
+
+# Keep Your Care has its own page for some states only, so the model is
+# handed the full list rather than left to build a /states/<code>/ URL that
+# may not exist.
+KEEP_YOUR_CARE_STATE_LINK_RULE = (
+    "If you already know the user's state and it is one of these, use its "
+    "Keep Your Care page in place of the Keep Your Care link above, exactly "
+    "as written (any other state keeps the link above):\n"
+    + keep_your_care_prompt_links()
+)
 
 
 # How we invite someone into the eligibility check. Four places have to say
@@ -303,6 +324,139 @@ MEDICAID_ELIGIBILITY_OFFER_RULE = (
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+
+# Chat context budgeting. A chat turn sends the system prompt (which the
+# Medicaid tool blocks nearly double), the context preamble, the message, and
+# the history, and the model needs room left to answer. The history budget is
+# whatever the window has left after the rest -- measured, not guessed: the
+# flat 8k reserve this replaced was smaller than the Medicaid system prompt
+# alone, so a long Medicaid chat could be sent to a model it didn't fit.
+CHAT_REPLY_RESERVE_TOKENS = 4096
+# chat_text_tokens is still an estimate (JSON and numbers tokenize worse than
+# prose), so this share of the window is kept spare on top of the reply
+# reserve.
+CHAT_CONTEXT_SAFETY_FRACTION = 0.1
+# Chat templates wrap every message in role markers and separators.
+CHAT_MESSAGE_OVERHEAD_TOKENS = 4
+
+
+# Characters that tokenizers rarely merge: digits (several split numbers
+# digit by digit), ASCII punctuation, and line breaks / tabs.
+_DENSE_ASCII_RE = re.compile(r"[0-9!-/:-@\[-`{-~\n\t]")
+
+
+def chat_text_tokens(text: Optional[str]) -> int:
+    """Conservative token estimate for chat budgeting.
+
+    chars / 4 holds for English prose but badly undercounts what people
+    actually paste here: an EOB table of claim numbers, dollar amounts and
+    billing codes tokenizes at up to ~3.7x that, JSON and phone numbers at
+    ~2-3x, and Chinese at up to ~1.5 tokens a character. So:
+
+    - digits, ASCII punctuation, newlines and tabs: one token each;
+    - other ASCII (letters, spaces): four characters a token;
+    - non-ASCII: 1.5 tokens a character.
+
+    Checked against cl100k, o200k, Llama 3.1, Qwen 2.5, DeepSeek V3, Gemma
+    2, Mistral and Phi 3.5 tokenizers on prose (English, Spanish, Chinese),
+    the chat system prompt, EOB tables, tool JSON, billing codes, URLs and
+    phone numbers: the worst case undercounts by ~12% (dense numeric tables
+    on per-digit tokenizers), which CHAT_CONTEXT_SAFETY_FRACTION and the
+    reply reserve absorb, and English prose overcounts by ~11%. Kept
+    separate from ``estimate_tokens``, whose callers report sizes rather
+    than guard a hard limit.
+    """
+    if not text:
+        return 0
+    non_ascii = len(text) - len(text.encode("ascii", "ignore"))
+    dense = len(_DENSE_ASCII_RE.findall(text))
+    sparse = len(text) - non_ascii - dense
+    return -(-sparse // CHARS_PER_TOKEN) + dense + (3 * non_ascii + 1) // 2
+
+
+def chat_mentions_medicaid(
+    current_message: str,
+    previous_context_summary: Optional[str],
+    history: Optional[List[dict[str, str]]],
+) -> bool:
+    """Whether Medicaid/Medicare comes up anywhere in this chat turn.
+
+    Checks the message, the summary and the WHOLE history: the Medicaid tool
+    blocks are attached if and only if Medicaid shows up anywhere in the
+    chat. Module-level so callers choosing between full and truncated
+    history can decide once, for every backend, from the full history.
+    """
+    text_to_check = current_message.lower()
+    if previous_context_summary:
+        text_to_check += " " + previous_context_summary.lower()
+    if history:
+        for msg in history:
+            content = msg.get("content", "")
+            if content:
+                text_to_check += " " + content.lower()
+    return any(
+        keyword in text_to_check for keyword in RemoteModelLike.MEDICAID_KEYWORDS
+    )
+
+
+def chat_context_preamble(previous_context_summary: Optional[str]) -> str:
+    """The framing put before the user's message when there is a summary."""
+    # Clearly-labeled framing: the old "The previous context is: ... And
+    # the active question is:" buried terse replies ("CA") behind the
+    # summary of the model's OWN previous turn, which invited weaker
+    # models to replay that turn instead of using the new answer.
+    if not previous_context_summary:
+        return ""
+    return (
+        f"Context summary of the conversation so far (background for you; "
+        f"the user has not seen this): {previous_context_summary}\n\n"
+        f"Reply to the user's newest message below. Do not repeat an "
+        f"earlier reply and do not re-ask questions the conversation "
+        f"history already answers.\n\nThe user's newest message is: "
+    )
+
+
+def history_token_budget(max_context: int, *texts: Optional[str]) -> int:
+    """Tokens of chat history that fit in ``max_context`` beside ``texts``.
+
+    ``texts`` is everything else the turn sends (system prompt, preamble,
+    message). May be zero or negative when those alone fill the window.
+    """
+    usable = int(max_context * (1 - CHAT_CONTEXT_SAFETY_FRACTION))
+    return usable - CHAT_REPLY_RESERVE_TOKENS - sum(chat_text_tokens(t) for t in texts)
+
+
+def _message_tokens(message: dict[str, str]) -> int:
+    return chat_text_tokens(message.get("content")) + CHAT_MESSAGE_OVERHEAD_TOKENS
+
+
+def fit_history_to_token_budget(
+    history: Optional[List[dict[str, str]]], budget: int
+) -> Optional[List[dict[str, str]]]:
+    """The most recent messages of ``history`` that fit in ``budget`` tokens.
+
+    Drops whole messages from the oldest end (the newest are what the turn
+    is answering) and returns ``history`` itself when it already fits. A
+    trimmed history never opens on an assistant reply whose question was
+    just dropped.
+    """
+    if not history:
+        return history
+    sizes = [_message_tokens(m) for m in history]
+    total = sum(sizes)
+    if total <= budget:
+        return history
+    start = 0
+    while start < len(history) and total > budget:
+        total -= sizes[start]
+        start += 1
+    while start < len(history) and history[start].get("role") in (
+        "assistant",
+        "agent",
+    ):
+        start += 1
+    return history[start:]
 
 
 # HTTP status codes that represent expected, operational conditions rather
@@ -423,6 +577,69 @@ class _EmptyAnswerNote(str):
 class _TimeoutNote(str):
     """A ``transport_failures`` entry for a call that got no answer within
     its window."""
+
+
+# The most of a web page's excerpt a WebCitation keeps.
+WEB_CITATION_EXCERPT_CHARS = 1200
+
+
+class WebCitation(str):
+    """A web search result, as a citation string ("Title. URL") that also
+    carries its parts: ``page_title``, ``url`` and ``excerpt``, the page text the
+    search engine returned with it (OpenRouter's ``url_citation.content``,
+    possibly empty). A str, so every caller that reads citations as text
+    reads it as it reads any other; the web search context
+    (ml/web_search_context.py) reads the parts to judge it."""
+
+    page_title: str
+    url: str
+    excerpt: str
+
+    def __new__(cls, title: str, url: str, excerpt: str = "") -> "WebCitation":
+        title = " ".join(str(title or "").split())
+        url = str(url or "").strip()
+        text = f"{title}. {url}" if title else url
+        obj = super().__new__(cls, text)
+        obj.page_title = title
+        obj.url = url
+        obj.excerpt = " ".join(str(excerpt or "").split())[:WEB_CITATION_EXCERPT_CHARS]
+        return obj
+
+
+def url_citations_from_annotations(annotations: Any) -> List[WebCitation]:
+    """The ``url_citation`` annotations of a chat completion message
+    (OpenRouter's web search results), one per URL, in order. Anything else
+    in the list, or a citation with no http(s) URL, is skipped: the URL is
+    the part that makes it checkable."""
+    found: List[WebCitation] = []
+    seen: set[str] = set()
+    if not isinstance(annotations, list):
+        return found
+    for annotation in annotations:
+        if not isinstance(annotation, dict):
+            continue
+        if annotation.get("type") != "url_citation":
+            continue
+        cited = annotation.get("url_citation")
+        if not isinstance(cited, dict):
+            continue
+        url = cited.get("url")
+        if not isinstance(url, str) or not re.match(r"^https?://\S+$", url.strip()):
+            continue
+        url = url.strip()
+        if url in seen:
+            continue
+        seen.add(url)
+        title = cited.get("title")
+        content = cited.get("content")
+        found.append(
+            WebCitation(
+                title if isinstance(title, str) else "",
+                url,
+                content if isinstance(content, str) else "",
+            )
+        )
+    return found
 
 
 def _unavailable_from(failures: List[str]) -> ProviderUnavailable:
@@ -1735,6 +1952,35 @@ class RemoteModelLike(DenialBase):
             return int(self.max_len)
         return 4096 * 8  # Default: 32k tokens
 
+    def chat_history_token_budget(
+        self,
+        current_message: str,
+        previous_context_summary: Optional[str] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        is_professional: bool = True,
+        is_logged_in: bool = True,
+    ) -> int:
+        """Tokens of history a chat turn with these inputs can send.
+
+        Sized against the system prompt ``generate_chat_response`` would
+        build for this turn (Medicaid detection included), so callers
+        choosing between full and truncated history ask the same question
+        the turn itself answers when it trims.
+        """
+        system_prompt = self.build_chat_system_prompt(
+            is_professional=is_professional,
+            is_logged_in=is_logged_in,
+            is_medicaid_related=self._is_medicaid_related(
+                current_message, previous_context_summary, history
+            ),
+        )
+        return history_token_budget(
+            self.get_max_context(),
+            system_prompt,
+            chat_context_preamble(previous_context_summary),
+            current_message,
+        )
+
     def model_is_ok(self):
         return False
 
@@ -1795,32 +2041,13 @@ class RemoteModelLike(DenialBase):
         previous_context_summary: Optional[str],
         history: Optional[List[dict[str, str]]],
     ) -> bool:
+        """Detect if the conversation is related to Medicaid/Medicare topics.
+
+        See ``chat_mentions_medicaid``.
         """
-        Detect if the conversation is related to Medicaid/Medicare topics.
-
-        Checks the current message, context summary, and recent history for
-        Medicaid-related keywords to determine if Medicaid tools should be included.
-        """
-        # Combine text to search
-        text_to_check = current_message.lower()
-
-        if previous_context_summary:
-            text_to_check += " " + previous_context_summary.lower()
-
-        # The whole history, not a recent window: the Medicaid tool blocks
-        # are attached if and only if Medicaid shows up anywhere in the chat.
-        if history:
-            for msg in history:
-                content = msg.get("content", "")
-                if content:
-                    text_to_check += " " + content.lower()
-
-        # Check for any Medicaid keywords
-        for keyword in self.MEDICAID_KEYWORDS:
-            if keyword in text_to_check:
-                return True
-
-        return False
+        return chat_mentions_medicaid(
+            current_message, previous_context_summary, history
+        )
 
     @property
     def slow(self):
@@ -1953,71 +2180,19 @@ class RemoteModelLike(DenialBase):
             return result[0]
         return None
 
-    @labelled_ml_calls("chat")
-    async def generate_chat_response(
+    def build_chat_system_prompt(
         self,
-        current_message_for_llm: Optional[str],
-        previous_context_summary: Optional[str] = None,
-        history: Optional[List[dict[str, str]]] = None,
-        temperature: float = 0.7,
         is_professional: bool = True,
         is_logged_in: bool = True,
-        is_medicaid_related: Optional[bool] = None,
-        allow_repeated_reply: bool = False,
-        raise_on_unavailable: bool = False,
-    ) -> tuple[Optional[str], Optional[str]]:
+        is_medicaid_related: bool = False,
+    ) -> str:
+        """The system prompt for a chat turn.
+
+        Split out of ``generate_chat_response`` so the context budget can be
+        sized against the prompt that will actually be sent
+        (``chat_history_token_budget``): the Medicaid tool blocks roughly
+        double it, and a flat guess let real chats overrun the window.
         """
-        Generate a chat response from the model.
-
-        Args:
-            current_message: The current message from the user
-            previous_context_summary: Optional summary of previous context
-            history: Optional history of messages
-            temperature: Temperature for the model
-            is_professional: Whether the user is a healthcare professional or patient
-            is_logged_in: Whether the user is logged in or anonymous
-            is_medicaid_related: Whether the chat involves Medicaid/Medicare topics.
-                If None, will be auto-detected from message and context.
-            allow_repeated_reply: True when the user's RAW message explicitly
-                asked for a repeat (derived by the caller BEFORE prompt
-                wrapping -- the wrapped prompt contains system-injected text
-                that says "repeat" and can't be tested here). Disables the
-                repeat-of-last-reply retry so the model may actually repeat.
-            raise_on_unavailable: Raise ProviderUnavailable when the model
-                could not be asked or reached (an HTTP error, a transport
-                failure, a skip), so the caller can record an outage rather
-                than a model that answered with nothing. A model that was
-                reached and gave no text (NoAnswerText) is asked again, as
-                without it; an outage on that second try keeps the first
-                try's answer.
-
-        Returns:
-            Generated response or None
-        """
-        # Clearly-labeled framing: the old "The previous context is: ... And
-        # the active question is:" buried terse replies ("CA") behind the
-        # summary of the model's OWN previous turn, which invited weaker
-        # models to replay that turn instead of using the new answer.
-        previous_context_extra = (
-            f"Context summary of the conversation so far (background for you; "
-            f"the user has not seen this): {previous_context_summary}\n\n"
-            f"Reply to the user's newest message below. Do not repeat an "
-            f"earlier reply and do not re-ask questions the conversation "
-            f"history already answers.\n\nThe user's newest message is: "
-            if previous_context_summary
-            else ""
-        )
-
-        if not current_message_for_llm or len(current_message_for_llm) == 0:
-            raise Exception("No message for LLM")
-        current_message: str = current_message_for_llm
-
-        # Auto-detect if Medicaid-related if not explicitly specified
-        if is_medicaid_related is None:
-            is_medicaid_related = self._is_medicaid_related(
-                current_message, previous_context_summary, history
-            )
-
         # Determine the target audience based on whether user is professional or patient
         audience = "healthcare professionals" if is_professional else "patients"
 
@@ -2128,7 +2303,10 @@ WRONG Examples:
             + MEDICAID_WORK_REQUIREMENTS_BLOCK
             + """
 
-RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use the text above, then """
+RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. """
+            + KEEP_YOUR_CARE_STATE_LINK_RULE
+            + """
+Use the text above, then """
             + MEDICAID_ELIGIBILITY_OFFER_RULE
             + """ Nothing else.
 """
@@ -2193,81 +2371,34 @@ All three keys are optional - supply whatever you know. The tool returns:
 
 Use this tool when the user asks about cost, affordability, copay assistance, "how can I afford this", coupons, GoodRx, manufacturer help, or whether the drug is available cheaper without insurance. Always remind the user that copay-foundation funds open and close throughout the year, and that pharmacy-discount payments don't count toward their OOP max."""
 
-        medicaid_eligibility_tool = """**Medicaid Eligibility Check (EXPERIMENTAL)**: To help check if someone is eligible for Medicaid or Medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
+        # Paired with real chat history on every Medicaid turn, so every line
+        # here is paid for out of the context window: state each rule once.
+        # Parameter names must match medicaid_api._KNOWN_ELIGIBILITY_FIELDS
+        # (tests enforce it), and the stated default year DEFAULT_TARGET_YEAR.
+        medicaid_eligibility_tool = """**Medicaid Eligibility Check (EXPERIMENTAL)**: Checks Medicaid AND Medicare eligibility. Use ONLY this format: **medicaid_eligibility {"state": "StateName", "married": false, ...}** (an example: send only what you actually know).
 
-THIS ELIGIBILITY CHECK IS AN EXPERIMENTAL FEATURE. Every time you start an eligibility check or deliver an estimate, tell the user in plain language that this is an experimental feature that can be wrong or out of date, that it is only a rough estimate and NOT an official eligibility determination, and that only their state Medicaid agency can determine eligibility for real. Do not let a whole eligibility conversation go by without this being said clearly.
+WHEN: whenever someone wants to know whether THEY can get Medicaid/Medicare — they asked outright, said yes to your offer of the check, or asked something only a check can answer ("would I qualify?", "what are the limits for someone like me?", "do the work requirements apply to me?"). Use this, NOT medicaid_info, even if they named their state; medicaid_info (state contact info and resources) is the follow-up AFTER the check. Don't run it on someone who only wanted to know what Medicaid is. NEVER state or guess an eligibility verdict yourself — the only eligibility answer you may give is the one this tool returns.
 
-USE THIS TOOL WHENEVER SOMEONE WANTS TO KNOW WHETHER THEY CAN GET MEDICAID/MEDICARE — they asked outright, they said yes to your offer of the check, or they asked something only a check can answer ("would I qualify?", "what are the limits for someone like me?", "do the work requirements apply to me?"). Don't run it on someone who only wanted to know what Medicaid is and hasn't shown any interest in it, and NEVER state or guess an eligibility verdict yourself — the only eligibility answer you may give is the one this tool returns.
+HOW:
+- Call the tool BEFORE asking any eligibility questions; it tells you what to ask. Knowing nothing else yet, call **medicaid_eligibility {"state": "ca"}**, or **medicaid_eligibility {}** if you don't know the state either.
+- Ask two or three of the questions it returns at a time, in its order, and only those (rephrase them naturally, with empathy). Don't re-ask anything already answered.
+- Every call, re-send ALL values collected so far plus the new answers (carry them in your 🐼 summary), until it gives a determination.
+- Its reply lists what it recorded (normalized), names it ignored, and values it couldn't read. That list is the source of truth: re-send what it recorded, fix what it ignored, and don't re-ask what the user declined.
+- Whenever you start a check or give an estimate, say plainly that it is EXPERIMENTAL, can be wrong or out of date, and is only a rough estimate, NOT an official determination: only their state Medicaid agency decides.
 
-When the user asks whether they qualify or are eligible for Medicaid or Medicare, use **medicaid_eligibility** — NOT medicaid_info, even when they also name their state. medicaid_info is only for looking up a state's contact info and resources, which is a good follow-up AFTER the eligibility check.
+PARAMETERS (all optional; leave out anything you don't know, never guess):
+- state: name or 2-letter code. A program name means its state (Medi-Cal is California, STAR is Texas): send that state, don't ask first
+- age, household_size, children_in_household: int; married, pregnant: bool
+- monthly_income: MAGI-ish monthly income (gross for long-term care or aged/blind/disabled); assets_total (leave out primary home equity), home_equity: numbers; home_owner: bool
+- receiving_ssdi (or disabled), on_medicare, als, esrd, veteran_or_spouse_of_veteran: bool; ssdi_length: MONTHS on SSDI; years_worked: years they or their spouse paid Medicare taxes
+- living_situation: "home" | "friends" | "assisted_living" | "rehab_temp" | "nursing_home_perm"
+- applying_reason: "standard" | "ltc_nursing_home" | "ltc_home_care"
+- target_year: the year to check besides today's rules (default 2026)
+- Work requirement: 80 qualifying hours a month of work, job training, school or volunteering. Caregiving is never qualifying hours; caring for a child 13 or younger or a disabled person is an exemption, other caregiving is neither. Most states start January 1, 2027; let the tool decide whether it applies. work_req_exempt_2026: true if you know they're exempt (pregnant, disabled/medically frail, on Medicare, caring for a child 13 or younger or a disabled person...). Hours, as ONE of: avg_monthly_qualifying_hours_last_3mo (per MONTH), avg_weekly_qualifying_hours_last_3mo (per WEEK, never a monthly number), total_qualifying_hours_last_3mo, or qualifying_hours_weekly_last_12 (a list of 12 weekly numbers).
 
-DO NOT ASK ANY QUESTIONS UNTIL YOU HAVE CALLED THE TOOL TO FIGURE OUT WHAT QUESTIONS NEED TO BE ASKED.
+VALUES (you convert the user's words): booleans as JSON true/false ("I'm single" -> "married": false); plain numbers with no $, commas or units ("about twelve hundred a month" -> 1200). If they can't answer, send "unknown" (e.g. "assets_total": "unknown") so it stops asking; never invent a value or silently drop the question. Send target_year only when they ask about a year ("2028", "next year", "when the work requirements start" -> a 4-digit year), then re-send it on every later call. Only the first medicaid_eligibility call in a reply runs, so for several years make one call per reply, call again for the next year once its result is back, and say which is which.
 
-This tool also checks for medicare eligibility.
-
-The parameters you are providing are in JSON format. If you don't know a parameter do not provide it. Never guess or make up a value the user hasn't given you.
-
-Note that format above is for example, you'd fill this in with the actual values when known.
-
-So (for example) if someone asks if they're eligible for medicaid in california and you don't yet know anything else you would call **medicaid_eligibility {"state": "ca"}** or if someone were to ask if they're eligible for medicaid but you don't yet know which state you would call **medicaid_eligibility {}**.
-
-At each step add the user's new answers to the parameters you've already collected (keep them in your panda context summary) and call the tool again to see what is left.
-
-Rules for medicaid eligibility:
-
-Call the tool, and the tool will tell you what other information is required until it eventually says probably eligible under today's rules only, probably eligible under today's rules and in the year being checked (by default 2026, with the work requirements), or can't find eligibility. The tool tells you which year it scored — use that year in your answer, never a different one. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
-
-Possible kwargs (all optional; function will ask for missing, step-by-step):
-      - state: str
-      - married: bool
-      - age: int
-      - pregnant: bool
-      - receiving_ssdi: bool  (or disabled: bool)
-      - on_medicare: bool
-      - veteran_or_spouse_of_veteran: bool
-      - living_situation: str     # "home", "friends", "assisted_living", "rehab_temp", "nursing_home_perm"
-      - applying_reason: str       # "standard" (MAGI), "ltc_nursing_home", "ltc_home_care"
-      - household_size: int
-      - monthly_income: float      # MAGI-ish for MAGI; gross for ABD/LTC high-level
-      - assets_total: float        # exclude primary home equity if possible
-      - home_owner: bool
-      - home_equity: float
-      - children_in_household: int
-      - als: bool
-      - esrd: bool
-      - ssdi_length: int # how many MONTHS they have been receiving SSDI
-      - years_worked: int # how many years you or your spouse worked and paid medicare taxes
-      - target_year: int  # which year to check besides today's rules (defaults to 2026)
-      # federal work / community engagement requirement: work, job training, school
-      # and volunteering can count toward 80 hours per month. Caregiving is an
-      # exemption when its conditions are met, not qualifying hours. Start dates
-      # vary by state; most start January 1, 2027. Let the tool check the state
-      # and target year, rather than assuming it applies everywhere in 2026:
-      - work_req_exempt_2026: bool                    # true if you know they're exempt (pregnant, disabled/medically frail, on medicare, etc.)
-      - avg_monthly_qualifying_hours_last_3mo: float  # average qualifying hours per MONTH (the units the tool asks in)
-      - avg_weekly_qualifying_hours_last_3mo: float   # or average per WEEK -- watch the units, never put a monthly number here
-      - total_qualifying_hours_last_3mo: float        # or the total over the last 3 months
-      - qualifying_hours_weekly_last_12: list of floats  # or 12 weekly numbers if they have detailed records
-
-**How to send values (you do the parsing):** the user answers in plain English; convert their answer into the canonical form before calling the tool, and keep the running set of answers in your panda context so you can re-send them every call.
-- Booleans: JSON `true` / `false`, not the words the user said. ("I'm single" -> `"married": false`.)
-- Numbers: a plain number with no currency symbol, comma, or unit. ("about twelve hundred a month" -> `"monthly_income": 1200`.)
-- State: the state name or its 2-letter code. If they name their program (Medi-Cal, MassHealth, TennCare, Apple Health...) infer the state yourself.
-- Hours: mind the units — `avg_monthly_qualifying_hours_last_3mo` is per MONTH, `avg_weekly_qualifying_hours_last_3mo` is per WEEK.
-- Year: every check covers today's rules plus one other year. If the user names a year ("what about 2028?", "will I still qualify next year?", "when the work requirements start"), send it as a 4-digit `target_year` — convert relative phrases yourself, and re-send the same `target_year` on every following call so the estimate doesn't silently switch years mid-conversation. Leave it out when they haven't asked about a particular year. If they ask about several years, run the check once per year and say which is which.
-
-**When the user can't answer**, send the string `"unknown"` for that parameter (e.g. `"assets_total": "unknown"`). That tells us to stop asking it and either assume the conservative answer or explain what we can't determine. Never invent a value, and never silently drop the question — an unanswered question comes back every turn.
-
-**The tool answers back with what it recorded.** It lists the values it stored (already normalized), any parameter names it did not recognize, and anything it couldn't read. Treat that list as the source of truth: re-send everything it recorded on your next call, fix anything it says it ignored, and don't re-ask what the user declined.
-
-Be clear that this is an experimental feature and these are only a best guess as the rules are evolving and you're an AI system who may not have the latest information and can also make mistakes.
-
-*Only ask a few (two or three) questions at a time, in the order the tool suggests them, and only ask those suggested by the tool (although you can rephrase them naturally and with empathy). Don't re-ask anything the user already told you — pass it in the parameters instead.*
-For example, if someone asks if they're eligible for medi-cal you will call the tool with california and then only ask a few of the questions it gives back (although you can rephrase them).
-
-When people ask about a state specific medicaid plan (e.g. medi-cal is california and STAR is texas) you can use that to infer the state.
-
-You can and should consider using the medicaid information tool once we've done an initial assessment and point them to state specific resources (like where to apply and who to call).
+RESULTS: it says probably eligible under today's rules only, under today's rules and the target year too, or no eligibility found. Use the year(s) it says it scored, never a different one. If the work requirement is the barrier, suggest ways to reach 80 hours (maybe school or volunteering) and remind them to keep good records, with empathy that this is unfair. Then point them to https://www.fighthealthinsurance.com/faq/medicaid/ and use **medicaid_info** for where to apply and who to call.
 """
 
         # Build tools section conditionally based on whether the chat is Medicaid-related
@@ -2289,8 +2420,6 @@ We have a selection of tools to help you. You should try and use these tools whe
 {pa_requirement_tool}
 {financial_assistance_tool}
 
-For eligibility determinations if you have a tool you must use the tool rather than guessing on your own.
-This means if someone asks if they're eligible for Medi-Cal, Medicaid, Medicare, or similar you must use the tool.
 You can call these tools, but not the person chatting with you. So, for example, you can offer to lookup more info for them.
 
 ***THE MEDICAID PATH***
@@ -2359,6 +2488,73 @@ So for example if a user asks a question and you have a follow up (like "How do 
 What reason did they give you for your GLP-1 denied?🐼Helping a patient appeal a GLP-1 denial.
 Remember in the last three sentences GLP-1 is just an _example_ check what the user is actually chatting about. You'll want to include all of the context collected so far in the summary after the panda emoji.
 """
+        return base_system_prompt
+
+    @labelled_ml_calls("chat")
+    async def generate_chat_response(
+        self,
+        current_message_for_llm: Optional[str],
+        previous_context_summary: Optional[str] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: float = 0.7,
+        is_professional: bool = True,
+        is_logged_in: bool = True,
+        is_medicaid_related: Optional[bool] = None,
+        allow_repeated_reply: bool = False,
+        raise_on_unavailable: bool = False,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """
+        Generate a chat response from the model.
+
+        Args:
+            current_message: The current message from the user
+            previous_context_summary: Optional summary of previous context
+            history: Optional history of messages
+            temperature: Temperature for the model
+            is_professional: Whether the user is a healthcare professional or patient
+            is_logged_in: Whether the user is logged in or anonymous
+            is_medicaid_related: Whether the chat involves Medicaid/Medicare topics.
+                If None, will be auto-detected from message and context.
+            allow_repeated_reply: True when the user's RAW message explicitly
+                asked for a repeat (derived by the caller BEFORE prompt
+                wrapping -- the wrapped prompt contains system-injected text
+                that says "repeat" and can't be tested here). Disables the
+                repeat-of-last-reply retry so the model may actually repeat.
+            raise_on_unavailable: Raise ProviderUnavailable when the model
+                could not be asked or reached (an HTTP error, a transport
+                failure, a skip), so the caller can record an outage rather
+                than a model that answered with nothing. A model that was
+                reached and gave no text (NoAnswerText) is asked again, as
+                without it; an outage on that second try keeps the first
+                try's answer.
+
+        Returns:
+            Generated response or None
+        """
+        previous_context_extra = chat_context_preamble(previous_context_summary)
+
+        if not current_message_for_llm or len(current_message_for_llm) == 0:
+            raise Exception("No message for LLM")
+        current_message: str = current_message_for_llm
+
+        # Auto-detect if Medicaid-related if not explicitly specified
+        if is_medicaid_related is None:
+            is_medicaid_related = self._is_medicaid_related(
+                current_message, previous_context_summary, history
+            )
+
+        base_system_prompt = self.build_chat_system_prompt(
+            is_professional=is_professional,
+            is_logged_in=is_logged_in,
+            is_medicaid_related=is_medicaid_related,
+        )
+        # Room left for history once this turn's prompt, message and reply
+        # are paid for. Medicaid detection above already saw the whole
+        # history, so trimming can't flip which prompt is sent.
+        max_context = self.get_max_context()
+        history_budget = history_token_budget(
+            max_context, base_system_prompt, previous_context_extra, current_message
+        )
         # The most recent assistant reply in the history: a fresh generation
         # that (nearly) repeats it is the chat-loop failure mode, so the
         # retry loop below treats it like a bad result and asks the model to
@@ -2432,11 +2628,21 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
                 temperature = min(1.0, temperature + 0.15)
             elif result and len(result) > 0 and "🐼" not in result:
                 result_extra = f"Your previous answer -- {result} -- was missing the panda emoji 🐼 and the context information. Please try again.\n\n"
+            # Per attempt: retry feedback can quote a whole draft back.
+            attempt_history = fit_history_to_token_budget(
+                history, history_budget - chat_text_tokens(result_extra)
+            )
+            if history and attempt_history is not history:
+                logger.info(
+                    f"Trimmed chat history from {len(history)} to "
+                    f"{len(attempt_history or [])} messages to fit {self} "
+                    f"({max_context} token context)"
+                )
             try:
                 raw_result = await self._infer(
                     system_prompts=[base_system_prompt],
                     prompt=f"{result_extra}{previous_context_extra}{current_message}",
-                    history=history,
+                    history=attempt_history,
                     temperature=temperature,
                     timeout=chat_timeout,
                     raise_on_unavailable=raise_on_unavailable,
@@ -2716,6 +2922,11 @@ class RemoteModel(RemoteModelLike):
 
     def _request_extras(self, model: str) -> dict[str, Any]:
         """Extra request-body fields for ``model`` (none by default)."""
+        return {}
+
+    def _request_headers(self) -> dict[str, str]:
+        """Extra HTTP headers for each chat completion, beside the bearer
+        key (none by default; OpenRouter's attribution headers)."""
         return {}
 
     def _record_spend(self, model: str, result: Any) -> None:
@@ -3741,6 +3952,13 @@ class RemoteOpenLike(RemoteModel):
             input_urls.extend(CleanerUtils.url_re.findall(plan_context))
         if pubmed_context and isinstance(pubmed_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(pubmed_context))
+        # Citations reach some calls only as context, not in the prompt (the
+        # short medical-necessity prompt), and web search citations are
+        # links: without this, a page the search found was probed again and,
+        # when its publisher refused the probe, stripped from the letter.
+        citations_text = render_citations_context(ml_citations_context)
+        if citations_text:
+            input_urls.extend(CleanerUtils.url_re.findall(citations_text))
 
         # The first call's outage (a 5xx, refused, a timeout); None when it
         # reached the model. Raised below when there is no time left to retry
@@ -5147,7 +5365,10 @@ class RemoteOpenLike(RemoteModel):
                     key = self.token
                     async with s.post(
                         url,
-                        headers={"Authorization": f"Bearer {key}"},
+                        headers={
+                            **self._request_headers(),
+                            "Authorization": f"Bearer {key}",
+                        },
                         json=request_body,
                     ) as response:
                         # An endpoint answered -- whatever the status. Probes
@@ -5463,6 +5684,11 @@ class RemoteOpenLike(RemoteModel):
                 elif "sources" in response_message:
                     citations = self._process_citation_objects(
                         response_message["sources"]
+                    )
+                elif response_message.get("annotations"):
+                    # OpenRouter's web search: url_citation annotations.
+                    citations = list(
+                        url_citations_from_annotations(response_message["annotations"])
                     )
 
             else:
@@ -6708,6 +6934,44 @@ class LunaRoute(RemoteFullOpenLike):
             self._concurrency.release(key)
 
 
+def configured_model_list(
+    models_env: str, defaults: List[Tuple[str, int, str]], owner: str
+) -> List[Tuple[str, int, str]]:
+    """(model, cost, tier) list for a provider whose models an operator can
+    name in ``models_env`` (comma-separated), else ``defaults``.
+
+    A model the override names that is also in ``defaults`` keeps its default
+    cost and tier; only a name the table does not know gets an incrementing
+    cost and the ``custom`` tier. Every override used to be ``custom``
+    (quality 88), so listing the sponsored frontier deployment, which the
+    comments above RemoteAzureOpenLike's DEFAULT_MODELS tell operators to do,
+    demoted it below DeepInfra in the external fan-out and put the paid
+    provider first. Repeated names are dropped: two descriptions of one
+    model registered two instances and doubled its calls.
+    """
+    override = get_env_variable(models_env) if models_env else None
+    if override and override.strip():
+        names = list(dict.fromkeys(n.strip() for n in override.split(",") if n.strip()))
+        if not names:
+            # e.g. AZURE_*_MODELS="," -- separators only, no real names.
+            # Fall back to defaults rather than silently disabling the
+            # provider with an empty model list.
+            logger.warning(
+                f"{owner}._configured_deployments: {models_env} is "
+                f"set but contains no valid deployment names; falling back to "
+                f"defaults"
+            )
+            return list(defaults)
+        base_cost = defaults[0][1] if defaults else 60
+        known = {name: (cost, tier) for name, cost, tier in defaults}
+        configured: List[Tuple[str, int, str]] = []
+        for i, name in enumerate(names):
+            cost, tier = known.get(name, (base_cost + i * 10, "custom"))
+            configured.append((name, cost, tier))
+        return configured
+    return list(defaults)
+
+
 class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
     """``RemoteFullOpenLike`` with shared per-model rate limiting and 429
     back-off, used by the external paid backends (Anthropic, Azure).
@@ -7265,32 +7529,7 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
         paid provider first. Repeated names are dropped: two descriptions of
         one deployment registered two instances and doubled its calls.
         """
-        override = get_env_variable(cls.MODELS_ENV) if cls.MODELS_ENV else None
-        if override and override.strip():
-            names = list(
-                dict.fromkeys(n.strip() for n in override.split(",") if n.strip())
-            )
-            if not names:
-                # e.g. AZURE_*_MODELS="," — separators only, no real names.
-                # Fall back to defaults rather than silently disabling the
-                # provider with an empty deployment list.
-                logger.warning(
-                    f"{cls.__name__}._configured_deployments: {cls.MODELS_ENV} is "
-                    f"set but contains no valid deployment names; falling back to "
-                    f"defaults"
-                )
-                return list(cls.DEFAULT_MODELS)
-            base_cost = cls.DEFAULT_MODELS[0][1] if cls.DEFAULT_MODELS else 60
-            known = {
-                deployment: (cost, tier)
-                for deployment, cost, tier in cls.DEFAULT_MODELS
-            }
-            configured: List[Tuple[str, int, str]] = []
-            for i, name in enumerate(names):
-                cost, tier = known.get(name, (base_cost + i * 10, "custom"))
-                configured.append((name, cost, tier))
-            return configured
-        return list(cls.DEFAULT_MODELS)
+        return configured_model_list(cls.MODELS_ENV, cls.DEFAULT_MODELS, cls.__name__)
 
     @property
     def supports_system(self):
@@ -7960,6 +8199,270 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             if extracted:
                 text = extracted.strip()
         return (text, [])
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    """A yes/no setting read with get_env_variable: "0", "false", "no" or
+    "off" (any case) is no, any other value yes, and ``default`` when unset
+    or blank."""
+    raw = get_env_variable(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+class OpenRouter(RateLimitedRemoteOpenLike):
+    """OpenRouter (openrouter.ai), one OpenAI-compatible API in front of many
+    hosted models. Registers each model as ``openrouter/<OpenRouter id>``.
+
+    External like every hosted backend: appeals reach it only as the backup
+    tier, with the person's external-models consent. A request carries
+    patient and plan details, and OpenRouter hands it to whichever upstream
+    provider serves the model, so every request asks OpenRouter to route
+    only to providers that do not collect the data it is sent
+    (``provider.data_collection: "deny"``) and, unless
+    ``OPENROUTER_REQUIRE_ZDR`` is turned off, only to zero-data-retention
+    endpoints (``provider.zdr``). A model with no such endpoint then fails
+    (HTTP 404/503) rather than going somewhere that keeps the text.
+
+    Environment variables:
+    - OPENROUTER_API_KEY (required), and optionally
+      SECONDARY_OPENROUTER_API_KEY (see api_keys_from_env)
+    - OPENROUTER_MODELS: comma-separated OpenRouter model ids, replacing
+      DEFAULT_MODELS
+    - OPENROUTER_REQUIRE_ZDR: default on
+    """
+
+    API_BASE: ClassVar[str] = "https://openrouter.ai/api/v1"
+    API_KEY_ENV: ClassVar[str] = "OPENROUTER_API_KEY"
+    MODELS_ENV: ClassVar[str] = "OPENROUTER_MODELS"
+    ZDR_ENV: ClassVar[str] = "OPENROUTER_REQUIRE_ZDR"
+    NAME_PREFIX: ClassVar[str] = "openrouter"
+    PROVIDER_LABEL: ClassVar[str] = "OpenRouter"
+    SPEND_PROVIDER: ClassVar[Optional[str]] = spend.OPENROUTER
+    # The models OpenRouter lists run to 1M tokens; 200k, like Anthropic's,
+    # keeps the shed ladder's arithmetic in the range it was tuned for.
+    MAX_LEN: ClassVar[int] = 200000
+    # Attribution headers (openrouter.ai/docs: HTTP-Referer and
+    # X-OpenRouter-Title). They name the site, never the request.
+    ATTRIBUTION_HEADERS: ClassVar[dict[str, str]] = {
+        "HTTP-Referer": "https://www.fighthealthinsurance.com",
+        "X-OpenRouter-Title": "Fight Health Insurance",
+    }
+    # Ordered cheapest -> most expensive: (OpenRouter id, cost, tier). Both
+    # had zero-data-retention endpoints in OpenRouter's catalog on
+    # 2026-11-06 (GET /api/v1/models?zdr=true). Tiers below "frontier" on
+    # purpose: OpenRouter is a backup to the providers already in the
+    # external fan-out (MLRouter.best_external_models), not a replacement.
+    DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
+        ("google/gemini-3.8-flash", 45, "speed"),
+        ("anthropic/claude-sonnet-5.5", 90, "quality"),
+    ]
+
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    def __init__(self, model: str, dual_mode: bool = False):
+        token = get_env_variable(self.API_KEY_ENV)
+        if token is None or len(token) < 1:
+            raise EnvironmentError(
+                f"No API key found for OpenRouter. Set {self.API_KEY_ENV} in "
+                f"{_SETTING_SOURCES}."
+            )
+        super().__init__(
+            self.API_BASE,
+            api_keys_from_env(self.API_KEY_ENV),
+            model=model,
+            dual_mode=dual_mode,
+            max_len=self.MAX_LEN,
+        )
+        self._ensure_rate_limiter(model)
+
+    @property
+    def supports_system(self):
+        return True
+
+    @property
+    def external(self):
+        return True
+
+    @classmethod
+    def require_zdr(cls) -> bool:
+        return _env_flag(cls.ZDR_ENV, True)
+
+    @classmethod
+    def provider_preferences(cls) -> dict[str, Any]:
+        """OpenRouter's provider routing preferences for every request."""
+        preferences: dict[str, Any] = {"data_collection": "deny"}
+        if cls.require_zdr():
+            preferences["zdr"] = True
+        return preferences
+
+    def _request_extras(self, model: str) -> dict[str, Any]:
+        return {"provider": self.provider_preferences()}
+
+    def _request_headers(self) -> dict[str, str]:
+        return dict(self.ATTRIBUTION_HEADERS)
+
+    @classmethod
+    def _configured_models(cls) -> List[Tuple[str, int, str]]:
+        return configured_model_list(cls.MODELS_ENV, cls.DEFAULT_MODELS, cls.__name__)
+
+    def get_tier(self) -> str:
+        for model, _cost, tier in self._configured_models():
+            if model == self.model:
+                return tier
+        return "unknown"
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        return cls._classify_env_keys(cls.API_KEY_ENV)
+
+    @classmethod
+    def model_catalog(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(
+                cost=cost,
+                name=f"{cls.NAME_PREFIX}/{model}",
+                internal_name=model,
+            )
+            for model, cost, _tier in cls._configured_models()
+        ]
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """The configured models; empty while OPENROUTER_API_KEY is unset."""
+        if not get_env_variable(cls.API_KEY_ENV):
+            logger.debug(f"{cls.__name__}.models: {cls.API_KEY_ENV} not set, skipping")
+            return []
+        return cls.model_catalog()
+
+    def _configured_and_not_limited(self) -> bool:
+        """Key set and not backing off after a 429. In memory only."""
+        if not get_env_variable(self.API_KEY_ENV):
+            return False
+        return self.rate_limiter.can_request()
+
+
+class OpenRouterWebSearch(OpenRouter):
+    """OpenRouter's web search, for context only: a cheap model with the
+    ``openrouter:web_search`` server tool, asked about a denial's treatment
+    and condition, whose answer is thrown away and whose ``url_citation``
+    annotations (the pages the search found, as WebCitation) are kept.
+    ml/web_search_context.py judges those before any reaches a letter.
+
+    Context-only (never drafts, never chats), so it sits outside every
+    general pool, like Perplexity. Registered when OPENROUTER_API_KEY is set
+    and OPENROUTER_WEB_SEARCH_ENABLED is not turned off.
+
+    Environment variables (besides OpenRouter's):
+    - OPENROUTER_WEB_SEARCH_ENABLED: default on
+    - OPENROUTER_WEB_SEARCH_MODEL: the model that runs the search
+    - OPENROUTER_WEB_SEARCH_ENGINE: OpenRouter's engine (auto when unset)
+    - OPENROUTER_WEB_SEARCH_MAX_RESULTS: 1-25, default 5
+    """
+
+    ENABLED_ENV: ClassVar[str] = "OPENROUTER_WEB_SEARCH_ENABLED"
+    MODEL_ENV: ClassVar[str] = "OPENROUTER_WEB_SEARCH_MODEL"
+    ENGINE_ENV: ClassVar[str] = "OPENROUTER_WEB_SEARCH_ENGINE"
+    MAX_RESULTS_ENV: ClassVar[str] = "OPENROUTER_WEB_SEARCH_MAX_RESULTS"
+    # Cheap, with a zero-data-retention endpoint (2026-11-06); it only has
+    # to phrase the search and name what it found.
+    DEFAULT_MODEL: ClassVar[str] = "anthropic/claude-haiku-5.5"
+    NAME: ClassVar[str] = "openrouter-web-search"
+    DEFAULT_MAX_RESULTS: ClassVar[int] = 5
+    # Its answer is discarded, so it needs few words; the search results
+    # come back as annotations whatever it writes.
+    MAX_TOKENS: ClassVar[int] = 1024
+    # Separate rate-limit state from the drafting models'.
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @property
+    def context_only(self):
+        return True
+
+    def quality(self) -> int:
+        return 80
+
+    @classmethod
+    def enabled(cls) -> bool:
+        return _env_flag(cls.ENABLED_ENV, True)
+
+    @classmethod
+    def search_model(cls) -> str:
+        configured = get_env_variable(cls.MODEL_ENV)
+        return (configured or "").strip() or cls.DEFAULT_MODEL
+
+    @classmethod
+    def max_results(cls) -> int:
+        raw = get_env_variable(cls.MAX_RESULTS_ENV)
+        try:
+            value = int((raw or "").strip())
+        except ValueError:
+            return cls.DEFAULT_MAX_RESULTS
+        return min(max(value, 1), 25)
+
+    @classmethod
+    def web_search_tool(cls) -> dict[str, Any]:
+        parameters: dict[str, Any] = {"max_results": cls.max_results()}
+        engine = (get_env_variable(cls.ENGINE_ENV) or "").strip()
+        if engine:
+            parameters["engine"] = engine
+        return {"type": "openrouter:web_search", "parameters": parameters}
+
+    def get_tier(self) -> str:
+        return "speed"
+
+    def _request_extras(self, model: str) -> dict[str, Any]:
+        return {
+            **super()._request_extras(model),
+            "tools": [self.web_search_tool()],
+            "max_tokens": self.MAX_TOKENS,
+        }
+
+    @classmethod
+    def model_catalog(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(cost=20, name=cls.NAME, internal_name=cls.search_model())
+        ]
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        if not get_env_variable(cls.API_KEY_ENV) or not cls.enabled():
+            return []
+        return cls.model_catalog()
+
+    async def web_search(
+        self, question: str, timeout: Optional[float] = None
+    ) -> List[WebCitation]:
+        """The pages a web search for ``question`` found, or [] when the
+        call failed or found none. Never raises (cancellation aside). The
+        model's own words are dropped: only the search engine's results,
+        each a real URL, are returned."""
+        try:
+            result = await self._infer(
+                system_prompts=[
+                    "You search the web for a service that helps patients "
+                    "appeal health insurance denials. Search for clinical "
+                    "guidelines, coverage policies and published evidence "
+                    "about the treatment you are asked about. Answer in one "
+                    "or two sentences; the sources you find matter, not your "
+                    "answer."
+                ],
+                prompt=question,
+                temperature=0.2,
+                timeout=timeout,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug(f"{self}: web search failed ({type(e).__name__})")
+            return []
+        if not result:
+            return []
+        _text, citations = result
+        return [c for c in (citations or []) if isinstance(c, WebCitation)]
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]

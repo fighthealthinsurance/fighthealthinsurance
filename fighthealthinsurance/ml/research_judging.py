@@ -83,6 +83,22 @@ VERDICTS = (
 # Where an article nobody judged sorts among judged ones: no evidence
 # either way.
 UNJUDGED_SUPPORT = 0.5
+# Where a judgment reads as plainly on topic. Below it, but not so far below
+# that the article is dropped (OFF_TOPIC_BELOW), the article is probably off
+# topic: the letter's model is told so (PROBABLY_OFF_TOPIC_NOTE) and left to
+# decide, unless there is enough plainly on-topic material to quote instead
+# (FOCUS_MIN_ON_TOPIC, see ``focus``).
+LIKELY_ON_TOPIC_AT = 0.6
+# How many plainly on-topic references (of one source: PubMed articles, or
+# web pages) there must be before the rest of that source are left out of
+# what the letter's model is given rather than labelled.
+FOCUS_MIN_ON_TOPIC = 2
+# What the letter's model is told about a reference that is probably off
+# topic. Says "probably": the judgment is a filter, not a finding.
+PROBABLY_OFF_TOPIC_NOTE = (
+    "probably off topic for this treatment; cite it only if it clearly "
+    "supports this appeal, otherwise leave it out"
+)
 
 # Bounds on one context build: how many articles are judged, how many
 # requests run at once, and how much of an abstract is sent.
@@ -220,6 +236,17 @@ class Judgment:
     def drop(self) -> bool:
         """Leave it out of what we quote (and untick it on the fax page)."""
         return self.verdict in (VERDICT_OFF_TOPIC, VERDICT_AGAINST)
+
+    @property
+    def on_topic_likely(self) -> bool:
+        """Plainly about this treatment for this condition."""
+        return self.on_topic >= LIKELY_ON_TOPIC_AT
+
+    @property
+    def probably_off_topic(self) -> bool:
+        """Not plainly on topic: what the letter's model is warned about
+        (PROBABLY_OFF_TOPIC_NOTE) when the reference is quoted at all."""
+        return not self.on_topic_likely
 
     def as_dict(self) -> dict[str, typing.Any]:
         """The verdict and its probabilities (two places), as a page is
@@ -465,6 +492,47 @@ def order(
     dropped = [a for a in unique if _dropped(judgments.get(pmid_of(a)))]
     kept.sort(key=lambda a: -_support(judgments.get(pmid_of(a))))
     return kept, dropped
+
+
+def focus(
+    articles: typing.Sequence[_T],
+    judgments: typing.Mapping[str, Judgment],
+    *,
+    pmid_of: typing.Callable[[_T], str],
+) -> tuple[list[_T], list[_T]]:
+    """Split ``articles`` (the kept half of ``order``, in its order) into
+    (quoted, set aside). With at least FOCUS_MIN_ON_TOPIC of them plainly on
+    topic (Judgment.on_topic_likely), only those are quoted, and the rest
+    (probably off topic, or never judged) are set aside: there is enough on
+    topic to argue from without them. With fewer, every one is quoted, and
+    the letter's model is told which are probably off topic
+    (``probably_off_topic``) rather than given nothing to cite."""
+    on_topic = [
+        a
+        for a in articles
+        if (judgment := judgments.get(pmid_of(a))) is not None
+        and judgment.on_topic_likely
+    ]
+    if len(on_topic) < FOCUS_MIN_ON_TOPIC:
+        return list(articles), []
+    quoted = {id(a) for a in on_topic}
+    return on_topic, [a for a in articles if id(a) not in quoted]
+
+
+def probably_off_topic(
+    articles: typing.Sequence[_T],
+    judgments: typing.Mapping[str, Judgment],
+    *,
+    pmid_of: typing.Callable[[_T], str],
+) -> set[str]:
+    """The ids of the ``articles`` judged probably off topic (an article
+    never judged is not: there is nothing to say about it)."""
+    return {
+        pmid_of(a)
+        for a in articles
+        if (judgment := judgments.get(pmid_of(a))) is not None
+        and judgment.probably_off_topic
+    }
 
 
 def _dropped(judgment: typing.Optional[Judgment]) -> bool:

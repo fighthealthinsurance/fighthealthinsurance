@@ -66,7 +66,7 @@ style blocks); the bar's fill carries no text.
       <div class="stat-card" id="goal-recent-per-week"><div class="value">{{ goal.recent_per_week }}</div><div class="label">a week over the last {{ goal.recent_days }} days ({{ goal.recent }} new employer plan{{ goal.recent|pluralize }})</div></div>
       <div class="stat-card" id="goal-projected"><div class="value">{{ goal.projected }}</div><div class="label">by {{ goal.by|date:"M j" }} at that pace</div></div>
     </div>
-    <p class="note">An employer plan is a plan of either employer kind, or a plan whose kind wasn't given with an employer named. Each share is one plan unless every file and link in it came in an earlier share; removed rows count for nothing. The share page shows this count only from 20, so nobody lands on "2 of 100".</p>
+    <p class="note">Employer plans are counted by company: a plan counts once a shared document names its sponsor and that company is new to the company list, so each company counts once. Each share is one plan unless every file and link in it came in an earlier share; removed rows and potential spam count for nothing. The share page shows this count only from 20, so nobody lands on "2 of 100".</p>
   </div>
   {% endwith %}
 
@@ -80,7 +80,7 @@ style blocks); the bar's fill carries no text.
     </div>
     <table class="counts" id="weeks">
       <caption>Each week, newest first (the last 12)</caption>
-      <thead><tr><th scope="col">Week of</th><th scope="col" class="num">Shares</th><th scope="col" class="num">New plans</th><th scope="col" class="num">New employer plans</th><th scope="col" class="num">Files</th><th scope="col" class="num">Links</th></tr></thead>
+      <thead><tr><th scope="col">Week of</th><th scope="col" class="num">Shares</th><th scope="col" class="num">New plans</th><th scope="col" class="num">New companies</th><th scope="col" class="num">Files</th><th scope="col" class="num">Links</th></tr></thead>
       <tbody>
         {% for row in counts.weeks %}<tr><th scope="row">{{ row.week|date:"M j, Y" }}</th><td class="num">{{ row.shares }}</td><td class="num">{{ row.plans }}</td><td class="num">{{ row.employer_plans }}</td><td class="num">{{ row.files }}</td><td class="num">{{ row.links }}</td></tr>
         {% empty %}<tr><td colspan="6">No shares yet.</td></tr>{% endfor %}

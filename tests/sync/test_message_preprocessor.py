@@ -71,6 +71,10 @@ class _StubBackend:
     def get_max_context(self) -> int:
         return 100000
 
+    def chat_history_token_budget(self, current_message, **kwargs) -> int:
+        # Mirrors RemoteModelLike: the window less a flat prompt + reply share.
+        return 100000 - 16000
+
     def generate_chat_response(self, message, **kwargs):
         self.received.append(message)
 

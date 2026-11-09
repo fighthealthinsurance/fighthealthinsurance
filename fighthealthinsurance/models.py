@@ -276,6 +276,17 @@ class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"
     unsubscribed = models.BooleanField(default=False)
     unsubscribed_at = models.DateTimeField(null=True, blank=True)
 
+    # Staff review of a new signup (see pro_signup_actions.py). The thank-you
+    # email waits for staff to act from the team notification; "block address"
+    # sets these so nothing more goes to the address and later submissions
+    # from it are logged and dropped.
+    blocked = models.BooleanField(default=False, db_default=False)
+    blocked_at = models.DateTimeField(null=True, blank=True)
+    # The team notification's subject, so staff-action replies thread under it.
+    notification_subject = models.CharField(
+        max_length=300, default="", blank=True, db_default=""
+    )
+
     def __str__(self):
         return self.email
 
@@ -297,6 +308,7 @@ class ProfessionalInquiry(models.Model):
         CAPPED = "capped", "Capped"
         SPAM = "spam", "Spam"
         CLEARED = "cleared", "Not spam (cleared by staff)"
+        BLOCKED = "blocked", "Blocked address"
 
     interested_professional = models.ForeignKey(
         InterestedProfessional,
@@ -584,6 +596,12 @@ class Regulator(models.Model):
 
     def __str__(self):
         return self.name
+
+
+#: The answers to "Do you have any other health insurance?" (Denial.other_insurance).
+OTHER_INSURANCE_YES = "yes"
+OTHER_INSURANCE_NO = "no"
+OTHER_INSURANCE_UNSURE = "unsure"
 
 
 class PlanSource(models.Model):
@@ -965,6 +983,258 @@ class LineOfBusiness(models.TextChoices):
     DSNP = "dsnp", "Dual Special Needs Plan"
     OTHER = "other", "Other"
     ALL = "all", "All Lines of Business"
+
+
+class PublicPlanDocument(models.Model):
+    """
+    A plan document WE fetched from a public source: an Evidence of
+    Coverage, a Summary of Benefits and Coverage, a member handbook, a
+    formulary. Rows come from ``import_plan_documents``, which loads the
+    bundles the pipeline in healthinsurance-llm-internal writes
+    (plan_document_bundle documents the contract), or from the admin one
+    document at a time.
+
+    Public data with no PHI, so the text and the optional original file are
+    stored in the clear, like ExtraLinkDocument's. Not to be confused with
+    PlanDocuments (files a person uploads with their appeal, encrypted) or
+    PolicyDocument (Explain My Policy uploads and consented shares).
+
+    The matching columns (state, region, line of business, employer, plan
+    id prefixes, keywords and the regex pair) are what plan_document_matcher
+    scores a denial against. ``text`` holds "[Page N]" blocks, the shape
+    MLPlanDocHelper's passage selection reads, so a quoted passage can name
+    its page.
+    """
+
+    DOCUMENT_TYPE_EVIDENCE_OF_COVERAGE = "evidence_of_coverage"
+    DOCUMENT_TYPE_SUMMARY_OF_BENEFITS = "summary_of_benefits"
+    DOCUMENT_TYPE_SUMMARY_PLAN_DESCRIPTION = "summary_plan_description"
+    DOCUMENT_TYPE_MEMBER_HANDBOOK = "member_handbook"
+    DOCUMENT_TYPE_CERTIFICATE_OF_COVERAGE = "certificate_of_coverage"
+    DOCUMENT_TYPE_FORMULARY = "formulary"
+    DOCUMENT_TYPE_MEDICAL_POLICY = "medical_policy"
+    DOCUMENT_TYPE_OTHER = "other"
+    DOCUMENT_TYPE_CHOICES = [
+        (DOCUMENT_TYPE_EVIDENCE_OF_COVERAGE, "Evidence of Coverage"),
+        (DOCUMENT_TYPE_SUMMARY_OF_BENEFITS, "Summary of Benefits and Coverage"),
+        (DOCUMENT_TYPE_SUMMARY_PLAN_DESCRIPTION, "Summary Plan Description"),
+        (DOCUMENT_TYPE_MEMBER_HANDBOOK, "Member handbook"),
+        (DOCUMENT_TYPE_CERTIFICATE_OF_COVERAGE, "Certificate of Coverage"),
+        (DOCUMENT_TYPE_FORMULARY, "Formulary"),
+        (DOCUMENT_TYPE_MEDICAL_POLICY, "Medical policy"),
+        (DOCUMENT_TYPE_OTHER, "Other plan document"),
+    ]
+
+    COVERAGE_KIND_MEDICAL = "medical"
+    COVERAGE_KIND_DENTAL = "dental"
+    COVERAGE_KIND_CHOICES = [
+        (COVERAGE_KIND_MEDICAL, "Medical"),
+        (COVERAGE_KIND_DENTAL, "Dental"),
+        ("vision", "Vision"),
+        ("pharmacy", "Pharmacy"),
+        ("behavioral", "Behavioral health"),
+        ("other", "Other"),
+    ]
+
+    #: The most text one document keeps, about a thousand pages
+    #: (ml_document_extraction.MAX_PDF_CHARS).
+    MAX_TEXT_CHARS = 3_000_000
+
+    id = models.AutoField(primary_key=True)
+    document_key = models.CharField(
+        max_length=128,
+        unique=True,
+        help_text=(
+            "The pipeline's stable id for this document (letters, digits, "
+            "'.', '_' and '-'); a re-import with the same key updates the row"
+        ),
+    )
+    insurance_company = models.ForeignKey(
+        InsuranceCompany,
+        on_delete=models.CASCADE,
+        related_name="public_plan_documents",
+        help_text="The carrier whose plan this document describes",
+    )
+    insurance_plan = models.ForeignKey(
+        InsurancePlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="public_plan_documents",
+        help_text="The specific plan, where one is known",
+    )
+    title = models.CharField(max_length=500)
+    document_type = models.CharField(max_length=40, choices=DOCUMENT_TYPE_CHOICES)
+    coverage_kind = models.CharField(
+        max_length=20, choices=COVERAGE_KIND_CHOICES, default=COVERAGE_KIND_MEDICAL
+    )
+    line_of_business = models.CharField(
+        max_length=32,
+        choices=LineOfBusiness.choices,
+        default=LineOfBusiness.ALL,
+        help_text="'All lines of business' when the document is not specific to one",
+    )
+    state = models.CharField(
+        max_length=2,
+        blank=True,
+        default="",
+        help_text="Two-letter state code; blank for a national document",
+    )
+    region = models.CharField(
+        max_length=120,
+        blank=True,
+        default="",
+        help_text="The carrier's region or service area (e.g. Northern California)",
+    )
+    employer_name = models.CharField(
+        max_length=300,
+        blank=True,
+        default="",
+        help_text="Set only for a document specific to one employer's plan",
+    )
+    plan_year = models.PositiveSmallIntegerField(null=True, blank=True)
+    plan_id_prefixes = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Upper-cased prefixes of the member or group ids this plan issues",
+    )
+    match_keywords = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=(
+            "Lower-cased phrases that place a letter with this document (a "
+            "region, a medical center, a plan name); matched as whole words"
+        ),
+    )
+    match_regex = RegexField(
+        max_length=800,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        blank=True,
+        default="",
+        help_text="Pattern that places a denial letter with this document",
+    )
+    negative_regex = RegexField(
+        max_length=800,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        blank=True,
+        default="",
+        help_text="Pattern that rules this document out for a letter",
+    )
+    source_url = models.URLField(max_length=2000, blank=True, default="")
+    fetched_at = models.DateTimeField(null=True, blank=True)
+    source_sha256 = models.CharField(
+        max_length=64, blank=True, default="", help_text="SHA-256 of the original file"
+    )
+    # "[Page N]" blocks joined by blank lines (MLPlanDocHelper.load_plan_documents
+    # builds the same shape for uploads).
+    text = models.TextField(blank=True, default="")
+    text_sha256 = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    page_count = models.PositiveIntegerField(default=0)
+    char_count = models.PositiveIntegerField(default=0)
+    stored_file = models.FileField(
+        upload_to="public_plan_documents/",
+        null=True,
+        blank=True,
+        storage=settings.COMBINED_STORAGE,
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Only active documents are matched to denials",
+    )
+    pipeline_version = models.CharField(max_length=64, blank=True, default="")
+    import_batch = models.CharField(max_length=64, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["insurance_company", "is_active"]),
+            models.Index(fields=["insurance_company", "state", "plan_year"]),
+        ]
+        ordering = ["insurance_company__name", "-plan_year", "title"]
+        verbose_name = "Public plan document"
+        verbose_name_plural = "Public plan documents"
+
+    def __str__(self) -> str:
+        return f"{self.insurance_company.name}: {self.citation_name()}"
+
+    def citation_name(self) -> str:
+        """How a passage from this document is cited: its title, with the
+        plan year when the title does not already carry it."""
+        if self.plan_year and str(self.plan_year) not in self.title:
+            return f"{self.title} ({self.plan_year})"
+        return self.title
+
+    @staticmethod
+    def text_hash(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class PlanDocumentMatch(models.Model):
+    """
+    One public plan document the matcher scored for one denial
+    (plan_document_matcher). Every candidate that survived the hard
+    excludes is kept, ranked, so staff can see why a document was or was
+    not chosen; ``selected`` marks the ones whose text goes to the appeal,
+    and the rank-1 selected row carries the passages and summary built for
+    it.
+
+    ``inputs_hash`` is what the selection was computed from (the letter,
+    the carrier, and the facts this carrier's corpus keys on); rows whose
+    hash no longer matches the denial are stale and never read.
+    ``relevance_key`` is the procedure and diagnosis the text was built
+    for; a change there rebuilds the text and keeps the selection.
+    """
+
+    METHOD_RULES = "rules"
+    METHOD_MODEL = "model"
+    METHOD_CHOICES = [
+        (METHOD_RULES, "Rules"),
+        (METHOD_MODEL, "Model tie-break"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    denial = models.ForeignKey(
+        "Denial", on_delete=models.CASCADE, related_name="plan_document_matches"
+    )
+    document = models.ForeignKey(
+        PublicPlanDocument, on_delete=models.CASCADE, related_name="denial_matches"
+    )
+    # The carrier the row was computed for; a correction on the review page
+    # changes the hash, so a row never speaks for another carrier.
+    company = models.ForeignKey(
+        InsuranceCompany, on_delete=models.CASCADE, related_name="+"
+    )
+    score = models.FloatField()
+    signals = models.JSONField(default=dict, blank=True)
+    rank = models.PositiveSmallIntegerField()
+    selected = models.BooleanField(default=False, db_index=True)
+    method = models.CharField(
+        max_length=8, choices=METHOD_CHOICES, default=METHOD_RULES
+    )
+    relevant_text = models.TextField(blank=True, default="")
+    summary = models.TextField(blank=True, default="")
+    inputs_hash = models.CharField(max_length=64, db_index=True)
+    relevance_key = models.CharField(max_length=16, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["denial", "document"],
+                name="plan_document_match_one_per_document",
+            )
+        ]
+        indexes = [models.Index(fields=["denial", "selected"])]
+        ordering = ["denial_id", "rank"]
+        verbose_name = "Plan document match"
+        verbose_name_plural = "Plan document matches"
+
+    def __str__(self) -> str:
+        chosen = "selected" if self.selected else "candidate"
+        return f"Denial {self.denial_id} / document {self.document_id}: {chosen} {self.score:.0f}"
 
 
 class PayerPriorAuthRequirement(models.Model):
@@ -2488,6 +2758,21 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     plan_type = models.ManyToManyField(PlanType, through=PlanTypesRelation)
     plan_source = models.ManyToManyField(PlanSource, through=PlanSourceRelation)
     employer_name = models.CharField(max_length=300, null=True, blank=True)
+    # Whether the person has health insurance besides the plan that denied
+    # this, as they answered on the review page: one of OTHER_INSURANCE_*,
+    # or "" when they did not say. Another plan may pay what this one won't.
+    other_insurance = models.CharField(
+        max_length=8, blank=True, default="", db_default=""
+    )
+    # Where that other insurance comes from, and the company, when they said.
+    other_plan_source = models.ForeignKey(
+        PlanSource,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    other_insurance_company = models.CharField(max_length=300, null=True, blank=True)
     regulator = models.ForeignKey(
         Regulator, null=True, on_delete=models.SET_NULL, blank=True
     )
@@ -4514,6 +4799,28 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
     # votes still count as presentations, with zero winning credit for all.
     all_bad = models.BooleanField(default=False)
     rationale = models.TextField(blank=True, default="")
+    # Review insights: how the review went, kept raw so the votes can be
+    # studied and weighted in more than one way later (see docs/chooser.md,
+    # "Review insights"). served_at is when the server handed this session
+    # the task, so created_at - served_at is timed on the server; NULL when
+    # the vote came without a recorded serve (an older client, or a session
+    # that lost it). active_ms is the page's count of the time it was
+    # visible between the case appearing and the vote, so a judge who
+    # switched tabs is not timed for it; NULL from clients that do not send
+    # it. expanded_candidate_ids are the presented drafts the judge opened
+    # with "Read it all".
+    served_at = models.DateTimeField(null=True, blank=True)
+    active_ms = models.PositiveIntegerField(null=True, blank=True)
+    expanded_candidate_ids = models.JSONField(default=list, blank=True)
+    # The page's interaction summary, as chooser_review_signals cleans it.
+    review_signals = models.JSONField(default=dict, blank=True)
+    # The judge's network as the server saw it: the class
+    # (client_network.classify: isp, hosting, tor, ...), the ASN's name and
+    # Cloudflare's country. Never the address. Blank when unknown.
+    network_class = models.CharField(max_length=20, blank=True, default="")
+    asn_name = models.CharField(max_length=200, blank=True, default="")
+    country = models.CharField(max_length=2, blank=True, default="")
+    user_agent = models.CharField(max_length=400, blank=True, default="")
     session_key = models.CharField(max_length=100, db_index=True)
     # Who else this judge is, so the Arena does not serve the same person a
     # case twice: the signed-in user (a person keeps their votes across
@@ -4567,6 +4874,16 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
         if len(tied) >= 2:
             return {cid: 1.0 / len(tied) for cid in tied}
         return {chosen_candidate_id: 1.0}
+
+    @property
+    def seconds_to_vote(self) -> typing.Optional[float]:
+        """Server-measured time from serving the task to receiving the vote;
+        None when either end is missing or the clock stepped back between
+        them (served_at and created_at are both kept as they were)."""
+        if self.served_at is None or self.created_at is None:
+            return None
+        seconds = (self.created_at - self.served_at).total_seconds()
+        return seconds if seconds >= 0 else None
 
     @staticmethod
     def rounded_credit(credit: float) -> typing.Union[int, float]:
@@ -4662,6 +4979,48 @@ class EncryptedTextField(models.TextField):
             return ""
 
 
+class PlanSponsor(models.Model):
+    """A company behind a shared plan document: the employer a plan through
+    work names as its sponsor. The running list the share page's goal counts,
+    each company once. Found from a document's own text (plan_sponsors), by
+    its Employer Identification Number first, then its name; staff can add
+    or fix one in the admin."""
+
+    name = models.CharField(max_length=300)
+    # The name to match on (plan_sponsors.normalize_name). Two employers
+    # can share a name, so only one without an EIN per name is kept.
+    normalized_name = models.CharField(max_length=300, db_index=True)
+    ein = models.CharField(
+        max_length=10,
+        unique=True,
+        null=True,
+        blank=True,
+        verbose_name="EIN",
+        help_text="Employer Identification Number, as 12-3456789",
+    )
+    first_document = models.ForeignKey(
+        "PolicyDocument",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["normalized_name"],
+                condition=models.Q(ein__isnull=True),
+                name="plan_sponsor_one_without_ein_per_name",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model):  # type: ignore
     """
     Stores uploaded policy documents (Summary of Benefits, Medical Policy PDFs).
@@ -4731,12 +5090,16 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     PROCESSING_REMOVED = "removed"
     # A shared link: nothing to read, and the sweep never picks it up.
     PROCESSING_LINK = "link"
+    # Staff marked it as potential spam: kept, with its file, but never read
+    # and left out of every count. "Not spam" in the admin undoes it.
+    PROCESSING_SPAM = "potential_spam"
     PROCESSING_STATUS_CHOICES = [
         (PROCESSING_RECEIVED, "Received, not read yet"),
         (PROCESSING_READY, "Read and cleaned, ready for review"),
         (PROCESSING_UNREADABLE, "No text could be read"),
         (PROCESSING_REMOVED, "File and text deleted at the person's request"),
         (PROCESSING_LINK, "A link, never fetched: staff open it by hand"),
+        (PROCESSING_SPAM, "Potential spam: kept, never read or counted"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -4790,6 +5153,48 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         blank=True,
         related_name="policy_documents",
     )
+    # The company the document names as its plan sponsor (plan_sponsors),
+    # or the one staff set. Only a company counts toward the goal.
+    plan_sponsor = models.ForeignKey(
+        PlanSponsor,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="policy_documents",
+    )
+    # How the company was found: our model ("model"), the fixed patterns
+    # ("rules") or staff ("staff"); and the document's own line that names
+    # it, so staff can check it without opening the file. A company counts
+    # as soon as it's linked; a check is optional and never holds it up.
+    plan_sponsor_source = models.CharField(
+        max_length=10,
+        blank=True,
+        default="",
+        db_default="",
+        choices=(
+            ("model", "Our model"),
+            ("rules", "Fixed patterns"),
+            ("staff", "Staff"),
+        ),
+        verbose_name="company found by",
+    )
+    plan_sponsor_evidence = models.TextField(
+        blank=True,
+        default="",
+        db_default="",
+        verbose_name="where the document names it",
+    )
+    plan_sponsor_checked_at = models.DateTimeField(
+        null=True, blank=True, verbose_name="company checked at"
+    )
+    plan_sponsor_checked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        verbose_name="company checked by",
+    )
     # Shared uploads only: a keyed SHA-256 of the file, so repeats can be counted.
     fingerprint = models.CharField(db_default="", max_length=64, blank=True)
     # Shared links only: the page's address, checked on the way in
@@ -4835,6 +5240,7 @@ STORED_FILE_MODELS: tuple[type[models.Model], ...] = (
     Appeal,
     AppealAttachment,
     PolicyDocument,
+    PublicPlanDocument,
 )
 
 
@@ -5959,6 +6365,29 @@ class AssistantAgreementCount(models.Model):
 
     def __str__(self) -> str:
         return f"AssistantAgreementCount({self.day}, {self.count})"
+
+
+class UploadCount(models.Model):
+    """Files uploaded from one address, email or account in one hour or one
+    UTC day, on any page that takes files (upload_rate_limit.py). The
+    address, email or account is kept only as a keyed digest that changes
+    every period; rows are swept once their day is over."""
+
+    day = models.DateField(db_index=True)
+    # "h" plus the UTC hour (2026-11-06T21) or "d" plus the day.
+    period = models.CharField(max_length=16)
+    key = models.CharField(max_length=64)
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period", "key"], name="upload_count_period_key"
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"UploadCount({self.period}, {self.count})"
 
 
 class McpToolCallCount(models.Model):

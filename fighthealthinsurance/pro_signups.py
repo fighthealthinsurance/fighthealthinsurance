@@ -4,10 +4,13 @@ Every intake (the /pro_version form, the fightpaperwork.com classic form, direct
 posts to the thank-you page and the retired REST endpoint) goes through
 :func:`record_professional_submission`. A person is one InterestedProfessional
 lead, matched by email (any case) or by phone digits. Their first submission
-creates the lead as before; the second and third get one short "we already
-have your details" email instead of another thank-you, only when the address
-matches the one on file; from the fourth on nothing is sent. Every outcome
-lands on the same thank-you page. Spam is logged and dropped before anything is sent.
+creates the lead and notifies the team; the submitter gets nothing yet: the
+thank-you waits for a staff member to act from the notification (see
+pro_signup_actions.py). The second and third submissions get one short "we
+already have your details" email, only when the address matches the one on
+file; from the fourth on nothing is sent. A lead staff blocked gets nothing and
+notifies no one. Every outcome lands on the same thank-you page. Spam is
+logged and dropped before anything is sent.
 """
 
 import re
@@ -24,7 +27,6 @@ from django.db.models.functions import Lower, Replace
 from loguru import logger
 
 from fighthealthinsurance.constants import FHI_SUPPORT_EMAIL
-from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.models import (
     InterestedProfessional,
     ModelHealthAlertState,
@@ -329,16 +331,6 @@ def send_already_have_details_email(pro: InterestedProfessional) -> None:
         )
 
 
-def _send_thankyou(pro: InterestedProfessional) -> None:
-    try:
-        ThankyouEmailSender().dosend(interested_pro=pro)
-    except Exception as e:
-        logger.warning(
-            f"Error sending immediate pro signup thank-you "
-            f"(interested_professional_id={pro.id}): {type(e).__name__}"
-        )
-
-
 def record_professional_submission(
     pro: InterestedProfessional,
     *,
@@ -351,9 +343,10 @@ def record_professional_submission(
     for; returns the outcome.
 
     ``pro`` is unsaved and holds what was submitted. Only a first submission
-    saves it; a repeat never overwrites the stored lead. ``email_submitter``
-    False sends the submitter nothing (the REST endpoint never did). Mail
-    failures are logged, not raised.
+    saves it; a repeat never overwrites the stored lead. A first submission
+    emails only the team: the thank-you waits for staff. ``email_submitter``
+    False also keeps the repeat reply from the submitter (the REST endpoint
+    never emailed them). Mail failures are logged, not raised.
     """
     phone_digits = normalize_phone(pro.phone_number)
     lead = find_lead(pro.email, phone_digits)
@@ -370,11 +363,25 @@ def record_professional_submission(
         logger.info(f"Pro signup from {source} logged as spam: {reason}")
         return Outcome.SPAM
 
+    if lead is not None and lead.blocked:
+        _log(
+            pro,
+            lead=lead,
+            source=source,
+            outcome=Outcome.BLOCKED,
+            phone_digits=phone_digits,
+        )
+        logger.info(f"Pro signup from {source} dropped: lead {lead.id} is blocked")
+        return Outcome.BLOCKED
+
     if lead is None:
         pro.clicked_for_paid = False
         # Together, so a failed log can't leave a lead a retry treats as a repeat.
         with transaction.atomic():
             pro.save()
+            # Kept so staff-action replies thread under the notification.
+            pro.notification_subject = f"{subject_prefix} #{pro.id}"
+            pro.save(update_fields=["notification_subject"])
             _log(
                 pro,
                 lead=pro,
@@ -384,10 +391,11 @@ def record_professional_submission(
                 created_lead=True,
             )
         notify_interested_professional(
-            pro, source=source, subject=f"{subject_prefix} #{pro.id}"
+            pro,
+            source=source,
+            subject=pro.notification_subject,
+            starts_thread=True,
         )
-        if email_submitter:
-            _send_thankyou(pro)
         return Outcome.NEW
 
     # Lock the lead so two sends at once can't both land under the cap.

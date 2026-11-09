@@ -838,8 +838,8 @@ class TestCaseVersion:
             await _generate_single_task(task_type)
         return await ChooserTask.objects.alatest("id")
 
-    async def test_a_new_appeal_task_is_stamped_with_the_interview_pipeline(self):
-        assert (await self._generate("appeal")).case_version == 2
+    async def test_a_new_appeal_task_is_stamped_with_the_relevance_pipeline(self):
+        assert (await self._generate("appeal")).case_version == 4
 
     async def test_a_new_chat_task_is_stamped_with_the_lookup_pipeline(self):
         assert (await self._generate("chat")).case_version == 2

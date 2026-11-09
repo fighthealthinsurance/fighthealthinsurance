@@ -224,6 +224,15 @@ EXPERIMENTS: Tuple[Experiment, ...] = (
         live_check="fighthealthinsurance.ml.chat_shadow.enabled",
     ),
     Experiment(
+        "PLAN_DOCUMENT_MATCHING_ENABLED",
+        "Plan document matching",
+        "Matches each denial to the public plan documents we fetched (Evidence "
+        "of Coverage, SBC, ...) and quotes the relevant passages in the appeal "
+        "prompt. The corpus importer and admin work without it.",
+        MODELS,
+        live_check="fighthealthinsurance.plan_document_matcher.enabled",
+    ),
+    Experiment(
         "TEMPORAL_ENABLED",
         "Temporal",
         "Fax sending runs as a durable Temporal workflow instead of on the Ray "

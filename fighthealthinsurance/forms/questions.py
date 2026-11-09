@@ -54,6 +54,24 @@ def wpath_version_in(texts: Iterable[str]) -> Optional[str]:
     return found
 
 
+# What a denial type's form asks, now that the questions page also carries
+# questions generated for the procedure and diagnosis
+# (MLAppealQuestionsHelper) and follow-ups after them:
+#
+# - facts about the claim and the denial itself (urgent, pre-service, prior
+#   auth, other insurance), which the generated questions are told not to
+#   ask about;
+# - yes/no and pick-one questions whose answer unlocks a specific argument in
+#   ``main()`` (screening vs diagnostic, a mid-year formulary change, the
+#   final-diagnosis denial the prudent layperson standard forbids).
+#
+# Free-text questions about the patient's history (age, symptoms, BMI,
+# diagnosis, how long in treatment) are left to the generated questions,
+# which ask them about this patient's procedure rather than the denial
+# type's, so the page no longer asks them twice. Answers stored under the
+# removed fields' names still reach the letter through qa_context.
+
+
 class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
     """Insurance Questions"""
 
@@ -110,25 +128,11 @@ class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
         return []
 
     def footer(self):
-        common = ""
-        if (
-            "urgent" in self.cleaned_data
-            and "pre_service" in self.cleaned_data
-            and self.cleaned_data["urgent"]
-            and self.cleaned_data["pre_service"]
-        ):
-            if self.prof_pov:
-                return [
-                    common,
-                    (
-                        "As an urgent pre-service claim you must respond within the "
-                        "timeline required for my medical situation (up to a maximum "
-                        "of four days). This also serves as notice of concurrent "
-                        "request of external review."
-                    ),
-                ]
+        # The leading "" is kept: callers dedupe footers by value and the
+        # appeal has always started its footer with a blank paragraph.
+        if self.cleaned_data.get("urgent") and self.cleaned_data.get("pre_service"):
             return [
-                common,
+                "",
                 (
                     "As an urgent pre-service claim you must respond within the "
                     "timeline required for my medical situation (up to a maximum "
@@ -136,28 +140,27 @@ class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
                     "request of external review."
                 ),
             ]
-        elif "pre_service" in self.cleaned_data and self.cleaned_data["pre_service"]:
+        if self.cleaned_data.get("pre_service"):
             return [
-                common,
+                "",
                 "As this is a non-urgent pre-service claim, I understand you have approximately 30 days to respond.",
             ]
-        else:
-            return [
-                common,
-                # "As a post-service claim I believe you have ~60 days to respond.",
-            ]
+        return [""]
 
 
 class MedicalNecessaryQuestions(InsuranceQuestions):
-    """Questions to ask for medical necessity."""
+    """Questions to ask for medical necessity.
+
+    The patient's history (age, symptoms, what was tried) is left to the
+    generated questions, which ask it for this procedure and diagnosis.
+    ``medical_reason`` stays: it fills the ``{medical_reason}`` slot of the
+    canned appeal templates.
+    """
 
     medical_reason = forms.CharField(
         max_length=200,
         label="Why is this medically necessary (if you know)?",
         required=False,
-    )
-    age = forms.CharField(
-        required=False, label="Age of the person with the denied claim?"
     )
 
     def medical_context(self):
@@ -165,7 +168,6 @@ class MedicalNecessaryQuestions(InsuranceQuestions):
         response = self._append_context(
             response, "medical_reason", "The medical reason may be"
         )
-        response = self._append_context(response, "age", "The patient age is")
         return response
 
     def main(self):
@@ -267,10 +269,14 @@ class PriorAuthQuestions(InsuranceQuestions):
             )
         if self.cleaned_data.get("told_prior_auth_not_needed"):
             r.append("It was communicated that prior authorization was not necessary.")
+        elif self.cleaned_data.get("contact_insurance_before"):
+            r.append("The insurance company was contacted before the service.")
         if self.cleaned_data.get("prior_auth_id"):
             r.append(
                 f"Prior auth was obtained (id {self.cleaned_data['prior_auth_id']})"
             )
+        elif self.cleaned_data.get("prior_auth_obtained"):
+            r.append("Prior authorization was obtained.")
         return r
 
 
@@ -383,13 +389,18 @@ class GenderAffirmingCareBreastAugmentationQuestions(GenderAffirmingCareQuestion
 
 
 class PreventiveCareQuestions(InsuranceQuestions):
-    """Questions for preventive care."""
+    """Questions for preventive care.
+
+    Preventive care is not only screening: it also covers immunizations,
+    preventive medications (PrEP, statins), contraception, counseling and
+    well visits, so nothing here assumes the service is a screening test.
+    """
 
     medical_reason = forms.CharField(
         max_length=300,
         required=False,
-        label="Reason for elevated risk requiring this screening.",
-        help_text="Briefly describe any factors that may increase the need for this preventive screening (e.g., family history, prior conditions, or other risk factors).",
+        label="Why does the patient need this preventive care (if you know)?",
+        help_text="E.g., risk factors such as family history or prior conditions, their age, or their doctor's recommendation.",
     )
     trans_gender = forms.BooleanField(
         required=False,
@@ -402,13 +413,18 @@ class PreventiveCareQuestions(InsuranceQuestions):
         response += (
             "This procedure may be preventive, make sure to include a link to "
             "https://www.healthcare.gov/coverage/preventive-care-benefits/ if "
-            "that's the case."
+            "that's the case. Preventive care is not only screening: ACA "
+            "preventive coverage also includes immunizations, preventive "
+            "medications, contraception and counseling, so do not describe "
+            "the service as a screening unless it is one. "
         )
         response = self._append_context(
             response, "trans_gender", "The patient is transgender"
         )
         response = self._append_context(
-            response, "medical_reason", "The patient may be at increased risk due to"
+            response,
+            "medical_reason",
+            "Why the patient needs this preventive care",
         )
         return response
 
@@ -462,12 +478,6 @@ class FormularyChangeQuestions(InsuranceQuestions):
         label="Are you currently taking this medication?",
         help_text="Check if you've been taking this medication and it's being removed from formulary or moved to a higher tier.",
     )
-    how_long_taking = forms.CharField(
-        max_length=100,
-        required=False,
-        label="How long have you been taking this medication?",
-        help_text="E.g., '6 months', '2 years', 'since 2021'. This helps establish continuity of care.",
-    )
     medication_working = forms.BooleanField(
         required=False,
         label="Is the medication working well for you?",
@@ -475,14 +485,8 @@ class FormularyChangeQuestions(InsuranceQuestions):
     )
     tried_alternatives = forms.BooleanField(
         required=False,
-        label="Have you tried the alternative medication(s) the insurer suggests?",
-        help_text="Check if you've previously tried and failed on the preferred/alternative medications.",
-    )
-    alternative_problems = forms.CharField(
-        max_length=300,
-        required=False,
-        label="What problems did you have with alternatives (if any)?",
-        help_text="E.g., 'Side effects were intolerable', 'Did not control my symptoms', 'I'm allergic to the alternative'.",
+        label="Did the alternative medication(s) the insurer suggests not work for you, or cause problems?",
+        help_text="Check if you tried the preferred/alternative medications and they didn't work, or caused side effects or other problems you couldn't continue with.",
     )
     mid_year_change = forms.BooleanField(
         required=False,
@@ -493,21 +497,21 @@ class FormularyChangeQuestions(InsuranceQuestions):
     def medical_context(self):
         """Return context about continuity of care to inform the LLM."""
         response = super().medical_context()
-        if self.cleaned_data.get("currently_taking"):
-            response += "The patient is currently taking this medication. "
-            response = self._append_context(
-                response, "how_long_taking", "They have been taking it for"
-            )
+        response = self._append_context(
+            response,
+            "currently_taking",
+            "The patient is currently taking this medication",
+        )
         response = self._append_context(
             response,
             "medication_working",
             "The medication is working well and their condition is stable",
         )
-        if self.cleaned_data.get("tried_alternatives"):
-            response += "The patient has tried alternative medications. "
-            response = self._append_context(
-                response, "alternative_problems", "Problems with alternatives"
-            )
+        response = self._append_context(
+            response,
+            "tried_alternatives",
+            "The patient tried the alternative medications and they were not effective or not tolerated",
+        )
         response = self._append_context(
             response,
             "mid_year_change",
@@ -525,11 +529,7 @@ class FormularyChangeQuestions(InsuranceQuestions):
         if currently_taking:
             r.append(
                 "I am requesting a medical exception. I believe this is required for continuity of care. "
-            )
-        if currently_taking and self.cleaned_data.get("how_long_taking"):
-            r.append(
-                f"I have been taking this medication for {self.cleaned_data['how_long_taking']} "
-                "and my condition is well-controlled. Switching medications would disrupt my care."
+                "I am currently taking this medication, and switching would disrupt my care."
             )
 
         if currently_taking and self.cleaned_data.get("medication_working"):
@@ -540,13 +540,10 @@ class FormularyChangeQuestions(InsuranceQuestions):
             )
 
         if self.cleaned_data.get("tried_alternatives"):
-            base = "I have previously tried the alternative medication(s) you suggest"
-            if self.cleaned_data.get("alternative_problems"):
-                r.append(
-                    f"{base}, but experienced problems: {self.cleaned_data['alternative_problems']}."
-                )
-            else:
-                r.append(f"{base}, which did not work for me.")
+            r.append(
+                "I have previously tried the alternative medication(s) you suggest, "
+                "which were not effective or not tolerated."
+            )
 
         if self.cleaned_data.get("mid_year_change"):
             r.append(
@@ -572,22 +569,10 @@ class ColonoscopyQuestions(InsuranceQuestions):
         label="Was this a screening or diagnostic colonoscopy?",
         help_text="Screening colonoscopies are preventive and often must be covered at no cost under the ACA. Diagnostic colonoscopies are performed due to symptoms or prior findings.",
     )
-    age = forms.CharField(
-        max_length=10,
-        required=False,
-        label="Patient's age?",
-        help_text="USPSTF recommends routine screening starting at age 45.",
-    )
     polyp_removal = forms.BooleanField(
         required=False,
         label="Were polyps removed during the procedure?",
         help_text="Under the ACA and recent guidance, polyp removal during a screening colonoscopy should still be covered as preventive.",
-    )
-    diagnostic_reason = forms.CharField(
-        max_length=300,
-        required=False,
-        label="If diagnostic, what was the indication?",
-        help_text="E.g., symptoms such as rectal bleeding, change in bowel habits, abnormal imaging, surveillance after prior polyp removal.",
     )
     family_history = forms.BooleanField(
         required=False,
@@ -602,10 +587,6 @@ class ColonoscopyQuestions(InsuranceQuestions):
             response += "This was a screening (preventive) colonoscopy. "
         elif sd == "diagnostic":
             response += "This was a diagnostic colonoscopy. "
-        response = self._append_context(response, "age", "Patient age")
-        response = self._append_context(
-            response, "diagnostic_reason", "Diagnostic indication"
-        )
         response = self._append_context(
             response,
             "polyp_removal",
@@ -629,23 +610,12 @@ class ColonoscopyQuestions(InsuranceQuestions):
                 "cancer screening for adults aged 45 to 75."
             )
         elif sd == "diagnostic":
-            reason = self.cleaned_data.get("diagnostic_reason", "")
-            if reason:
-                r.append(
-                    f"This was a diagnostic colonoscopy indicated by: {reason}. "
-                    "Diagnostic colonoscopies are medically necessary procedures "
-                    "performed to evaluate symptoms, abnormal findings, or for "
-                    "surveillance of prior colorectal conditions. The treating "
-                    "physician determined this procedure was required for appropriate "
-                    "clinical management."
-                )
-            else:
-                r.append(
-                    "This was a diagnostic colonoscopy performed to evaluate clinical "
-                    "findings. Diagnostic colonoscopies are medically necessary "
-                    "procedures that differ from preventive screenings and are indicated "
-                    "by symptoms, abnormal test results, or surveillance needs."
-                )
+            r.append(
+                "This was a diagnostic colonoscopy performed to evaluate clinical "
+                "findings. Diagnostic colonoscopies are medically necessary "
+                "procedures that differ from preventive screenings and are indicated "
+                "by symptoms, abnormal test results, or surveillance needs."
+            )
         if self.cleaned_data.get("polyp_removal"):
             r.append(
                 "Polyps were removed during this procedure. Under the Consolidated "
@@ -666,62 +636,30 @@ class ColonoscopyQuestions(InsuranceQuestions):
 class WeightLossMedicationQuestions(InsuranceQuestions):
     """Questions for weight loss / anti-obesity medication denials (Zepbound, Ozempic, Mounjaro, Wegovy)."""
 
-    bmi = forms.CharField(
-        max_length=10,
-        required=False,
-        label="Patient's BMI (if known)?",
-        help_text="FDA-approved anti-obesity medications typically require BMI >= 30, or >= 27 with a weight-related comorbidity.",
-    )
-    comorbidities = forms.CharField(
-        max_length=300,
-        required=False,
-        label="Weight-related comorbidities (if any)?",
-        help_text="E.g., type 2 diabetes, hypertension, sleep apnea, cardiovascular disease, PCOS. These support medical necessity.",
-    )
     tried_lifestyle = forms.BooleanField(
         required=False,
         label="Has the patient tried diet and exercise programs?",
         help_text="Many insurers require documented lifestyle modification attempts before covering anti-obesity medications.",
     )
-    tried_other_meds = forms.CharField(
-        max_length=300,
-        required=False,
-        label="Other weight loss treatments tried (if any)?",
-        help_text="E.g., other medications, structured weight loss programs, bariatric surgery consultation.",
-    )
 
     def medical_context(self):
         response = super().medical_context()
-        response = self._append_context(response, "bmi", "Patient BMI")
-        response = self._append_context(
-            response, "comorbidities", "Weight-related comorbidities"
-        )
         response = self._append_context(
             response,
             "tried_lifestyle",
             "Patient has tried lifestyle modifications (diet and exercise)",
         )
-        response = self._append_context(
-            response, "tried_other_meds", "Other treatments tried"
+        # The coverage criterion the generated questions' BMI and
+        # comorbidity answers are measured against.
+        response += (
+            "FDA-approved anti-obesity medications are indicated for patients "
+            "with BMI >= 30 kg/m², or BMI >= 27 kg/m² with at least one "
+            "weight-related comorbidity. "
         )
         return response
 
     def main(self):
         r = []
-        bmi = self.cleaned_data.get("bmi")
-        comorbidities = self.cleaned_data.get("comorbidities")
-        if bmi:
-            r.append(
-                f"The patient's BMI is {bmi}. FDA-approved anti-obesity medications "
-                "are indicated for patients with BMI >= 30 kg/m², or BMI >= 27 kg/m² "
-                "with at least one weight-related comorbidity."
-            )
-        if comorbidities:
-            r.append(
-                f"The patient has the following weight-related comorbidities: {comorbidities}. "
-                "These conditions are directly worsened by obesity and support the medical "
-                "necessity of pharmacological treatment."
-            )
         if self.cleaned_data.get("tried_lifestyle"):
             r.append(
                 "The patient has attempted lifestyle modifications including diet and exercise, "
@@ -729,23 +667,12 @@ class WeightLossMedicationQuestions(InsuranceQuestions):
                 "Society and the American Association of Clinical Endocrinologists support "
                 "pharmacotherapy when lifestyle changes are inadequate."
             )
-        if self.cleaned_data.get("tried_other_meds"):
-            r.append(
-                f"The patient has also tried: {self.cleaned_data['tried_other_meds']}. "
-                "The requested medication represents an appropriate next step in treatment."
-            )
         return r
 
 
 class ImagingQuestions(InsuranceQuestions):
     """Questions for imaging denial appeals (MRI, CT scan, etc.)."""
 
-    symptoms = forms.CharField(
-        max_length=300,
-        required=False,
-        label="What symptoms prompted this imaging?",
-        help_text="Describe the symptoms that led the physician to order this imaging study.",
-    )
     prior_imaging = forms.BooleanField(
         required=False,
         label="Was less advanced imaging already performed (e.g., X-ray before MRI)?",
@@ -760,9 +687,6 @@ class ImagingQuestions(InsuranceQuestions):
     def medical_context(self):
         response = super().medical_context()
         response = self._append_context(
-            response, "symptoms", "Symptoms prompting imaging"
-        )
-        response = self._append_context(
             response,
             "prior_imaging",
             "Less advanced imaging was already performed and was insufficient",
@@ -776,12 +700,6 @@ class ImagingQuestions(InsuranceQuestions):
 
     def main(self):
         r = []
-        if self.cleaned_data.get("symptoms"):
-            r.append(
-                f"This imaging was ordered to evaluate: {self.cleaned_data['symptoms']}. "
-                "The treating physician determined that this imaging modality was necessary "
-                "for accurate diagnosis and treatment planning."
-            )
         if self.cleaned_data.get("prior_imaging"):
             r.append(
                 "Less advanced imaging was already performed and did not provide "
@@ -800,18 +718,6 @@ class ImagingQuestions(InsuranceQuestions):
 class MentalHealthQuestions(InsuranceQuestions):
     """Questions for psychotherapy and mental health denial appeals."""
 
-    diagnosis = forms.CharField(
-        max_length=200,
-        required=False,
-        label="Mental health diagnosis (if known)?",
-        help_text="E.g., major depressive disorder, generalized anxiety disorder, PTSD, bipolar disorder.",
-    )
-    treatment_duration = forms.CharField(
-        max_length=100,
-        required=False,
-        label="How long has the patient been in treatment?",
-        help_text="Continuity of mental health treatment is important for effective care.",
-    )
     functional_impairment = forms.BooleanField(
         required=False,
         label="Does the condition cause significant functional impairment?",
@@ -820,12 +726,6 @@ class MentalHealthQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = super().medical_context()
-        response = self._append_context(
-            response, "diagnosis", "Mental health diagnosis"
-        )
-        response = self._append_context(
-            response, "treatment_duration", "Treatment duration"
-        )
         response = self._append_context(
             response,
             "functional_impairment",
@@ -845,21 +745,10 @@ class MentalHealthQuestions(InsuranceQuestions):
             "use disorder benefits are no more restrictive than those applied to "
             "medical/surgical benefits."
         )
-        if self.cleaned_data.get("diagnosis"):
-            r.append(
-                f"The patient has been diagnosed with {self.cleaned_data['diagnosis']}, "
-                "which is a recognized condition requiring ongoing treatment."
-            )
         if self.cleaned_data.get("functional_impairment"):
             r.append(
                 "This condition causes significant functional impairment, "
                 "further supporting the medical necessity of continued treatment."
-            )
-        if self.cleaned_data.get("treatment_duration"):
-            r.append(
-                f"The patient has been in treatment for {self.cleaned_data['treatment_duration']}. "
-                "Disrupting established mental health treatment can lead to regression "
-                "and worsened outcomes."
             )
         return r
 
@@ -867,12 +756,6 @@ class MentalHealthQuestions(InsuranceQuestions):
 class EmergencyServicesQuestions(InsuranceQuestions):
     """Questions for emergency room, ambulance, and emergency department denial appeals."""
 
-    symptoms_at_time = forms.CharField(
-        max_length=300,
-        required=False,
-        label="What symptoms or situation prompted the emergency visit?",
-        help_text="Describe what a reasonable person would have experienced that made emergency care seem necessary.",
-    )
     called_911 = forms.BooleanField(
         required=False,
         label="Was 911 called or was the patient transported by ambulance?",
@@ -894,9 +777,6 @@ class EmergencyServicesQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = super().medical_context()
-        response = self._append_context(
-            response, "symptoms_at_time", "Emergency symptoms"
-        )
         response = self._append_context(
             response,
             "called_911",
@@ -930,12 +810,6 @@ class EmergencyServicesQuestions(InsuranceQuestions):
             "urgent and non-urgent symptoms overlap, the appropriateness of an emergency "
             "visit cannot be judged in hindsight from the final diagnosis."
         )
-        if self.cleaned_data.get("symptoms_at_time"):
-            r.append(
-                f"The patient presented with: {self.cleaned_data['symptoms_at_time']}. "
-                "These symptoms would cause a reasonable person to believe that immediate "
-                "medical attention was necessary."
-            )
         if self.cleaned_data.get("called_911"):
             r.append(
                 "The severity of the situation warranted calling 911 and/or ambulance "
@@ -976,22 +850,10 @@ class TherapyRehabQuestions(InsuranceQuestions):
         required=False,
         label="Type of therapy?",
     )
-    functional_goals = forms.CharField(
-        max_length=300,
-        required=False,
-        label="What functional goals is this therapy addressing?",
-        help_text="E.g., regain ability to walk, improve speech after stroke, restore hand function.",
-    )
     progress_made = forms.BooleanField(
         required=False,
         label="Has the patient shown progress with this therapy?",
         help_text="Documented progress supports continued medical necessity.",
-    )
-    daily_impact = forms.CharField(
-        max_length=300,
-        required=False,
-        label="How does the condition impact daily activities?",
-        help_text="Describe specific limitations in work, self-care, mobility, or communication.",
     )
 
     def medical_context(self):
@@ -1000,27 +862,14 @@ class TherapyRehabQuestions(InsuranceQuestions):
         if tt and tt != "other":
             response += f"Therapy type: {tt}. "
         response = self._append_context(
-            response, "functional_goals", "Functional goals"
-        )
-        response = self._append_context(
             response,
             "progress_made",
             "Patient has demonstrated progress with therapy",
-        )
-        response = self._append_context(
-            response, "daily_impact", "Impact on daily activities"
         )
         return response
 
     def main(self):
         r = []
-        if self.cleaned_data.get("functional_goals"):
-            r.append(
-                f"This therapy is necessary to achieve the following functional goals: "
-                f"{self.cleaned_data['functional_goals']}. The treating therapist has "
-                "determined that skilled intervention is required and the patient cannot "
-                "achieve these goals independently."
-            )
         if self.cleaned_data.get("progress_made"):
             r.append(
                 "The patient has demonstrated measurable progress, indicating that "
@@ -1029,23 +878,12 @@ class TherapyRehabQuestions(InsuranceQuestions):
                 "the patient is not improving — maintenance therapy requiring skilled "
                 "care must also be covered."
             )
-        if self.cleaned_data.get("daily_impact"):
-            r.append(
-                f"Without this therapy, the patient's daily functioning is significantly "
-                f"impaired: {self.cleaned_data['daily_impact']}."
-            )
         return r
 
 
 class GeneticTestingQuestions(InsuranceQuestions):
     """Questions for genetic testing denial appeals."""
 
-    clinical_indication = forms.CharField(
-        max_length=300,
-        required=False,
-        label="Why was genetic testing ordered?",
-        help_text="E.g., family history of hereditary cancer, suspected genetic disorder, treatment selection for cancer.",
-    )
     treatment_impact = forms.BooleanField(
         required=False,
         label="Will test results change the treatment plan?",
@@ -1060,9 +898,6 @@ class GeneticTestingQuestions(InsuranceQuestions):
     def medical_context(self):
         response = super().medical_context()
         response = self._append_context(
-            response, "clinical_indication", "Clinical indication for testing"
-        )
-        response = self._append_context(
             response,
             "treatment_impact",
             "Test results will directly impact the treatment plan",
@@ -1076,11 +911,6 @@ class GeneticTestingQuestions(InsuranceQuestions):
 
     def main(self):
         r = []
-        if self.cleaned_data.get("clinical_indication"):
-            r.append(
-                f"This genetic test was ordered because: {self.cleaned_data['clinical_indication']}. "
-                "The clinical utility of this test is well-established."
-            )
         if self.cleaned_data.get("treatment_impact"):
             r.append(
                 "The results of this test will directly inform treatment decisions. "
@@ -1101,46 +931,23 @@ class GeneticTestingQuestions(InsuranceQuestions):
 class InpatientHospitalQuestions(InsuranceQuestions):
     """Questions for inpatient care and hospital stay denial appeals."""
 
-    admission_reason = forms.CharField(
-        max_length=300,
-        required=False,
-        label="Why was inpatient admission necessary?",
-        help_text="Describe why the patient's condition required hospital-level care rather than outpatient treatment.",
-    )
     observation_reclassified = forms.BooleanField(
         required=False,
         label="Was the stay reclassified from inpatient to observation?",
         help_text="Hospitals sometimes reclassify stays to observation status, which can affect coverage.",
     )
-    length_of_stay = forms.CharField(
-        max_length=50,
-        required=False,
-        label="Length of hospital stay?",
-        help_text="E.g., '3 days', '1 week'. Helps assess whether the stay was appropriate.",
-    )
 
     def medical_context(self):
         response = super().medical_context()
-        response = self._append_context(
-            response, "admission_reason", "Reason for inpatient admission"
-        )
         response = self._append_context(
             response,
             "observation_reclassified",
             "The stay was reclassified from inpatient to observation status",
         )
-        response = self._append_context(response, "length_of_stay", "Length of stay")
         return response
 
     def main(self):
         r = []
-        if self.cleaned_data.get("admission_reason"):
-            r.append(
-                f"Inpatient admission was medically necessary because: "
-                f"{self.cleaned_data['admission_reason']}. The patient's condition "
-                "required hospital-level monitoring, treatment intensity, or services "
-                "that could not be safely provided in an outpatient setting."
-            )
         if self.cleaned_data.get("observation_reclassified"):
             r.append(
                 "The stay was reclassified from inpatient to observation status. "
@@ -1149,80 +956,32 @@ class InpatientHospitalQuestions(InsuranceQuestions):
                 "be treated as inpatient admissions. Retroactive reclassification to "
                 "observation status may be inappropriate."
             )
-        if self.cleaned_data.get("length_of_stay"):
-            r.append(
-                f"The hospital stay lasted {self.cleaned_data['length_of_stay']}, "
-                "which was clinically appropriate given the patient's condition and "
-                "treatment requirements."
-            )
         return r
 
 
 class SleepStudyQuestions(InsuranceQuestions):
-    """Questions for sleep study denial appeals."""
+    """Sleep study denial appeals.
 
-    symptoms = forms.CharField(
-        max_length=300,
-        required=False,
-        label="What symptoms prompted the sleep study?",
-        help_text="E.g., excessive daytime sleepiness, loud snoring, witnessed apneas, morning headaches, fatigue.",
-    )
-    screening_score = forms.CharField(
-        max_length=100,
-        required=False,
-        label="Sleep screening questionnaire score (if available)?",
-        help_text="E.g., Epworth Sleepiness Scale score, STOP-BANG score. These support clinical indication.",
-    )
-    comorbidities = forms.CharField(
-        max_length=300,
-        required=False,
-        label="Relevant comorbidities?",
-        help_text="E.g., hypertension, obesity, heart failure, stroke history. Untreated sleep apnea worsens these conditions.",
-    )
+    Asks nothing of its own: the symptoms, screening scores and
+    comorbidities it used to ask about are the patient's history, which the
+    generated questions ask. It still gives the letter the AASM guidance
+    those answers are argued against.
+    """
 
     def medical_context(self):
         response = super().medical_context()
-        response = self._append_context(response, "symptoms", "Sleep-related symptoms")
-        response = self._append_context(response, "screening_score", "Screening score")
-        response = self._append_context(
-            response, "comorbidities", "Relevant comorbidities"
+        response += (
+            "The American Academy of Sleep Medicine (AASM) clinical guidelines "
+            "recommend polysomnography for patients with symptoms suggestive of "
+            "sleep-disordered breathing, and untreated sleep apnea worsens "
+            "conditions such as hypertension, heart failure and stroke risk. "
         )
         return response
-
-    def main(self):
-        r = []
-        if self.cleaned_data.get("symptoms"):
-            r.append(
-                f"The patient presents with: {self.cleaned_data['symptoms']}. "
-                "The American Academy of Sleep Medicine (AASM) clinical guidelines "
-                "recommend polysomnography for patients with symptoms suggestive of "
-                "sleep-disordered breathing."
-            )
-        if self.cleaned_data.get("screening_score"):
-            r.append(
-                f"The patient's screening score ({self.cleaned_data['screening_score']}) "
-                "indicates a high probability of sleep-disordered breathing, supporting "
-                "the need for diagnostic polysomnography."
-            )
-        if self.cleaned_data.get("comorbidities"):
-            r.append(
-                f"The patient has comorbidities ({self.cleaned_data['comorbidities']}) "
-                "that are known to be worsened by untreated sleep apnea. Diagnosis and "
-                "treatment of sleep disorders can improve outcomes for these conditions "
-                "and reduce overall healthcare costs."
-            )
-        return r
 
 
 class LabWorkQuestions(InsuranceQuestions):
     """Questions for lab work denial appeals."""
 
-    clinical_reason = forms.CharField(
-        max_length=300,
-        required=False,
-        label="Why was this lab work ordered?",
-        help_text="E.g., monitoring a chronic condition, diagnostic workup for symptoms, medication monitoring.",
-    )
     preventive = forms.BooleanField(
         required=False,
         label="Is this lab work part of preventive/routine screening?",
@@ -1237,9 +996,6 @@ class LabWorkQuestions(InsuranceQuestions):
     def medical_context(self):
         response = super().medical_context()
         response = self._append_context(
-            response, "clinical_reason", "Reason for lab work"
-        )
-        response = self._append_context(
             response,
             "preventive",
             "This lab work is part of preventive/routine screening",
@@ -1253,12 +1009,6 @@ class LabWorkQuestions(InsuranceQuestions):
 
     def main(self):
         r = []
-        if self.cleaned_data.get("clinical_reason"):
-            r.append(
-                f"This laboratory testing was ordered because: {self.cleaned_data['clinical_reason']}. "
-                "The treating physician determined this testing was necessary for "
-                "appropriate clinical management."
-            )
         if self.cleaned_data.get("preventive"):
             r.append(
                 "This laboratory testing is part of preventive/routine screening. "
@@ -1314,25 +1064,6 @@ class AphasiaTreatmentQuestions(InsuranceQuestions):
         label="What caused the aphasia?",
         help_text="The underlying cause helps establish medical necessity and expected recovery trajectory.",
     )
-    treatment_type = forms.CharField(
-        max_length=300,
-        required=False,
-        label="What type(s) of treatment are being requested?",
-        help_text="E.g., Speech-Language Therapy (SLT), Constraint-Induced Language Therapy (CILT), "
-        "Melodic Intonation Therapy (MIT), Semantic Feature Analysis (SFA), group therapy.",
-    )
-    onset_date = forms.CharField(
-        max_length=50,
-        required=False,
-        label="When did the aphasia begin (approximate)?",
-        help_text="E.g., '3 months ago', 'January 2025'. Both early and chronic aphasia benefit from treatment.",
-    )
-    functional_impact = forms.CharField(
-        max_length=300,
-        required=False,
-        label="How does aphasia impact the patient's daily communication?",
-        help_text="E.g., cannot express basic needs, difficulty with phone calls, unable to work, social isolation.",
-    )
 
     def medical_context(self):
         response = super().medical_context()
@@ -1342,13 +1073,6 @@ class AphasiaTreatmentQuestions(InsuranceQuestions):
         cause = self.cleaned_data.get("cause", "")
         if cause and cause != "other":
             response += f"Cause: {cause}. "
-        response = self._append_context(
-            response, "treatment_type", "Requested treatment"
-        )
-        response = self._append_context(response, "onset_date", "Onset")
-        response = self._append_context(
-            response, "functional_impact", "Functional impact"
-        )
         response += (
             "Research from the NIH and ASHA demonstrates that intensive speech-language "
             "therapy for aphasia produces significant improvements in language function. "
@@ -1378,31 +1102,6 @@ class AphasiaTreatmentQuestions(InsuranceQuestions):
             r.append(
                 "This aphasia resulted from a traumatic brain injury. Clinical guidelines "
                 "support speech-language therapy as part of comprehensive TBI rehabilitation."
-            )
-        if self.cleaned_data.get("treatment_type"):
-            treatment = self.cleaned_data["treatment_type"]
-            r.append(
-                f"The requested treatment ({treatment}) is an evidence-based approach "
-                "for aphasia rehabilitation. Treatments such as Constraint-Induced "
-                "Language Therapy (CILT), Melodic Intonation Therapy (MIT), and "
-                "Semantic Feature Analysis (SFA) have peer-reviewed evidence supporting "
-                "their effectiveness in improving language function."
-            )
-        if self.cleaned_data.get("onset_date"):
-            r.append(
-                f"The aphasia began approximately {self.cleaned_data['onset_date']}. "
-                "Research on neuroplasticity demonstrates that the brain can continue "
-                "to reorganize language networks well beyond the acute recovery period. "
-                "Studies published in journals such as Stroke and Brain show that patients "
-                "with chronic aphasia continue to benefit from speech-language therapy."
-            )
-        if self.cleaned_data.get("functional_impact"):
-            r.append(
-                f"The aphasia significantly impacts daily communication: "
-                f"{self.cleaned_data['functional_impact']}. Without treatment, "
-                "these communication barriers can lead to social isolation, depression, "
-                "reduced quality of life, and inability to manage one's own healthcare — "
-                "all of which increase overall healthcare costs."
             )
         r.append(
             "Under the ACA, rehabilitative and habilitative services are essential "
@@ -1444,28 +1143,10 @@ class AssistiveDeviceQuestions(InsuranceQuestions):
         label="Type of assistive device?",
         help_text="The type of device helps determine applicable coverage rules and clinical guidelines.",
     )
-    underlying_condition = forms.CharField(
-        max_length=300,
-        required=False,
-        label="What condition requires this device?",
-        help_text="E.g., aphasia from stroke, ALS, cerebral palsy, traumatic brain injury, autism spectrum disorder.",
-    )
-    functional_need = forms.CharField(
-        max_length=300,
-        required=False,
-        label="What functional need does this device address?",
-        help_text="E.g., unable to communicate verbally, cannot walk independently, needs support for daily activities.",
-    )
     professional_evaluation = forms.BooleanField(
         required=False,
         label="Has a qualified professional evaluated the patient for this device?",
         help_text="E.g., SLP evaluation for AAC, PT/OT evaluation for mobility devices, audiologist for hearing aids.",
-    )
-    tried_alternatives = forms.CharField(
-        max_length=300,
-        required=False,
-        label="Other approaches or devices already tried (if any)?",
-        help_text="E.g., gesture training, low-tech communication boards, manual wheelchair before power chair.",
     )
 
     def medical_context(self):
@@ -1474,16 +1155,9 @@ class AssistiveDeviceQuestions(InsuranceQuestions):
         if dt and dt != "other":
             response += f"Device type: {self.DEVICE_LABELS.get(dt, dt)}. "
         response = self._append_context(
-            response, "underlying_condition", "Underlying condition"
-        )
-        response = self._append_context(response, "functional_need", "Functional need")
-        response = self._append_context(
             response,
             "professional_evaluation",
             "Patient has been evaluated by a qualified professional for this device",
-        )
-        response = self._append_context(
-            response, "tried_alternatives", "Alternative approaches already tried"
         )
         return response
 
@@ -1500,29 +1174,12 @@ class AssistiveDeviceQuestions(InsuranceQuestions):
                 "AAC is an appropriate intervention for individuals across the lifespan with "
                 "severe communication impairments."
             )
-        if self.cleaned_data.get("underlying_condition"):
-            r.append(
-                f"The patient requires this device due to: {self.cleaned_data['underlying_condition']}. "
-                "The underlying condition establishes clear medical necessity for assistive technology."
-            )
-        if self.cleaned_data.get("functional_need"):
-            r.append(
-                f"This device addresses the following functional need: "
-                f"{self.cleaned_data['functional_need']}. Without this device, the patient "
-                "cannot perform essential daily activities independently."
-            )
         if self.cleaned_data.get("professional_evaluation"):
             r.append(
                 "A qualified professional has evaluated the patient and determined that "
                 "this specific device is medically necessary. The evaluation considered "
                 "the patient's functional abilities, communication needs, and potential "
                 "for benefit from the device."
-            )
-        if self.cleaned_data.get("tried_alternatives"):
-            r.append(
-                f"The following alternatives have been tried: {self.cleaned_data['tried_alternatives']}. "
-                "These approaches were insufficient to meet the patient's needs, supporting "
-                "the necessity of the requested device."
             )
         if is_aac:
             r.append(
