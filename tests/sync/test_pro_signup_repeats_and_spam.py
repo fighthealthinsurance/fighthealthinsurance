@@ -2,7 +2,8 @@
 
 A first submission notifies the team and sends the submitter nothing yet (the
 thank-you waits for staff; see test_pro_signup_actions.py). The second and
-third get one short "we already have your details" email. From the
+third get one short "we already have your details" email once staff have
+sent the thank-you, and nothing before that. From the
 fourth on nothing is sent and the page says we already have their details.
 Spam is logged with its reason and sends nothing.
 """
@@ -67,8 +68,17 @@ class _SignupCase(TestCase):
         "comments": "We appeal a lot of NICU denials.",
     }
 
+    #: Whether staff have sent the thank-you by the next submission: the
+    #: "already have your details" reply waits for it.
+    THANKED = True
+
     def submit(self, **changes):
-        return self.client.post(reverse("pro_version"), {**self.PAYLOAD, **changes})
+        response = self.client.post(
+            reverse("pro_version"), {**self.PAYLOAD, **changes}
+        )
+        if self.THANKED:
+            InterestedProfessional.objects.update(thankyou_email_sent=True)
+        return response
 
     def outcomes(self):
         return list(
@@ -151,6 +161,34 @@ class SecondSubmissionTest(_SignupCase):
 
     def test_lands_on_the_plain_thankyou_page(self):
         self.assertRedirects(self.response, reverse("pro_version_thankyou"))
+
+
+class RepeatBeforeThankyouTest(_SignupCase):
+    """A repeat before staff sent the thank-you: the team hears, the
+    submitter gets nothing."""
+
+    THANKED = False
+
+    def setUp(self):
+        self.submit()
+        mail.outbox.clear()
+        self.submit()
+
+    def test_sends_no_already_have_details_email(self):
+        self.assertEqual(_mail_to(self.EMAIL, ALREADY_HAVE_DETAILS_SUBJECT), [])
+
+    def test_sends_the_submitter_nothing(self):
+        self.assertEqual([m for m in mail.outbox if self.EMAIL in m.to], [])
+
+    def test_still_notifies_the_team_as_returning(self):
+        lead = InterestedProfessional.objects.get()
+        self.assertEqual(
+            [m.subject for m in _team_mail()],
+            [f"New pro version signup #{lead.id} (returning)"],
+        )
+
+    def test_is_logged_as_repeat(self):
+        self.assertEqual(self.outcomes(), [Outcome.NEW, Outcome.REPEAT])
 
 
 class ThirdSubmissionTest(_SignupCase):
@@ -243,7 +281,7 @@ class LegacyLeadTest(_SignupCase):
             self.outcomes(), [Outcome.REPEAT, Outcome.REPEAT, Outcome.CAPPED]
         )
 
-    def test_unthanked_legacy_lead_gets_the_short_reply_not_the_thankyou(self):
+    def test_unthanked_legacy_lead_gets_no_email_until_staff_thank_them(self):
         InterestedProfessional.objects.create(
             email=self.EMAIL, thankyou_email_sent=False
         )
@@ -253,7 +291,7 @@ class LegacyLeadTest(_SignupCase):
                 len(_mail_to(self.EMAIL, THANKYOU_SUBJECT)),
                 len(_mail_to(self.EMAIL, ALREADY_HAVE_DETAILS_SUBJECT)),
             ),
-            (0, 1),
+            (0, 0),
         )
 
 

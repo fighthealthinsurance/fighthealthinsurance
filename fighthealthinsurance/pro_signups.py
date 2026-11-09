@@ -8,7 +8,8 @@ creates the lead and notifies the team; the submitter gets nothing yet: the
 thank-you waits for a staff member to act from the notification (see
 pro_signup_actions.py). The second and third submissions get one short "we
 already have your details" email, only when the address matches the one on
-file; from the fourth on nothing is sent. A lead staff blocked gets nothing and
+file and staff have sent the thank-you; before that they get nothing. From
+the fourth on nothing is sent. A lead staff blocked gets nothing and
 notifies no one. Every outcome lands on the same thank-you page. Spam is
 logged and dropped before anything is sent.
 """
@@ -425,7 +426,14 @@ def record_professional_submission(
     same_address = (pro.email or "").strip().lower() == (
         lead.email or ""
     ).strip().lower()
-    if email_submitter and same_address and should_reply_to_returning_lead(lead):
+    # Only once staff sent the thank-you: until then the address isn't
+    # vetted, and a reply would tell whoever typed it that it is a lead.
+    if (
+        email_submitter
+        and same_address
+        and lead.thankyou_email_sent
+        and should_reply_to_returning_lead(lead)
+    ):
         send_already_have_details_email(pro)
     return Outcome.REPEAT
 
