@@ -146,6 +146,7 @@ function sectionStrip(nav){const root=document.querySelector('.dw');if(!nav||!ro
   const update=()=>{raf=0;const top=head?Math.max(0,head.getBoundingClientRect().bottom):0,show=wide.matches&&nav.getBoundingClientRect().bottom<top;
     bar.hidden=!show;if(!show)return;bar.style.top=top+'px';
     const line=top+bar.offsetHeight+24;let at=-1;secs.forEach((x,i)=>{if(x.getBoundingClientRect().top<=line)at=i;});
+    if(window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-2&&secs[secs.length-1].getBoundingClientRect().top<window.innerHeight)at=secs.length-1;
     if(at===cur)return;cur=at;pills.forEach((p,i)=>{if(i===at)p.setAttribute('aria-current','location');else p.removeAttribute('aria-current');});
     const p=pills[at];if(p&&(p.offsetLeft<row.scrollLeft||p.offsetLeft+p.offsetWidth>row.scrollLeft+row.clientWidth))row.scrollLeft=p.offsetLeft-16;};
   const ask=()=>{if(!raf)raf=requestAnimationFrame(update);};

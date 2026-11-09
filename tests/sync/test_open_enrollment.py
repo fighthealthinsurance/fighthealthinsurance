@@ -225,6 +225,10 @@ class TestOpenEnrollmentPage(TestCase):
         self.assertIn("@media (min-width: 768px) { .dw.dw-has-where { --dw-where-h: 3.5rem; } }", STYLE_PARTIAL)
         self.assertEqual(STYLE_PARTIAL.count("+ var(--dw-where-h, 0px)); }"), 2)
 
+    def test_section_bar_marks_the_last_section_at_the_bottom_of_the_page(self):
+        # On a tall screen the last section never reaches the marker line.
+        self.assertIn("if(window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-2&&secs[secs.length-1].getBoundingClientRect().top<window.innerHeight)at=secs.length-1;", CHARTS_JS)
+
     def test_map_colour_fade_respects_reduced_motion(self):
         fade = re.search(r"@media \(prefers-reduced-motion: no-preference\) \{\n    \.dw-map rect[^}]*\}", STYLE_PARTIAL)
         self.assertIsNotNone(fade)
