@@ -19,6 +19,8 @@ from fighthealthinsurance.medicaid_api import (
     FaqEntry,
     MedicaidDataUnavailableError,
     _faq_limit,
+    _faq_title,
+    _load_medicaid_resources,
     _normalize_applying_reason,
     _parse_scraped_faq,
     current_eligibility_year,
@@ -1469,6 +1471,14 @@ class TestMedicaidInfoUsesTheData(SimpleTestCase):
         self.assertIn("A: Yes. You must renew it", result)
         self.assertIn("Source: https://www.hhs.texas.gov/", result)
 
+    def test_faq_answers_carry_their_capture_date_and_a_freshness_caveat(self):
+        # A 2025 income limit quoted as today's rule is the failure here: the
+        # date rides with each answer and the header says to give it.
+        result = get_medicaid_info({"state": "Maine", "topic": "income"})
+        self.assertRegex(result, r"-- captured 2025-\d\d-\d\d")
+        self.assertIn("give the capture date with any figure", result)
+        self.assertIn("eligibility_levels", result)
+
     def test_limit_caps_the_faq_answers(self):
         result = get_medicaid_info({"state": "Texas", "topic": "card", "limit": 1})
         self.assertEqual(result.count("\nQ: "), 1)
@@ -1541,25 +1551,46 @@ class TestScrapedFaqParsing(SimpleTestCase):
     """The CSV's FAQ cell is JSON objects one after another, not an array."""
 
     RAW = (
-        '{"question": "How do I renew?", "answer": "Fill in the  renewal\\r\\n form.", "source_url": "https://x/renew"}\n'
-        '{"question": "How do I renew?", "answer": "duplicate", "source_url": "https://x/dup"}\n'
+        '{"question": "How do I renew?", "answer": "Fill in the  renewal\\r\\n form.", "source_url": "https://x/renew", "fetched": "2025-06-24"}\n'
+        '{"question": "How do I renew?", "answer": "Fill in the renewal form.", "source_url": "https://x/dup"}\n'
+        '{"question": "How do I renew?", "answer": "Online, once a year.", "source_url": "https://x/renew2"}\n'
         '{"question": "What does it cost?", "answer": "Nothing.", "source_url": ""}\n'
+        '{"question": "Answer:?", "answer": "Answer: Yes, you can apply online.", "source_url": "https://x/ct", "fetched": "2025-07-01"}\n'
         '{"question": "", "answer": "no question"}\n'
     )
 
-    def test_entries_are_read_deduped_and_whitespace_normalized(self):
+    def test_entries_are_read_deduped_on_the_pair_and_normalized(self):
         entries = _parse_scraped_faq(self.RAW)
         self.assertEqual(
             entries,
             [
-                FaqEntry("How do I renew?", "Fill in the renewal form.", "https://x/renew"),
-                FaqEntry("What does it cost?", "Nothing.", ""),
+                FaqEntry("How do I renew?", "Fill in the renewal form.", "https://x/renew", "2025-06-24"),
+                # The same question with a DIFFERENT answer is a different
+                # entry (Connecticut's whole FAQ shares one question label).
+                FaqEntry("How do I renew?", "Online, once a year.", "https://x/renew2", ""),
+                FaqEntry("What does it cost?", "Nothing.", "", ""),
+                FaqEntry("Answer:?", "Yes, you can apply online.", "https://x/ct", "2025-07-01"),
             ],
         )
 
+    def test_a_label_only_question_is_titled_from_its_answer(self):
+        entries = _parse_scraped_faq(self.RAW)
+        self.assertEqual(_faq_title(entries[-1]), "(untitled) Yes, you can apply online.")
+        self.assertEqual(_faq_title(entries[0]), "How do I renew?")
+        long_answer = FaqEntry("?", "word " * 40, "", "")
+        self.assertTrue(_faq_title(long_answer).startswith("(untitled) word word"))
+        self.assertTrue(_faq_title(long_answer).endswith(" ..."))
+
+    def test_connecticuts_answers_all_survive(self):
+        # Every Connecticut entry carries the label "Answer:?" as its
+        # question; deduping on the question alone kept one of 22.
+        df = _load_medicaid_resources()
+        (raw,) = df[df["state"] == "Connecticut"]["scraped_faq"].tolist()
+        self.assertGreaterEqual(len(_parse_scraped_faq(raw)), 20)
+
     def test_garbage_ends_the_read_but_keeps_what_came_before(self):
         entries = _parse_scraped_faq(self.RAW + "{not json")
-        self.assertEqual(len(entries), 2)
+        self.assertEqual(len(entries), 4)
 
     def test_empty_and_non_string_cells_give_nothing(self):
         self.assertEqual(_parse_scraped_faq(""), [])

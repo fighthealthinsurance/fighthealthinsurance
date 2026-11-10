@@ -2031,6 +2031,27 @@ class FaqEntry(NamedTuple):
     question: str
     answer: str
     source_url: str
+    # The day the scrape read it (YYYY-MM-DD), or "". A figure or deadline
+    # in an answer is only as current as this.
+    fetched: str = ""
+
+
+def _faq_is_label_only(question: str) -> bool:
+    """Whether a scraped "question" is just a heading or a label ("Answer:?",
+    "?", "Online", "Eligibility"): the scrape lost the real question, and the
+    answer is the only text with content."""
+    return len(re.findall(r"[a-z0-9]+", question.lower())) <= 1
+
+
+def _faq_title(entry: FaqEntry) -> str:
+    """What to call an entry: its question, or, when the scrape kept only a
+    label for the question, the answer's opening words marked untitled, so
+    the entry can still be listed and searched for by its own words."""
+    if not _faq_is_label_only(entry.question):
+        return entry.question
+    if len(entry.answer) <= 80:
+        return f"(untitled) {entry.answer}"
+    return f"(untitled) {entry.answer[:80].rsplit(' ', 1)[0]} ..."
 
 
 def _faq_terms(text: str) -> frozenset[str]:
@@ -2100,16 +2121,26 @@ def _parse_scraped_faq(raw: Any) -> List[FaqEntry]:
             continue
         question = re.sub(r"\s+", " ", str(obj.get("question") or "")).strip()
         answer = re.sub(r"\s+", " ", str(obj.get("answer") or "")).strip()
+        # Some pages put the "Answer:" label inside the answer itself.
+        answer = re.sub(r"^answer:\s*", "", answer, flags=re.IGNORECASE)
         if not question or not answer:
             continue
-        # The scrape picks the same question up from several pages; one
-        # copy is enough, and a model shown "What is Medicaid?" twice asks
-        # which one it meant.
-        if any(seen.question == question for seen in entries):
-            continue
-        entries.append(
-            FaqEntry(question, answer, str(obj.get("source_url") or "").strip())
+        entry = FaqEntry(
+            question,
+            answer,
+            str(obj.get("source_url") or "").strip(),
+            str(obj.get("fetched") or "").strip(),
         )
+        # The scrape picks the same entry up from several pages; one copy is
+        # enough. Deduped on the question AND the answer: Connecticut's 22
+        # entries all carry the label "Answer:?" as their question, with 20
+        # distinct answers, and deduping on the question alone kept one.
+        if any(
+            seen.question == entry.question and seen.answer == entry.answer
+            for seen in entries
+        ):
+            continue
+        entries.append(entry)
     return entries
 
 
@@ -2210,7 +2241,7 @@ def _faq_section(
         return ""
 
     def question_list() -> str:
-        return "\n".join(f"- {entry.question}" for entry in entries[:MAX_FAQ_LIMIT])
+        return "\n".join(f"- {_faq_title(entry)}" for entry in entries[:MAX_FAQ_LIMIT])
 
     if not _faq_terms(topic):
         return (
@@ -2232,15 +2263,32 @@ def _faq_section(
     blocks = []
     for entry in hits:
         block = (
-            f"Q: {entry.question}\nA: {_tidy_text(entry.answer, _FAQ_ANSWER_MAX_CHARS)}"
+            f"Q: {_faq_title(entry)}\n"
+            f"A: {_tidy_text(entry.answer, _FAQ_ANSWER_MAX_CHARS)}"
         )
-        if entry.source_url:
-            block += f"\nSource: {entry.source_url}"
+        provenance = [
+            part
+            for part in (
+                f"Source: {entry.source_url}" if entry.source_url else "",
+                f"captured {entry.fetched}" if entry.fetched else "",
+            )
+            if part
+        ]
+        if provenance:
+            block += "\n" + " -- ".join(provenance)
         blocks.append(block)
+    # The answers are a snapshot: an income limit or a deadline in one was
+    # true on its capture date and may not be now, and the eligibility
+    # checker scores against the current published table. The model is told
+    # to carry the date with any figure rather than to present a 2025 limit
+    # as today's rule.
     return (
         f"Official {state} Medicaid FAQ -- {len(hits)} answer(s) matching "
-        f'"{topic}" (quote and link them; do not add rules from memory):\n\n'
-        + "\n\n".join(blocks)
+        f'"{topic}". Quote and link them, and give the capture date with any '
+        "figure, limit or deadline: these are snapshots and can have changed "
+        "since. For a current income limit use the eligibility check or the "
+        'medicaid_gov_lookup "eligibility_levels" page, and do not add rules '
+        "from memory:\n\n" + "\n\n".join(blocks)
     )
 
 

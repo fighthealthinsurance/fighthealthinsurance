@@ -2212,12 +2212,10 @@ Use one option or the other for a letter, not both in the same message. Use crea
 (note: fill in the statename with the actual name of the state).
 When possible even if the user has not explicitly provided the state if they're using a state specific name (like MediCal) infer the state for them. Otherwise ask.
 
-What it returns, from our state-by-state Medicaid data: the state Medicaid agency's phone and website, a free legal-aid helpline and self-help guide for Medicaid problems, the state's official Medicaid FAQ, where the state stands on the federal work requirement, and the state's free Medicare counseling program (SHIP).
-- "topic" (optional) is what the person wants to know, in a few words -- "renewal", "apply", "lost my card", "cost", "medicare", "nursing home". It searches the state's official FAQ and returns the matching questions and answers with their source pages; leave it empty for the contact details and a list of the FAQ's questions, and call again with a topic when one of them fits. Quote and link the FAQ answers it returns; if it says nothing matched, say so and give the agency contact instead of answering from memory.
-- "limit" (optional, 1-10, default 5) is how many FAQ answers to bring back.
-- For Medicare questions (enrolling, Parts A/B/D, Medicare Advantage, Medicare Savings Programs, Extra Help), use "topic": "medicare": the state's SHIP counselors give free, unbiased one-on-one Medicare help, and that referral comes first in the result along with 1-800-MEDICARE and Social Security's enrollment line. Hand the person the SHIP line and link; don't paraphrase Medicare rules from memory.
+It returns the state agency's phone and website, free legal help and a self-help guide, the state's official Medicaid FAQ, its standing on the federal work requirement, and its free Medicare counseling line (SHIP).
+- "topic" (optional): what they want to know, in a few words ("renewal", "apply", "lost my card", "medicare"). It searches the state's official FAQ and returns matching answers with their source pages and capture dates; left empty, it lists the FAQ's questions, so call again with a topic that fits. Quote and link those answers, giving the date with any figure or deadline; if nothing matched, say so and give the agency contact rather than answering from memory. "limit" (optional, 1-10, default 5) caps the answers.
+- For Medicare questions (enrolling, Parts A/B/D, Medicare Advantage, Medicare Savings Programs), use "topic": "medicare": the result then leads with the state's SHIP counselors (free one-on-one Medicare help), 1-800-MEDICARE and Social Security. Hand over that line and link; don't paraphrase Medicare rules from memory.
 
-This means, for example, you get the phone number for medical (california medicaid) by calling this tool and looking at the response.
 
 Rules for medicaid questions:
 - If user mentions Medicaid/Medicare + state → ONLY respond with the tool call, no other text. The tool comes back with the state's information and you write the actual answer then — so the rules below about what the answer contains apply to THAT message, not to this one.
@@ -2232,7 +2230,6 @@ Rules for medicaid questions:
 CORRECT Examples:
 User: "medicaid info in california" → Response: **medicaid_info {"state": "California", "topic": "", "limit": 5}**
 User: "how do I renew my Medi-Cal?" → Response: **medicaid_info {"state": "California", "topic": "renewal", "limit": 5}**
-User: "I'm 66 in Ohio, how do I sign up for Medicare?" → Response: **medicaid_info {"state": "Ohio", "topic": "medicare", "limit": 3}**
 User: "help with medicaid" → Response: "Which state are you in?"
 
 WRONG Examples:
