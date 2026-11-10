@@ -8,7 +8,10 @@ Extracted from chat_interface.py for better organization and testability.
 import re
 from typing import Optional, Pattern
 
-from fighthealthinsurance.ml.medicaid_names import MEDICAID_PROGRAM_ALIASES
+from fighthealthinsurance.ml.medicaid_names import (
+    AMBIGUOUS_PROGRAM_ALIASES,
+    MEDICAID_PROGRAM_ALIASES,
+)
 
 # Crisis/self-harm detection - phrases indicating the user may need immediate help
 # IMPORTANT: These must be specific enough to NOT block legitimate mental health
@@ -192,17 +195,14 @@ def llm_requested_delete_handoff(text: Optional[str]) -> bool:
 # "you qualify for Medi-Cal" is the same claim as "you qualify for Medicaid".
 # Longest-first so the alternation prefers "Medical Assistance Program" over
 # its own prefix.
-# Aliases that are ordinary English before they are program names. They stay
-# in MEDICAID_PROGRAM_ALIASES -- the prompt wants them, because a user saying
-# "STAR" tells the model they are in Texas -- but they are NOT evidence that a
-# sentence is handing down an eligibility verdict. "You qualify for medical
-# assistance benefits" and "you qualify for STAR" were both being read as
-# invented Medicaid verdicts, and a false positive here now costs a candidate
-# its whole model prior, so the detector errs toward missing a verdict about a
-# generically-named program rather than penalizing a legitimate reply.
-_AMBIGUOUS_FOR_VERDICTS = frozenset(
-    {"STAR", "Medical Assistance", "Medical Assistance Program"}
-)
+# Aliases that are ordinary English before they are program names ("STAR",
+# "Medical Assistance") are not evidence that a sentence is handing down an
+# eligibility verdict: "you qualify for medical assistance benefits" and "you
+# qualify for STAR" were both being read as invented Medicaid verdicts, and a
+# false positive here costs a candidate its whole model prior. The set lives
+# in medicaid_names so the request-side detector (chat/eligibility_intent.py)
+# leaves out the same names.
+_AMBIGUOUS_FOR_VERDICTS = AMBIGUOUS_PROGRAM_ALIASES
 
 _PROGRAM_ALTERNATION = "|".join(
     re.escape(name)

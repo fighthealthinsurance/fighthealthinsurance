@@ -1734,89 +1734,47 @@ class RemoteModelLike(DenialBase):
     # an opaque ``<...object at 0x...>`` repr. ``None`` until the router stamps it.
     name: Optional[str] = None
 
-    # Keywords that indicate Medicaid/Medicare-related conversation
-    # Note: All keywords should be lowercase for case-insensitive matching
-    MEDICAID_KEYWORDS: ClassVar[List[str]] = [
-        # Generic terms
-        "medicaid",
-        "medicare",
-        "medi-cal",
-        "medical assistance",
-        "medical assistance program",
-        "eligibility",
-        "eligible",
-        "enrollment",
-        "enroll",
-        "work requirement",
-        "80 hours",
-        # State-specific Medicaid program names (comprehensive list)
-        # Alaska
-        "denalicare",
-        # California
-        "medi-cal",
-        # Colorado
-        "health first colorado",
-        # Connecticut
-        "husky health",
-        # Delaware
-        "diamond state health plan",
-        # Hawaii
-        "med-quest",
-        "medquest",
-        # Illinois
-        "healthchoice illinois",
-        # Indiana
-        "hoosier healthwise",
-        # Indiana
-        "iowa medicaid",
-        # Kansas
-        "kansas medical assistance",
-        "kansas medical assistance program",
-        # Maine
-        "mainecare",
-        # Massachusetts
-        "masshealth",
-        # Missouri
-        "mo healthnet",
-        # New Jersey
-        "nj familycare",
-        # New Mexico
-        "turquoise care",
-        # New York
-        "new york state medicaid",
-        # Oklahoma
-        "soonercare",
-        # South Carolina
-        "healthy connections",
-        # Tennessee
-        "tenncare",
-        # Texas
-        "star+plus",
-        "star plus",
-        "star medicaid",
-        "texas star",
-        # Vermont
-        "green mountain care",
-        # Virginia
-        "cardinal care",
-        # Washington
-        "apple health",
-        # Wisconsin
-        "forward health",
-        # Wyoming
-        "equality care",
-        # Common questions and phrases
-        "qualify for medicaid",
-        "qualify for medicare",
-        "am i eligible",
-        "can i get medicaid",
-        "can i get medicare",
-        "government insurance",
-        "public insurance",
-        "state insurance",
-        "government health",
-        "public health insurance",
-    ]
+    # Keywords that indicate Medicaid/Medicare-related conversation.
+    # Note: All keywords should be lowercase for case-insensitive matching;
+    # _is_medicaid_related tests each as a SUBSTRING of the chat text.
+    MEDICAID_KEYWORDS: ClassVar[List[str]] = (
+        [
+            # Generic terms
+            "medicaid",
+            "medicare",
+            "medi-cal",
+            "eligibility",
+            "eligible",
+            "enrollment",
+            "enroll",
+            "work requirement",
+            "80 hours",
+        ]
+        # Every state program name the prompt knows (ml/medicaid_names.py),
+        # so a program added there is detected here without a second,
+        # hand-copied list. Minus the bare "STAR": substring matching would
+        # find it inside "start" and "started"; its unambiguous forms are
+        # listed below instead.
+        + sorted(name.lower() for name in MEDICAID_PROGRAM_ALIASES if name != "STAR")
+        + [
+            # Spelling variants and the unambiguous forms of "STAR" (Texas)
+            "medquest",
+            "star plus",
+            "star medicaid",
+            "texas star",
+            # Common questions and phrases
+            "qualify for medicaid",
+            "qualify for medicare",
+            "am i eligible",
+            "can i get medicaid",
+            "can i get medicare",
+            "government insurance",
+            "public insurance",
+            "state insurance",
+            "government health",
+            "public health insurance",
+        ]
+    )
 
     def __str__(self) -> str:
         """Render as the friendly tracking name (stamped by MLRouter), falling
@@ -2254,6 +2212,11 @@ Use one option or the other for a letter, not both in the same message. Use crea
 (note: fill in the statename with the actual name of the state).
 When possible even if the user has not explicitly provided the state if they're using a state specific name (like MediCal) infer the state for them. Otherwise ask.
 
+What it returns, from our state-by-state Medicaid data: the state Medicaid agency's phone and website, a free legal-aid helpline and self-help guide for Medicaid problems, the state's official Medicaid FAQ, where the state stands on the federal work requirement, and the state's free Medicare counseling program (SHIP).
+- "topic" (optional) is what the person wants to know, in a few words -- "renewal", "apply", "lost my card", "cost", "medicare", "nursing home". It searches the state's official FAQ and returns the matching questions and answers with their source pages; leave it empty for the contact details and a list of the FAQ's questions, and call again with a topic when one of them fits. Quote and link the FAQ answers it returns; if it says nothing matched, say so and give the agency contact instead of answering from memory.
+- "limit" (optional, 1-10, default 5) is how many FAQ answers to bring back.
+- For Medicare questions (enrolling, Parts A/B/D, Medicare Advantage, Medicare Savings Programs, Extra Help), use "topic": "medicare": the state's SHIP counselors give free, unbiased one-on-one Medicare help, and that referral comes first in the result along with 1-800-MEDICARE and Social Security's enrollment line. Hand the person the SHIP line and link; don't paraphrase Medicare rules from memory.
+
 This means, for example, you get the phone number for medical (california medicaid) by calling this tool and looking at the response.
 
 Rules for medicaid questions:
@@ -2268,6 +2231,8 @@ Rules for medicaid questions:
 
 CORRECT Examples:
 User: "medicaid info in california" → Response: **medicaid_info {"state": "California", "topic": "", "limit": 5}**
+User: "how do I renew my Medi-Cal?" → Response: **medicaid_info {"state": "California", "topic": "renewal", "limit": 5}**
+User: "I'm 66 in Ohio, how do I sign up for Medicare?" → Response: **medicaid_info {"state": "Ohio", "topic": "medicare", "limit": 3}**
 User: "help with medicaid" → Response: "Which state are you in?"
 
 WRONG Examples:
