@@ -2555,12 +2555,14 @@ class OCRView(View):
                 return pytesseract.image_to_string(
                     img, timeout=upload_limits.OCR_SECONDS_PER_IMAGE
                 )
-            except RuntimeError:
-                # pytesseract's timeout: EasyOCR has none, so don't hand it
-                # the image that ran out of time.
-                logger.warning("OCR timed out on an upload")
-                return ""
-            except Exception:
+            except Exception as e:
+                # pytesseract's timeout is a bare RuntimeError naming the
+                # timeout (its TesseractError is a RuntimeError too, and that
+                # one still falls back): EasyOCR has no time limit, so don't
+                # hand it the image that ran out of time.
+                if type(e) is RuntimeError and "timeout" in str(e).lower():
+                    logger.warning("OCR timed out on an upload")
+                    return ""
                 easy_ocr_reader = getattr(self, "_easy_ocr_reader", None)
                 if easy_ocr_reader is None:
                     # Fail closed to empty OCR text so users can continue manually.

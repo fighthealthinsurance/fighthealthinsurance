@@ -320,3 +320,19 @@ class ServerOcrNeverHandsAHugeImageToTheFallbackTest(TestCase):
             text = view._ocr([BytesIO(_png_header(100, 100))])
         self.assertEqual(text, "")
         view._easy_ocr_reader.readtext.assert_not_called()
+
+    def test_a_tesseract_error_other_than_a_timeout_still_falls_back(self):
+        from io import BytesIO
+        from unittest.mock import Mock
+
+        import pytesseract
+
+        view = views.OCRView()
+        view._easy_ocr_reader = Mock()
+        view._easy_ocr_reader.readtext.return_value = [(None, "denied", 0.9)]
+        with patch(
+            "pytesseract.image_to_string",
+            side_effect=pytesseract.TesseractError(1, "Failed loading language 'eng'"),
+        ):
+            text = view._ocr([BytesIO(_png_header(100, 100))])
+        self.assertEqual(text, "denied")
