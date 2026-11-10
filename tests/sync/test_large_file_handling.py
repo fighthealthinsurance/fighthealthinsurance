@@ -296,43 +296,56 @@ def _png_header(width: int, height: int) -> bytes:
 
 
 class ServerOcrNeverHandsAHugeImageToTheFallbackTest(TestCase):
+    def setUp(self):
+        from unittest.mock import Mock
+
+        # Skip OCRView.__init__, which builds a real EasyOCR reader when
+        # easyocr is installed; every test here supplies a mock one.
+        self.view = object.__new__(views.OCRView)
+        self.view._easy_ocr_reader = Mock()
+
     def test_an_image_pillow_refuses_as_a_decompression_bomb_is_skipped(self):
         # 14000 x 14000 is past twice Pillow's MAX_IMAGE_PIXELS, so
         # Image.open itself raises instead of returning the size.
         from io import BytesIO
-        from unittest.mock import Mock
 
-        view = views.OCRView()
-        view._easy_ocr_reader = Mock()
-        text = view._ocr([BytesIO(_png_header(14000, 14000))])
+        text = self.view._ocr([BytesIO(_png_header(14000, 14000))])
         self.assertEqual(text, "")
-        view._easy_ocr_reader.readtext.assert_not_called()
+        self.view._easy_ocr_reader.readtext.assert_not_called()
+
+    def test_an_image_over_the_ocr_pixel_cap_is_never_read(self):
+        # 8000 x 8000 is over MAX_OCR_IMAGE_PIXELS but under Pillow's own
+        # decompression-bomb limit, so only the cap check stops it.
+        from io import BytesIO
+
+        from fighthealthinsurance import upload_limits
+
+        self.assertGreater(8000 * 8000, upload_limits.MAX_OCR_IMAGE_PIXELS)
+        with patch("pytesseract.image_to_string") as image_to_string:
+            text = self.view._ocr([BytesIO(_png_header(8000, 8000))])
+        self.assertEqual(text, "")
+        image_to_string.assert_not_called()
+        self.view._easy_ocr_reader.readtext.assert_not_called()
 
     def test_a_tesseract_timeout_is_not_retried_without_one(self):
         from io import BytesIO
-        from unittest.mock import Mock
 
-        view = views.OCRView()
-        view._easy_ocr_reader = Mock()
         with patch(
             "pytesseract.image_to_string", side_effect=RuntimeError("Tesseract process timeout")
         ):
-            text = view._ocr([BytesIO(_png_header(100, 100))])
+            text = self.view._ocr([BytesIO(_png_header(100, 100))])
         self.assertEqual(text, "")
-        view._easy_ocr_reader.readtext.assert_not_called()
+        self.view._easy_ocr_reader.readtext.assert_not_called()
 
     def test_a_tesseract_error_other_than_a_timeout_still_falls_back(self):
         from io import BytesIO
-        from unittest.mock import Mock
 
         import pytesseract
 
-        view = views.OCRView()
-        view._easy_ocr_reader = Mock()
-        view._easy_ocr_reader.readtext.return_value = [(None, "denied", 0.9)]
+        self.view._easy_ocr_reader.readtext.return_value = [(None, "denied", 0.9)]
         with patch(
             "pytesseract.image_to_string",
             side_effect=pytesseract.TesseractError(1, "Failed loading language 'eng'"),
         ):
-            text = view._ocr([BytesIO(_png_header(100, 100))])
+            text = self.view._ocr([BytesIO(_png_header(100, 100))])
         self.assertEqual(text, "denied")

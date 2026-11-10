@@ -175,7 +175,11 @@ _PRACTICE_AREA_TERMS = {
         "masculiniz*",
         "masculinis*",
         "transmasc*",
-        "transfem*",
+        # Not "transfem*": that reads "transfemoral" (an amputation, a
+        # catheter route) as gender-affirming care.
+        "transfem",
+        "transfemme*",
+        "transfemin*",
         "top surgery",
         "bottom surgery",
         "vaginoplasty",

@@ -796,6 +796,7 @@ def test_gender_affirming_care_shared_treatment_matches_with_gender_diagnosis(
         ("Testosterone therapy", "Male hypogonadism (low testosterone)"),
         ("Hysterectomy", "Estrogen-dependent endometriosis"),
         ("Leuprolide", "Prostate cancer"),
+        ("Transfemoral amputation prosthesis", "Peripheral artery disease"),
     ],
 )
 def test_gender_affirming_care_shared_treatment_needs_gender_context(
@@ -808,6 +809,17 @@ def test_gender_affirming_care_shared_treatment_needs_gender_context(
 
 def test_gender_affirming_care_shared_term_alone_is_not_enough():
     assert not practice_area_text_matches("gender-affirming-care", "Estradiol")
+
+
+def test_transfemoral_is_not_a_gender_affirming_care_term():
+    assert not practice_area_text_matches(
+        "gender-affirming-care", "Transfemoral amputation"
+    )
+
+
+@pytest.mark.parametrize("text", ["Transfem patient", "Transfeminine voice care"])
+def test_transfeminine_terms_are_gender_affirming_care(text):
+    assert practice_area_text_matches("gender-affirming-care", text)
 
 
 def test_gender_affirming_care_case_that_mentions_cancer_still_matches():

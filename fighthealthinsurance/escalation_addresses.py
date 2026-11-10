@@ -386,6 +386,7 @@ def _later_level_decided(denial_text: str) -> bool:
     for match in _own_voice_matches(_LATER_LEVEL_RE, denial_text):
         _, s_end = bounds(sentence_breaks, match.start(), match.end())
         c_start, c_end = bounds(clause_breaks, match.start(), match.end())
+        clause_end = c_end
         if _OTHER_APPEAL_RE.search(denial_text[c_start:c_end]):
             # Another appeal in the same clause ("your level 1 appeal has
             # been denied and a level 2 appeal is available"): its decision
@@ -395,7 +396,10 @@ def _later_level_decided(denial_text: str) -> bool:
                 match.start(),
                 match.end(),
             )
-        if _PENDING_OR_RIGHTS_RE.search(denial_text[c_start:c_end]):
+        # Pending wording anywhere from this appeal's part to the end of
+        # its clause still speaks of it: "your second-level appeal, which
+        # is pending, will be decided next month".
+        if _PENDING_OR_RIGHTS_RE.search(denial_text[c_start:clause_end]):
             continue
         if _DECISION_RE.search(denial_text[c_start:c_end]):
             return True
@@ -431,7 +435,9 @@ _REASON_WORD_RE = re.compile(
 _PREREQUISITE_BEFORE_RE = re.compile(
     r"\b(?:after|upon|following|before|prior\s+to)\s+"
     r"(?:(?:a|an|the|your|all|any|internal)\s+)*$"
-    r"|\brequire[sd]?\b",
+    # "required to have exhausted", "requires that": not "as required by
+    # law, this is our final adverse determination".
+    r"|\brequire[sd]?\s+(?:that|to)\b",
     re.IGNORECASE,
 )
 _PREREQUISITE_MATCH_RE = re.compile(r"\b(?:must|be|need\s+to)\b", re.IGNORECASE)
