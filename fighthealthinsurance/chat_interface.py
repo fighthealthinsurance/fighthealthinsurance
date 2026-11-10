@@ -91,7 +91,18 @@ from fighthealthinsurance.chat.safety_filters import (
     detect_delete_data_request,
     llm_requested_delete_handoff,
 )
-from fighthealthinsurance.chat.tools.patterns import contains_tool_call
+from fighthealthinsurance.chat.eligibility_intent import (
+    ELIGIBILITY_INTERVIEW_NOTE,
+    ELIGIBILITY_REQUEST_NOTE,
+    build_eligibility_call,
+    detect_eligibility_request,
+    state_from_user_messages,
+)
+from fighthealthinsurance.chat.tools.patterns import (
+    ACTION_TOKEN_MENTION_RE,
+    contains_tool_call,
+    count_tool_invocations,
+)
 from fighthealthinsurance.chat.tools import (
     AppealTool,
     ClinicalTrialsTool,
@@ -308,6 +319,15 @@ class ChatInterface:
         # tool is rebuilt per turn. Until it flips, the scorer treats a
         # candidate that asserts an eligibility verdict as inventing one.
         self._eligibility_computed: list[bool] = [False]
+        # Set once the medicaid_eligibility tool has RUN in this session (a
+        # verdict or not). While it has and no verdict has landed, an
+        # interview is underway: each user turn carries a note to send the
+        # new answers back through the tool, and a request to "check my
+        # eligibility" is no longer answered by injecting a fresh call,
+        # which would restart the interview and lose the answers collected.
+        # In-memory like the flag above, so a reconnect mid-interview starts
+        # over (the model's own context summary still carries the answers).
+        self._eligibility_tool_ran: list[bool] = [False]
         # Per-session cap for medicaid_gov_lookup, kept out here because the
         # tool is rebuilt every turn (same shape as _doc_fetch_count).
         self._medicaid_gov_lookup_count: list[int] = [0]
@@ -1375,6 +1395,20 @@ class ChatInterface:
             )
         response_before_tools = response_text
 
+        # The eligibility check is the one tool the prompt REQUIRES for a
+        # question ("do I qualify for Medi-Cal?") rather than merely offers.
+        # When the user asked and the winning reply still carries no tool
+        # call, the call is injected here, so the checker -- not the model's
+        # memory -- answers. Done after response_before_tools is taken, so
+        # the alternate is dropped below like any other tool rewrite.
+        injected_eligibility_call: Optional[str] = None
+        if depth == 0 and response_text:
+            injected_eligibility_call = self._eligibility_call_to_inject(
+                response_text, scoring_message, chat
+            )
+            if injected_eligibility_call:
+                response_text = injected_eligibility_call
+
         # Every recursive tool's LLM pass goes through follow_up, which keeps
         # the follow-up's reply and the credit for it, so the turn can credit
         # the model whose reply was delivered. The reply text stays a local
@@ -1495,9 +1529,22 @@ class ChatInterface:
             follow_up,
             eligibility_computed=self._eligibility_computed,
         )
-        response_text, context, _ = await medicaid_elig_tool.handle(
+        response_text, context, eligibility_handled = await medicaid_elig_tool.handle(
             response_text, context, **tool_kwargs
         )
+        if eligibility_handled:
+            self._eligibility_tool_ran[0] = True
+        if injected_eligibility_call and medicaid_elig_tool.detect(response_text):
+            # The injected call is still in the reply: the checker's follow-up
+            # pass produced nothing (every model failed, or the tool errored
+            # and its syntax was left in place). The person must not see raw
+            # tool syntax where the model's own words were, so those words
+            # come back -- the prompt's rules still bound them.
+            logger.warning(
+                f"Chat {chat.id}: injected medicaid_eligibility call produced "
+                "no reply; delivering the model's own reply instead"
+            )
+            response_text = response_before_tools
 
         medicaid_info_tool = MedicaidInfoTool(self.send_status_message, follow_up)
         response_text, context, _ = await medicaid_info_tool.handle(
@@ -1582,6 +1629,72 @@ class ChatInterface:
 
         logger.debug(f"Return with context length {len(context) if context else 0}.")
         return response_text, context
+
+    def _eligibility_note_for_turn(
+        self, user_message: Optional[str], is_document: bool
+    ) -> str:
+        """The system note an eligibility turn appends to the user's message.
+
+        ELIGIBILITY_REQUEST_NOTE when the message asks whether they qualify
+        and the checker has no verdict yet; ELIGIBILITY_INTERVIEW_NOTE when a
+        check is underway (the tool ran this session, no verdict yet) and the
+        message is something else -- usually the answers it asked for. Empty
+        otherwise: an upload is never a request, and once the checker has
+        produced a verdict the prompt's own rules (re-run with a target_year,
+        follow with medicaid_info) are enough.
+        """
+        if is_document or self._eligibility_computed[0]:
+            return ""
+        if detect_eligibility_request(user_message):
+            return ELIGIBILITY_REQUEST_NOTE
+        if self._eligibility_tool_ran[0]:
+            return ELIGIBILITY_INTERVIEW_NOTE
+        return ""
+
+    def _eligibility_call_to_inject(
+        self, response_text: str, user_message: Optional[str], chat: OngoingChat
+    ) -> Optional[str]:
+        """The medicaid_eligibility call to run in place of ``response_text``,
+        or None when the reply should stand.
+
+        Injected only for the chat's FIRST eligibility request, when the
+        checker has not run this session and the winning reply carries no
+        tool call or action token (the model running any tool, this one
+        included, is left to it). A later request is not re-injected: the
+        check already ran then, and a bare call would restart the interview
+        and discard the answers collected. The injected call carries the
+        state when the person's own messages name one -- never the
+        IP-derived hint, which is unconfirmed -- and nothing else: the
+        checker asks for what it lacks, and the person's other details are
+        the model's to parse on the next call.
+        """
+        if self._eligibility_computed[0] or self._eligibility_tool_ran[0]:
+            return None
+        request = detect_eligibility_request(user_message)
+        if request is None:
+            return None
+        if count_tool_invocations(response_text) or ACTION_TOKEN_MENTION_RE.search(
+            response_text
+        ):
+            return None
+        # The person's own earlier messages, newest first. The current
+        # message is pre-persisted before the models are asked, so a copy of
+        # it at the tail is skipped. Internal entries are the system's.
+        earlier_user_messages = [
+            m.get("content") or ""
+            for m in reversed(chat.chat_history or [])
+            if m.get("role") == "user"
+            and not m.get("internal")
+            and m.get("content") != user_message
+        ]
+        if any(detect_eligibility_request(m) for m in earlier_user_messages):
+            return None
+        state = request.state or state_from_user_messages(earlier_user_messages)
+        logger.info(
+            f"Chat {chat.id}: reply to an eligibility request carried no tool "
+            f"call; injecting medicaid_eligibility (state_known={bool(state)})"
+        )
+        return build_eligibility_call(state)
 
     async def handle_chat_message(
         self,
@@ -2080,6 +2193,12 @@ class ChatInterface:
                 f"ask about a specific part."
             )
 
+        # A Medicaid/Medicare eligibility turn gets a system note after the
+        # message (both branches below): start the check with the tool, or
+        # send the new answers back through it. Read off the RAW message,
+        # like the terse-reply bridge, before any wrapping.
+        eligibility_note = self._eligibility_note_for_turn(user_message, is_document)
+
         # Determine how to wrap a variant's text for the LLM (intro template on
         # new chats, delete-data instruction on ongoing turns), then apply it to
         # every variant. The trial banner is a one-time side effect for new chats.
@@ -2098,7 +2217,10 @@ class ChatInterface:
             template = get_intro_template(self.chat.chat_type)
 
             def wrap_for_llm(text: str) -> str:
-                return template.format(user_info=user_info_str, message=text)
+                return (
+                    template.format(user_info=user_info_str, message=text)
+                    + eligibility_note
+                )
 
         else:
             # Terse-reply bridge: short answers like "CA" or "yes 2 people"
@@ -2135,7 +2257,10 @@ class ChatInterface:
                 # turn. The intro template (which contains it) only fires for new
                 # chats, so without this the sentinel fallback would silently
                 # stop working past the first message.
-                return f"{DELETE_DATA_INSTRUCTION}\n\n{text}{terse_bridge}"
+                return (
+                    f"{DELETE_DATA_INSTRUCTION}\n\n{text}{terse_bridge}"
+                    f"{eligibility_note}"
+                )
 
         llm_message_variants = [
             replace(v, text_for_llm=wrap_for_llm(v.text_for_llm))

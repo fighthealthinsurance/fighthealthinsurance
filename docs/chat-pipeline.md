@@ -643,21 +643,58 @@ Explicit uploads take the same storage path under their own marker.
   and its ChatTurn row says "ok". A total failure keeps its "failed" count
   and row; only the frame the user sees changes.
 
-### Medicaid and Medicare data in chat
+### Medicaid and Medicare eligibility turns
 
-`medicaid_info` (medicaid_api.get_medicaid_info) hands the model the whole
-row of data/medicaid_resources.csv, not just the agency's phone number --
-the free legal helpline and self-help guide, the state's official Medicaid
-FAQ searched by the call's `topic` (prefix-matched words, question matches
-outranking answer matches; without a topic the questions on file are listed
-so the model can ask again in the FAQ's words), where the state stands on
-the federal work requirement (`work_requirement_reach` plus the state's own
-waiver activity, as background), and the state's Medicare counseling line
-(SHIP) from static/state_help.json beside 1-800-MEDICARE and Social
-Security's enrollment line, which lead the result when the topic names
-Medicare. The program names that drive all of this -- the prompt's
+The eligibility check (`medicaid_eligibility`, chat/tools/medicaid_tool.py
+over medicaid_api.is_eligible) is the one tool the prompt REQUIRES for a
+question rather than offers: "do I qualify for Medi-Cal?" must be answered
+by the checker, never from the model's memory. The scorer's invented-verdict
+penalty (§2) catches a reply that states a verdict anyway; what it cannot
+catch is a reply that simply skips the tool and runs its own interview, or
+answers "which state are you in?" and never calls it. Two layers make the
+check run regardless (chat/eligibility_intent.py):
+
+* **The request note.** `detect_eligibility_request` reads the RAW user
+  message for a first-person eligibility question with a program as its
+  object ("am I eligible for Medicaid", "see if my mom qualifies for
+  Medicare", "will I lose my Medi-Cal", "do the work requirements apply to
+  me"), including the /medicaid-eligibility landing page's own first
+  message. When it matches and the checker has no verdict yet, the turn
+  appends `ELIGIBILITY_REQUEST_NOTE` to the model's message (both the
+  intro-template and ongoing-turn wrappers), the same shape as the
+  terse-reply bridge: reply with only the tool call, carrying everything
+  the person has said. While a check is underway (the tool ran this
+  session, no verdict yet) every other user turn carries
+  `ELIGIBILITY_INTERVIEW_NOTE` instead: send the new answers back through
+  the tool, or help with whatever else they moved on to.
+* **The injected call.** After the race, at depth 0, if the message was a
+  request and the winning reply carries no tool call or action token, the
+  reply is replaced by `**medicaid_eligibility {...}**`
+  (`_eligibility_call_to_inject`), so the tool pass runs and its follow-up
+  writes the reply from the checker's questions. The call carries the state
+  when the person's own messages name one (a full name, "in CA", or a
+  one-state program like Medi-Cal -- never the IP-derived hint, which is
+  unconfirmed) and nothing else; the checker asks for what it lacks. It is
+  injected for the chat's FIRST request only, and never once the tool has
+  run this session: a bare call later would restart the interview and
+  discard the answers collected, so a later request is left to the model
+  under the note. If the follow-up pass produces nothing, the model's own
+  reply is delivered instead of raw tool syntax. The alternate answer is
+  dropped like any other tool rewrite.
+
+The data side: `medicaid_info` (medicaid_api.get_medicaid_info) hands the
+model the whole row of data/medicaid_resources.csv, not just the agency's
+phone number -- the free legal helpline and self-help guide, the state's
+official Medicaid FAQ searched by the call's `topic` (prefix-matched words,
+question matches outranking answer matches; without a topic the questions on
+file are listed so the model can ask again in the FAQ's words), where the
+state stands on the federal work requirement (`work_requirement_reach` plus
+the state's own waiver activity, as background), and the state's Medicare
+counseling line (SHIP) from static/state_help.json beside 1-800-MEDICARE and
+Social Security's enrollment line, which lead the result when the topic
+names Medicare. The program names that drive all of this -- the prompt's
 reminder, the keyword that attaches the Medicaid tool blocks, the verdict
-filter and `_normalize_state` -- come from one map in
+filter, the request detector and `_normalize_state` -- come from one map in
 ml/medicaid_names.py.
 
 ## 7. Debuggability
