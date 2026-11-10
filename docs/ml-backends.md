@@ -249,7 +249,8 @@ citations to an appeal ([`ml/web_search_context.py`](../fighthealthinsurance/ml/
   Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on and the person allowed
   outside models (`Denial.use_external`, read again first), else by our own
   best general-purpose model. Pages judged off topic or against the treatment are
-  dropped, and so are pages nobody could judge in time. At most three are
+  dropped, and so are pages nobody could judge in time. With no judge at
+  all (no model of our own and Jev off) the search is not run. At most three are
   kept, strongest support first, and added after the CMS citations.
 - **The Appeal Arena too.** Its synthetic cases get the same judged web
   pages as evidence beside their PubMed articles, marked "web page" for

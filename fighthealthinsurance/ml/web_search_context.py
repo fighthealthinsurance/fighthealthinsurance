@@ -278,6 +278,12 @@ async def _search_and_judge(
     if backend is None:
         _count("skipped")
         return []
+    if ml_router.best_internal_model() is None and not research_judging.enabled():
+        # Nobody to judge what comes back (no model of our own, Jev off), and
+        # unjudged results are dropped: don't pay for the search or send its
+        # terms out.
+        _count("skipped")
+        return []
     with llm_usage.llm_task("web_search"):
         results = await backend.web_search(
             question, timeout=budget_seconds * SEARCH_SHARE

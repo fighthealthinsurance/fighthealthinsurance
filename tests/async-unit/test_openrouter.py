@@ -354,6 +354,10 @@ class TestWebSearchCitations:
             patch.object(
                 web_search_context.ml_router, "best_internal_model", return_value=None
             ),
+            # Jev is on, so there is a judge to search for.
+            patch.object(
+                web_search_context.research_judging, "enabled", return_value=True
+            ),
             patch.object(
                 web_search_context,
                 "_consent_allows",
@@ -392,6 +396,15 @@ class TestWebSearchCitations:
         }
         cited = await web_search_context.web_search_citations(_denial(), 10)
         assert len(cited) == 1 and "https://a.org/good" in cited[0]
+
+    @pytest.mark.asyncio
+    async def test_does_not_search_with_no_judge_at_all(self):
+        self.backend.web_search.return_value = _results("https://a.org/x")
+        with patch.object(
+            web_search_context.research_judging, "enabled", return_value=False
+        ):
+            await web_search_context.web_search_citations(_denial(), 10)
+        self.backend.web_search.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_drops_results_nobody_could_judge(self):
