@@ -8431,4 +8431,62 @@ class OpenRouterWebSearch(OpenRouter):
         return [c for c in (citations or []) if isinstance(c, WebCitation)]
 
 
+class OpenRouterArena(OpenRouter):
+    """Frontier models reached through OpenRouter for the Appeal Arena only,
+    registered as ``openrouter-arena/<OpenRouter id>``.
+
+    Synthetic-only, like LunaRoute: the models are registered by name outside
+    every general pool (``chat_models``), and chat refuses them even if the
+    roster names one, so they only ever see the arena's model-written cases
+    (CHOOSER_FORCE_MODEL seats them). That is also why these requests drop
+    OpenRouter's zero-data-retention requirement, which the general
+    OpenRouter backend keeps: there is no person's text to retain, and
+    Claude Fable 5.2 has no ZDR endpoint on OpenRouter (checked 2026-11-10),
+    so requiring one would fail every call. Data collection is still denied.
+
+    Needs OPENROUTER_API_KEY, as OpenRouter does.
+    """
+
+    NAME_PREFIX: ClassVar[str] = "openrouter-arena"
+    PROVIDER_LABEL: ClassVar[str] = "OpenRouter (Appeal Arena)"
+    # Friendly name -> OpenRouter model id. The newest Anthropic and OpenAI
+    # models in OpenRouter's catalog on 2026-11-10 (GET /api/v1/models).
+    ARENA_MODELS: ClassVar[dict[str, str]] = {
+        "openrouter-arena/anthropic/claude-fable-5.2": "anthropic/claude-fable-5.2",
+        "openrouter-arena/openai/gpt-6.1-terra": "openai/gpt-6.1-terra",
+    }
+    # Separate rate-limit state from the general OpenRouter models'.
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @property
+    def synthetic_only(self):
+        return True
+
+    def get_tier(self) -> str:
+        return "frontier"
+
+    @classmethod
+    def provider_preferences(cls) -> dict[str, Any]:
+        """No ZDR requirement (see the class docstring); data collection is
+        still denied."""
+        return {"data_collection": "deny"}
+
+    @classmethod
+    def model_catalog(cls) -> List[ModelDescription]:
+        """None in the general pools; see chat_models."""
+        return []
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        return []
+
+    @classmethod
+    def chat_models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(cost=0, name=name, internal_name=model_id)
+            for name, model_id in cls.ARENA_MODELS.items()
+        ]
+
+
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]

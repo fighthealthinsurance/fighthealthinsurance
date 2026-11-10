@@ -409,11 +409,23 @@ class Base(Configuration):
     )
     # Registered backend names (comma-separated) seated in every new arena
     # task, to try a model out against the rest; arena only, unlike FORCE_MODEL.
-    # Temporarily LunaRoute's two models (ml_models.LunaRoute), to get them
-    # votes; set CHOOSER_FORCE_MODEL="" to stop. A name with no backend
-    # registered (no LUNA_ROUTE_KEY) is logged once and skipped.
+    # By default DeepSeek 4.1 Flash (LunaRoute), the newest Anthropic and
+    # OpenAI models (OpenRouter, arena only: ml_models.OpenRouterArena) and
+    # Nemotron 3.5 Super (DeepInfra). Four names fill every
+    # CHOOSER_NUM_CANDIDATES slot, so no other model is seated while they are
+    # all up; set CHOOSER_FORCE_MODEL="" to stop. A name with no backend
+    # registered (no LUNA_ROUTE_KEY, OPENROUTER_API_KEY or DEEPINFRA_API) is
+    # logged once and skipped, and its slot goes to the usual rotation.
     CHOOSER_FORCE_MODEL = os.getenv(
-        "CHOOSER_FORCE_MODEL", "lunaroute/deepseek-4.1-flash,lunaroute/glm-5.3"
+        "CHOOSER_FORCE_MODEL",
+        ",".join(
+            [
+                "lunaroute/deepseek-4.1-flash",
+                "openrouter-arena/anthropic/claude-fable-5.2",
+                "openrouter-arena/openai/gpt-6.1-terra",
+                "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+            ]
+        ),
     )
     CHOOSER_MAX_QUESTIONS = _env_int("CHOOSER_MAX_QUESTIONS", 4, minimum=1, maximum=10)
     CHOOSER_QA_TIMEOUT = _env_int("CHOOSER_QA_TIMEOUT", 60, minimum=5, maximum=600)

@@ -186,6 +186,7 @@ such as `sonar` are not listed in that line.
 | Perplexity (citations only) | `RemotePerplexity` | `PERPLEXITY_API` | `sonar` |
 | LunaRoute (Appeal Arena only) | `LunaRoute` | `LUNA_ROUTE_KEY` | `lunaroute/` |
 | OpenRouter | `OpenRouter` | `OPENROUTER_API_KEY` | `openrouter/` |
+| OpenRouter (Appeal Arena only) | `OpenRouterArena` | `OPENROUTER_API_KEY` | `openrouter-arena/` |
 | OpenRouter web search (context only) | `OpenRouterWebSearch` | `OPENROUTER_API_KEY` | `openrouter-web-search` |
 
 Perplexity is context-only: it finds citations and never generates an appeal
@@ -202,6 +203,14 @@ Perplexity has no key, building the router logs a `Skipping model ... No
 token found` warning; without `LUNA_ROUTE_KEY` it logs `Skipping chat model
 <model id>: Exception` for each LunaRoute model. Either is expected, not a
 fault.
+
+`OpenRouterArena` is the same arrangement over OpenRouter for the arena's
+default frontier models, `openrouter-arena/anthropic/claude-fable-5.2` and
+`openrouter-arena/openai/gpt-6.1-terra`: registered outside every general
+pool, synthetic-only, and seated by `CHOOSER_FORCE_MODEL`. Since they never
+see a person's text, their requests drop the zero-data-retention requirement
+the general OpenRouter models keep (Claude Fable 5.2 has no ZDR endpoint on
+OpenRouter) and still deny data collection.
 
 LunaRoute serves one request at a time per model and hard-fails the rest, so
 each process lets only `LUNA_ROUTE_MAX_PARALLEL` (default 1; 0 for no limit)

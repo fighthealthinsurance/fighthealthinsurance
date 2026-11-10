@@ -465,10 +465,20 @@ name the router doesn't know is logged once and ignored. Unlike
 
 A forced name can also be a model kept out of every general pool (one a
 backend lists in `chat_models()`), so a provider can be tried on the arena's
-synthetic cases without being offered any real traffic. For now the default is
-LunaRoute's two models, `lunaroute/deepseek-4.1-flash,lunaroute/glm-5.3`
-(see [ml-backends.md](ml-backends.md)); they are seated only where
-`LUNA_ROUTE_KEY` is set, and `CHOOSER_FORCE_MODEL=""` turns forcing off.
+synthetic cases without being offered any real traffic. The default is four
+models (see [ml-backends.md](ml-backends.md)):
+
+- `lunaroute/deepseek-4.1-flash` (DeepSeek 4.1 Flash, needs `LUNA_ROUTE_KEY`)
+- `openrouter-arena/anthropic/claude-fable-5.2` (the newest Anthropic model)
+- `openrouter-arena/openai/gpt-6.1-terra` (the newest OpenAI model)
+- `nvidia/NVIDIA-Nemotron-3.5-Super-VL` (DeepInfra, needs `DEEPINFRA_API`)
+
+The two `openrouter-arena/` models need `OPENROUTER_API_KEY` and are
+synthetic-only, like LunaRoute's. Four names fill all
+`CHOOSER_NUM_CANDIDATES` slots, so while all four are registered no other
+model is seated in new tasks; a name without a backend is skipped and its
+slot goes back to the usual rotation. `CHOOSER_FORCE_MODEL=""` turns forcing
+off.
 
 ## Keeping the pool stocked
 
@@ -594,7 +604,7 @@ environment variables of the same name.
 | `CHOOSER_LAUNCH_BACKFILL_SIZE` | `100` | Appeal tasks the launch backfill writes (`0` turns it off) |
 | `CHOOSER_LAUNCH_BACKFILL_MIN_VOTES` | `2` | Votes every current appeal task needs before the launch backfill is due |
 | `CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS` | `3600` | How long a due launch backfill waits for a generation claim another process holds |
-| `CHOOSER_FORCE_MODEL` | LunaRoute's two models, for now (`""` in tests) | Registered model names seated in every new arena task |
+| `CHOOSER_FORCE_MODEL` | DeepSeek 4.1 Flash, Claude Fable 5.2, GPT-6.1 Terra, Nemotron 3.5 Super (`""` in tests) | Registered model names seated in every new arena task |
 | `CHOOSER_WARMUP_ROUNDS_PER_LEVEL` | `1` | Votes a judge casts before the complexity of the cases served to them may rise a level; `0` turns the warm-up off |
 | `CHOOSER_WARMUP_SATURATION_VOTES` | `5` | Votes after which a case yields its place, in the warm-up or in the order a judge chose, to a less-judged one |
 | `CONDITION_RANKING_MIN_PEOPLE` | `5` | The k in k-anonymity: different people per term |
