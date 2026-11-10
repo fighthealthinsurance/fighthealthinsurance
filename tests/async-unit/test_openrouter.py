@@ -407,6 +407,13 @@ class TestWebSearchCitations:
         self.backend.web_search.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_does_not_search_when_only_jev_could_judge_and_may_not(self):
+        self.backend.web_search.return_value = _results("https://a.org/x")
+        self.consent.return_value = False
+        await web_search_context.web_search_citations(_denial(), 10)
+        self.backend.web_search.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_drops_results_nobody_could_judge(self):
         self.backend.web_search.return_value = _results("https://a.org/x")
         assert await web_search_context.web_search_citations(_denial(), 10) == []
@@ -461,16 +468,27 @@ class TestWebSearchCitations:
         self.consent.return_value = False
         self.backend.web_search.return_value = _results("https://a.org/good")
         self.judgments = {"https://a.org/good": SUPPORTS}
-        cited = await web_search_context.web_search_citations(
-            _denial(use_external=False), 10
-        )
+        # Our own model is there to judge, so the search has a use.
+        with patch.object(
+            web_search_context.ml_router,
+            "best_internal_model",
+            return_value=MagicMock(),
+        ):
+            cited = await web_search_context.web_search_citations(
+                _denial(use_external=False), 10
+            )
         assert len(cited) == 1 and "https://a.org/good" in cited[0]
 
     @pytest.mark.asyncio
     async def test_jev_may_not_judge_without_consent(self):
         self.consent.return_value = False
         self.backend.web_search.return_value = _results("https://a.org/x")
-        await web_search_context.web_search_citations(_denial(), 10)
+        with patch.object(
+            web_search_context.ml_router,
+            "best_internal_model",
+            return_value=MagicMock(),
+        ):
+            await web_search_context.web_search_citations(_denial(), 10)
         assert [k["may_ask_jev"] for k in self.judge_kwargs] == [False]
 
     @pytest.mark.asyncio

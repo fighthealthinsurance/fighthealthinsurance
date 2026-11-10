@@ -62,7 +62,7 @@ const EASE='cubic-bezier(.2,.7,.2,1)';
 const seen=new WeakSet();
 const inView=el=>{const r=el.getBoundingClientRect();return r.height>0&&r.bottom>0&&r.top<window.innerHeight;};
 const held=new Set();
-const playHeld=el=>{if(io)io.unobserve(el);held.delete(el);seen.add(el);const p=el._dwPlay;el._dwPlay=null;if(p)p();};
+const playHeld=el=>{if(!MOTION||!held.has(el))return;if(io)io.unobserve(el);held.delete(el);seen.add(el);const p=el._dwPlay;el._dwPlay=null;if(p)p();};
 const io=MOTION?new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)playHeld(e.target);}),{rootMargin:'0px 0px -15% 0px'}):null;
 /* The observer waits until a chart is 15% up the window. One near the foot of a short page may never get that far, so at the end of the page whatever is showing plays. */
 if(MOTION)window.addEventListener('scroll',()=>{if(held.size&&window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-2)[...held].filter(inView).forEach(playHeld);},{passive:true});
