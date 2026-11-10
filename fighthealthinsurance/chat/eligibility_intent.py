@@ -226,17 +226,14 @@ def _state_name_regex() -> Pattern[str]:
 _STATE_NAME_REGEX: Optional[Pattern[str]] = None
 
 
-def state_mentioned_in(text: Optional[str]) -> Optional[str]:
-    """The one US state ``text`` names, as a lowercase postal code.
+def states_mentioned_in(text: Optional[str]) -> frozenset[str]:
+    """Every US state ``text`` names, as lowercase postal codes.
 
     Recognizes a one-state program name ("Medi-Cal" -> ca), a full state
-    name, and an upper-case postal code after a place word ("in CA"). Returns
-    None when the text names no state -- or more than one ("I moved from
-    Texas to California"): a wrong state scores the person under the wrong
-    rules, so the checker is left to ask.
+    name, and an upper-case postal code after a place word ("in CA").
     """
     if not text:
-        return None
+        return frozenset()
     from fighthealthinsurance.medicaid_api import _STATE_MAP
 
     found: set[str] = set()
@@ -249,22 +246,38 @@ def state_mentioned_in(text: Optional[str]) -> Optional[str]:
         code = match.group(1).lower()
         if code in codes:
             found.add(code)
+    return frozenset(found)
+
+
+def state_mentioned_in(text: Optional[str]) -> Optional[str]:
+    """The one US state ``text`` names, as a lowercase postal code.
+
+    None when the text names no state -- or more than one ("I moved from
+    Texas to California"): a wrong state scores the person under the wrong
+    rules, so the checker is left to ask. A caller that has to tell those
+    two apart reads ``states_mentioned_in`` itself.
+    """
+    found = states_mentioned_in(text)
     if len(found) == 1:
         return next(iter(found))
     return None
 
 
 def state_from_user_messages(messages: Iterable[Optional[str]]) -> Optional[str]:
-    """The state named by the most recent of ``messages`` that names one.
+    """The state named by the most recent of ``messages`` that names any.
 
     ``messages`` are the USER's own messages, newest first: what the person
     said is confirmed by definition, where an IP-derived hint (the chat's
-    state_hint) is not and must never be sent to the checker as a fact.
+    state_hint) is not and must never be sent to the checker as a fact. The
+    scan stops at the first message that names a state at all. One that
+    names two ("I moved from Texas to California") is ambiguous, and
+    reaching past it to an older "I live in Texas" would hand the checker
+    the state the person just said they left.
     """
     for message in messages:
-        state = state_mentioned_in(message)
-        if state:
-            return state
+        found = states_mentioned_in(message)
+        if found:
+            return next(iter(found)) if len(found) == 1 else None
     return None
 
 

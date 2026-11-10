@@ -19,6 +19,7 @@ from fighthealthinsurance.chat.eligibility_intent import (
     detect_eligibility_request,
     state_from_user_messages,
     state_mentioned_in,
+    states_mentioned_in,
 )
 from fighthealthinsurance.chat.tools.patterns import (
     MEDICAID_ELIGIBILITY_REGEX,
@@ -125,6 +126,23 @@ def test_state_from_user_messages_takes_the_newest_mention():
     # Newest first, as the caller hands them over.
     assert state_from_user_messages(["I'm 30", "I'm in Texas", "in Ohio"]) == "tx"
     assert state_from_user_messages(["I'm 30", None, ""]) is None
+
+
+def test_state_from_user_messages_stops_at_an_ambiguous_message():
+    # The newest message names two states: ambiguous, and the older "I live
+    # in Texas" must not be reached past it -- Texas may be the state they
+    # just left.
+    assert (
+        state_from_user_messages(["I moved from Texas to California", "I live in Texas"])
+        is None
+    )
+
+
+def test_states_mentioned_in_lists_every_state():
+    assert states_mentioned_in("I moved from Texas to California") == {"tx", "ca"}
+    assert states_mentioned_in("Medi-Cal, in CA") == {"ca"}
+    assert states_mentioned_in("I'm 30 and single") == frozenset()
+    assert states_mentioned_in(None) == frozenset()
 
 
 def test_built_call_carries_the_state_and_is_what_the_tool_detects():

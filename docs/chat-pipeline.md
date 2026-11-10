@@ -674,7 +674,10 @@ check run regardless (chat/eligibility_intent.py):
   writes the reply from the checker's questions. The call carries the state
   when the person's own messages name one (a full name, "in CA", or a
   one-state program like Medi-Cal -- never the IP-derived hint, which is
-  unconfirmed) and nothing else; the checker asks for what it lacks. It is
+  unconfirmed) and nothing else. A message naming two states gets none,
+  and the scan of earlier messages stops at the first that names any, so
+  an older "I live in Texas" is never reached past "I moved from Texas to
+  California"; the checker asks for what it lacks. It is
   injected for the chat's FIRST request only, and never once the tool has
   run this session: a bare call later would restart the interview and
   discard the answers collected, so a later request is left to the model

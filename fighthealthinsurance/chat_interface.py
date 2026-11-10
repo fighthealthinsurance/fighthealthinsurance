@@ -97,6 +97,7 @@ from fighthealthinsurance.chat.eligibility_intent import (
     build_eligibility_call,
     detect_eligibility_request,
     state_from_user_messages,
+    states_mentioned_in,
 )
 from fighthealthinsurance.chat.tools.patterns import (
     ACTION_TOKEN_MENTION_RE,
@@ -1689,7 +1690,19 @@ class ChatInterface:
         ]
         if any(detect_eligibility_request(m) for m in earlier_user_messages):
             return None
-        state = request.state or state_from_user_messages(earlier_user_messages)
+        # The message's own state wins. One naming two states is ambiguous
+        # and gets no state at all -- not an older message's, which may be
+        # the state the person just said they left. Only a message naming
+        # none falls back to the earlier ones, newest first, under the same
+        # rule.
+        named = states_mentioned_in(user_message)
+        state: Optional[str]
+        if len(named) > 1:
+            state = None
+        elif named:
+            state = next(iter(named))
+        else:
+            state = state_from_user_messages(earlier_user_messages)
         logger.info(
             f"Chat {chat.id}: reply to an eligibility request carried no tool "
             f"call; injecting medicaid_eligibility (state_known={bool(state)})"

@@ -147,6 +147,23 @@ class EligibilityInjectionTest(APITestCase):
         (follow_up,) = _follow_ups(self.model)
         self.assertIn("state: tx", follow_up)
 
+    async def test_a_message_naming_two_states_gets_no_state_from_history(self):
+        history = [
+            {"role": "user", "content": "I live in Texas and just lost my job."},
+            {"role": "assistant", "content": "I'm sorry to hear that. How can I help?"},
+        ]
+        interface = await self._interface("eliginject15", "9999960015", history)
+        await self._turn(
+            interface, "I moved from Texas to California. Am I eligible for Medicaid?"
+        )
+
+        (follow_up,) = _follow_ups(self.model)
+        # Neither state was sent -- not Texas from the earlier message, which
+        # they just said they left -- so the checker asks which one applies.
+        self.assertNotIn("state: tx", follow_up)
+        self.assertNotIn("state: ca", follow_up)
+        self.assertIn(STATE_QUESTION, follow_up.lower())
+
     async def test_the_models_own_tool_call_is_used_not_replaced(self):
         self.model = MemoryAnsweringModel(
             user_turn_reply='**medicaid_eligibility {"state": "tx", "age": 30}**'
