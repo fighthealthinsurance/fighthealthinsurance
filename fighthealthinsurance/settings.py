@@ -214,8 +214,10 @@ class Base(Configuration):
     )
     # Files one address, email or account may upload per UTC hour and per
     # UTC day, across every page that takes files (upload_rate_limit.py).
+    # The hour has to hold the largest single upload a page takes
+    # (upload_limits.MAX_OCR_FILES), or that upload is always refused.
     FHI_UPLOAD_FILES_PER_HOUR = _env_int(
-        "FHI_UPLOAD_FILES_PER_HOUR", 20, minimum=1, maximum=10_000
+        "FHI_UPLOAD_FILES_PER_HOUR", 30, minimum=1, maximum=10_000
     )
     FHI_UPLOAD_FILES_PER_DAY = _env_int(
         "FHI_UPLOAD_FILES_PER_DAY", 60, minimum=1, maximum=100_000

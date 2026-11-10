@@ -53,7 +53,7 @@ let MOTION=!!(MQ&&MQ.matches&&'IntersectionObserver' in window&&Element.prototyp
 /* Frame-by-frame steps (a glide, a count) register how to finish at once. */
 const finishers=new Set();
 /* Finish everything now and stop: every chart at its final state, nothing waiting. For printing, and for turning on reduced motion mid-visit. */
-function settle(){MOTION=false;if(io)io.disconnect();finishers.forEach(f=>f());finishers.clear();document.getAnimations().forEach(a=>{if(a.effect&&a.effect.target&&a.effect.target.closest&&a.effect.target.closest('.dw'))a.finish();});
+function settle(){MOTION=false;if(io)io.disconnect();held.clear();finishers.forEach(f=>f());finishers.clear();document.getAnimations().forEach(a=>{if(a.effect&&a.effect.target&&a.effect.target.closest&&a.effect.target.closest('.dw'))a.finish();});
   document.querySelectorAll('.dw .dw-bar-fill,.dw .dw-dumb i').forEach(e=>{e.style.scale='';e.style.translate='';});
   document.querySelectorAll('.dw .dw-line').forEach(g=>g.style.clipPath='');document.querySelectorAll('.dw .dw-end').forEach(t=>t.style.opacity='');}
 window.addEventListener('beforeprint',settle);
@@ -61,9 +61,13 @@ if(MQ&&MQ.addEventListener)MQ.addEventListener('change',()=>{if(!MQ.matches)sett
 const EASE='cubic-bezier(.2,.7,.2,1)';
 const seen=new WeakSet();
 const inView=el=>{const r=el.getBoundingClientRect();return r.height>0&&r.bottom>0&&r.top<window.innerHeight;};
-const io=MOTION?new IntersectionObserver(es=>es.forEach(e=>{if(!e.isIntersecting)return;io.unobserve(e.target);seen.add(e.target);const p=e.target._dwPlay;e.target._dwPlay=null;if(p)p();}),{rootMargin:'0px 0px -15% 0px'}):null;
+const held=new Set();
+const playHeld=el=>{if(io)io.unobserve(el);held.delete(el);seen.add(el);const p=el._dwPlay;el._dwPlay=null;if(p)p();};
+const io=MOTION?new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)playHeld(e.target);}),{rootMargin:'0px 0px -15% 0px'}):null;
+/* The observer waits until a chart is 15% up the window. One near the foot of a short page may never get that far, so at the end of the page whatever is showing plays. */
+if(MOTION)window.addEventListener('scroll',()=>{if(held.size&&window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-2)[...held].filter(inView).forEach(playHeld);},{passive:true});
 /* hold sets the start state for a chart below the fold; play runs when it scrolls in, or now if it's already showing. */
-function onView(el,hold,play){if(!MOTION||!el)return;if(seen.has(el)||inView(el)){seen.add(el);play();return;}hold();el._dwPlay=play;io.observe(el);}
+function onView(el,hold,play){if(!MOTION||!el)return;if(seen.has(el)||inView(el)){seen.add(el);play();return;}hold();el._dwPlay=play;held.add(el);io.observe(el);}
 
 /* A line draws left to right, its dots appearing as it reaches them, then the end label. */
 const HIDE='inset(0 100% 0 0)';

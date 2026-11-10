@@ -338,6 +338,12 @@ class FileNamesAreMadeSafeTestCase(TestCase):
     def test_a_trailing_dot_is_dropped(self):
         self.assertEqual(upload_limits.safe_filename("letter."), "letter")
 
+    def test_the_hour_holds_the_largest_upload_one_page_takes(self):
+        # Otherwise a full OCR upload is refused however little was sent before.
+        self.assertGreaterEqual(
+            upload_rate_limit.files_per_hour(), upload_limits.MAX_OCR_FILES
+        )
+
     def test_one_upload_over_the_hour_is_told_to_send_fewer(self):
         with override_settings(FHI_UPLOAD_FILES_PER_HOUR=20):
             self.assertEqual(

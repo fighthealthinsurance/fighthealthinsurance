@@ -40,7 +40,7 @@ BATCH_MESSAGE = "That's more files than we take at once. Please send fewer at a 
 
 
 def files_per_hour() -> int:
-    return int(getattr(settings, "FHI_UPLOAD_FILES_PER_HOUR", 20))
+    return int(getattr(settings, "FHI_UPLOAD_FILES_PER_HOUR", 30))
 
 
 def files_per_day() -> int:

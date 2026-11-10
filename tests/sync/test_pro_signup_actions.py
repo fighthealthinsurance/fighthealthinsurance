@@ -77,6 +77,9 @@ class NewSignupTest(_SignupCase):
             signup_thread_message_id(self.pro),
         )
 
+    def test_notification_says_nothing_has_gone_to_them(self):
+        self.assertIn("Nothing has been sent to them yet.", self.notification.body)
+
     def test_notification_body_links_every_action(self):
         for path in (
             reverse("pro_signup_action", args=[self.pro.id, "thankyou"]),
@@ -195,6 +198,31 @@ class ThankyouActionTest(_StaffCase):
         self.client.post(self.url("block"))
         self.client.post(self.url("thankyou"))
         self.assertEqual(_mail_to(self.EMAIL), [])
+
+    def test_refused_for_an_address_we_never_email(self):
+        # send_fallback_email skips such an address without raising, so the
+        # send must not be recorded or announced as done.
+        InterestedProfessional.objects.filter(pk=self.pro.pk).update(
+            email="walker-fake@fighthealthinsurance.com"
+        )
+        self.client.post(self.url("thankyou"))
+        self.pro.refresh_from_db()
+        self.assertEqual(
+            (self.pro.thankyou_email_sent, self.thread_notes()), (False, [])
+        )
+
+    def test_lead_deleted_during_the_action_goes_to_the_queue(self):
+        def delete_then_note(pro, note):
+            InterestedProfessional.objects.filter(pk=pro.pk).delete()
+
+        with patch(
+            "fighthealthinsurance.pro_signup_actions.post_to_signup_thread",
+            side_effect=delete_then_note,
+        ):
+            response = self.client.post(self.url("thankyou"))
+        self.assertRedirects(
+            response, reverse("proconnector_process"), fetch_redirect_response=False
+        )
 
     def test_refused_once_the_intro_went_out(self):
         InterestedProfessional.objects.filter(pk=self.pro.pk).update(

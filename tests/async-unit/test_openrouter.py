@@ -264,6 +264,13 @@ class TestOpenRouterRequests(unittest.TestCase):
 
 
 class TestUrlCitationsFromAnnotations(unittest.TestCase):
+    def test_a_long_title_is_cut_to_what_the_judge_reads(self):
+        citation = WebCitation("t" * 500, "https://a.org/x")
+        self.assertEqual(
+            (citation.page_title, str(citation)),
+            ("t" * 200, "t" * 200 + ". https://a.org/x"),
+        )
+
     def test_reads_url_citations_with_their_parts(self):
         found = url_citations_from_annotations(
             [_url_citation("https://a.org/x", " Title  one ", "Some  text")]

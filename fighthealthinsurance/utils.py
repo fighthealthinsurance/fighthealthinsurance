@@ -777,12 +777,16 @@ _NOTIFICATION_BUTTON_STYLE = {
 }
 
 
+_NOTHING_SENT_YET = "Nothing has been sent to them yet. "
+
+
 def _interested_professional_notification_html(
     *,
     source: str,
     rows: Sequence[Tuple[str, str]],
     action_urls: Sequence[Tuple[str, str]],
     admin_url: str,
+    nothing_sent_yet: bool = True,
 ) -> str:
     """HTML alternative for the professional-interest team notification.
 
@@ -821,13 +825,14 @@ def _interested_professional_notification_html(
         '<table style="border-collapse: collapse;">{rows}</table>'
         '<p style="margin: 18px 0;">{buttons}</p>'
         '<p style="color: #555555; font-size: 12px;">'
-        "Nothing has been sent to them yet. Each button opens a staff page "
+        "{nothing_sent}Each button opens a staff page "
         "(staff login required); the action only happens after you confirm "
         "there, and a note is replied to this thread so the rest of the team "
         "knows it was handled.</p>"
         '<p><a href="{admin_url}">Open in Django admin</a></p>'
         "</div>",
         source=source,
+        nothing_sent=_NOTHING_SENT_YET if nothing_sent_yet else "",
         rows=rows_html,
         buttons=buttons_html,
         admin_url=admin_url,
@@ -887,7 +892,10 @@ def notify_interested_professional(
             f"A new professional signed up via {source}.\n\n"
             + "".join(f"{label}: {value}\n" for label, value in rows)
             + f"Admin: {admin_url}\n\n"
-            + "Nothing has been sent to them yet. Staff actions (staff login; "
+            # Only true of a new lead: a returning one may already have had
+            # the thank-you or the introduction.
+            + (_NOTHING_SENT_YET if starts_thread else "")
+            + "Staff actions (staff login; "
             + "each replies to this thread when done):\n"
             + f"Send the thank-you email: {thankyou_url}\n"
             + f"Send the Cofactor AI introduction: {intro_url}\n"
@@ -902,6 +910,7 @@ def notify_interested_professional(
                 ("block", block_url),
             ),
             admin_url=admin_url,
+            nothing_sent_yet=starts_thread,
         )
         headers = (
             {"Message-ID": signup_thread_message_id(interested_pro)}

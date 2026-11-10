@@ -849,9 +849,13 @@ def prepare_document_fields(
         "char_count": len(text),
         "is_active": _bool(record, "is_active", True),
         "pipeline_version": _string(record, "pipeline_version", MAX_VERSION),
-        "notes": record.get("notes") if isinstance(record.get("notes"), str) else "",
         "import_batch": import_batch[:MAX_VERSION],
     }
+    # Only when the record carries them: a re-import that says nothing about
+    # notes must not blank the ones staff wrote in the admin. A new row takes
+    # the model's default (none).
+    if isinstance(record.get("notes"), str):
+        fields["notes"] = record["notes"]
     return PreparedDocument(
         document_key=key,
         fields=fields,

@@ -212,6 +212,12 @@ class OtherInsuranceIsSavedTest(TestCase):
             (OTHER_INSURANCE_YES, source("Medicaid"), "Medi-Cal"),
         )
 
+    def test_a_company_name_at_the_length_limit_is_saved(self):
+        self.find_next_steps(
+            other_insurance=OTHER_INSURANCE_YES, other_insurance_company="c" * 300
+        )
+        self.assertEqual(self.denial.other_insurance_company, "c" * 300)
+
     def test_a_no_clears_the_other_plan(self):
         self.find_next_steps(
             other_insurance=OTHER_INSURANCE_YES,

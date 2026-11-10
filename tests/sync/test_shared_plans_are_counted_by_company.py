@@ -14,6 +14,7 @@ company. link_plan_sponsors does the same for documents read before.
 import datetime
 import uuid
 from io import StringIO
+from unittest.mock import AsyncMock, patch
 
 from asgiref.sync import async_to_sync
 from django.core.management import call_command
@@ -221,6 +222,16 @@ class TheGoalCountsCompaniesTest(TestCase):
 
 
 class TheReadingLinksTheCompanyTest(TestCase):
+    def setUp(self):
+        # No model is asked, whatever backend the environment configures:
+        # the fixed patterns read the sponsor.
+        reader = patch(
+            "fighthealthinsurance.plan_sponsor_reader.aread_sponsor",
+            new=AsyncMock(return_value=(None, False)),
+        )
+        reader.start()
+        self.addCleanup(reader.stop)
+
     def test_a_shared_text_file_is_linked_when_read(self):
         doc = PolicyDocument.objects.create(
             source=PolicyDocument.SOURCE_SHARED,
@@ -229,8 +240,6 @@ class TheReadingLinksTheCompanyTest(TestCase):
             processing_status=PolicyDocument.PROCESSING_RECEIVED,
             filename="spd.txt",
         )
-        from unittest.mock import patch
-
         with patch(
             "fighthealthinsurance.plan_documents_processing._read_stored",
             return_value=SPD_WITH_EIN.encode(),
@@ -241,6 +250,16 @@ class TheReadingLinksTheCompanyTest(TestCase):
 
 
 class LinkingDocumentsReadBeforeTest(TestCase):
+    def setUp(self):
+        # No model is asked, whatever backend the environment configures:
+        # the fixed patterns read the sponsor.
+        reader = patch(
+            "fighthealthinsurance.plan_sponsor_reader.aread_sponsor",
+            new=AsyncMock(return_value=(None, False)),
+        )
+        reader.start()
+        self.addCleanup(reader.stop)
+
     def test_it_lists_without_apply(self):
         shared_row(SPD_WITH_EIN)
         out = StringIO()

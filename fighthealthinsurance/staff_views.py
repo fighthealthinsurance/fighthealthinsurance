@@ -6141,7 +6141,11 @@ class ProSignupActionView(View):
             f"({mask_email_for_logging(pro.email)})"
         )
         pro_signup_actions.post_to_signup_thread(pro, note)
-        pro.refresh_from_db()
+        # Re-fetch rather than refresh_from_db(): a concurrent delete of the
+        # record must not 500 after an action that already happened.
+        pro = InterestedProfessional.objects.filter(pk=pro_id).first()
+        if pro is None:
+            return redirect("proconnector_process")
         return self._render(request, pro, action, notice=notice)
 
 
