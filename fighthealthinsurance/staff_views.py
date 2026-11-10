@@ -6110,7 +6110,10 @@ class ProSignupActionView(View):
         staff = pro_signup_actions.staff_display_name(request.user)
         if action == pro_signup_actions.THANKYOU:
             if not pro_signup_actions.send_thankyou(pro):
-                pro.refresh_from_db()
+                pro = InterestedProfessional.objects.filter(pk=pro_id).first()
+                if pro is None:
+                    # Deleted since it was loaded: nothing was sent.
+                    return redirect("proconnector_process")
                 if pro.thankyou_email_sent or pro.blocked or pro.unsubscribed:
                     # Lost the claim to a concurrent press; nothing was sent.
                     return self._render(request, pro, action)
@@ -6128,7 +6131,9 @@ class ProSignupActionView(View):
             notice = f"Thank-you email sent to {pro.email}."
         else:
             if not pro_signup_actions.block_address(pro):
-                pro.refresh_from_db()
+                pro = InterestedProfessional.objects.filter(pk=pro_id).first()
+                if pro is None:
+                    return redirect("proconnector_process")
                 return self._render(request, pro, action)
             note = (
                 f"{staff} blocked {pro.email}. Nothing more will be sent to it, "

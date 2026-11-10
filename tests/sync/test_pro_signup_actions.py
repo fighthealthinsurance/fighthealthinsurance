@@ -224,6 +224,20 @@ class ThankyouActionTest(_StaffCase):
             response, reverse("proconnector_process"), fetch_redirect_response=False
         )
 
+    def test_lead_deleted_before_the_claim_goes_to_the_queue(self):
+        def delete_then_fail(pro):
+            InterestedProfessional.objects.filter(pk=pro.pk).delete()
+            return False
+
+        with patch(
+            "fighthealthinsurance.pro_signup_actions.send_thankyou",
+            side_effect=delete_then_fail,
+        ):
+            response = self.client.post(self.url("thankyou"))
+        self.assertRedirects(
+            response, reverse("proconnector_process"), fetch_redirect_response=False
+        )
+
     def test_refused_once_the_intro_went_out(self):
         InterestedProfessional.objects.filter(pk=self.pro.pk).update(
             proconnector_attempted=True, proconnector_sent_at=timezone.now()
