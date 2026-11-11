@@ -453,9 +453,11 @@ _REASON_WORD_RE = re.compile(
 _PREREQUISITE_BEFORE_RE = re.compile(
     r"\b(?:after|upon|following|before|prior\s+to)\s+"
     r"(?:(?:a|an|the|your|all|any|internal)\s+)*$"
-    # "required to have exhausted", "requires that": not "as required by
-    # law, this is our final adverse determination".
-    r"|\brequire[sd]?\s+(?:that|to)\b"
+    # "required to have exhausted", "requires that appeals be exhausted":
+    # not "as required by law, this is our final adverse determination" or
+    # "we are required to inform you that this is our final...".
+    r"|\brequire[sd]?\s+(?:you\s+)?to\s+(?:first\s+)?(?:have|obtain|receive|get)\b"
+    r"|\brequire[sd]?\s+that\b(?!.*\b(?:inform|notify|tell|advise|let)\b)"
     # "You must obtain a final adverse determination to request...".
     r"|\b(?:must|need\s+to)\s+(?:obtain|receive|get|have)\s+"
     r"(?:(?:a|an|the|your)\s+)*$",

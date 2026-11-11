@@ -686,6 +686,7 @@ class TestDeleteConfirmationLinkStaysOutOfSentry:
     def test_a_page_opened_from_the_link_carries_neither_value(self):
         for send in (before_send_transaction_filter, before_send_filter):
             event = send(self._opened_from_the_link(), {})
+            assert event is not None
             assert _confirm_delete_values_left(event) == []
 
     def test_a_page_opened_from_the_link_scrubs_the_values_outside_the_referer(
