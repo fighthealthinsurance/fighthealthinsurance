@@ -499,6 +499,42 @@ class TestForcedArenaModelsInGeneration:
         assert names[0] == "fhi-trial"
         assert trial.calls == 1
 
+    async def test_a_failed_pool_slot_goes_to_the_undrawn_pool_model(self):
+        """With the pool filling every slot, a drawn model that fails is
+        replaced by the pool model left out of the draw, never by a model
+        outside the pool."""
+        task = await ChooserTask.objects.acreate(
+            task_type="appeal", status="QUEUED", source="synthetic"
+        )
+        pool = [FakeModel(f"pool-{i}", external=True) for i in range(3)]
+        broken = FakeModel("pool-broken", external=True, appeal_text="")
+        # Several, so that before the fix one of them was nearly always the
+        # first spare (spares are shuffled).
+        outsiders = [FakeModel(f"outside-{i}", external=True) for i in range(8)]
+        drawn = [broken, *pool[:2]]
+        registered = {m.name: [m] for m in [*pool, broken]}
+        with override_settings(
+            CHOOSER_FORCE_MODEL=",".join(registered)
+        ), patch.object(chooser_tasks, "CHOOSER_NUM_CANDIDATES", 3), patch.object(
+            chooser_tasks.ml_router,
+            "generate_text_backends",
+            MagicMock(return_value=[ScenarioModel(SCENARIO_TEXT), *outsiders]),
+        ), patch.object(
+            chooser_tasks.ml_router, "models_by_name", registered
+        ), patch.object(
+            chooser_tasks.ml_router, "chat_outside_models_by_name", {}
+        ), patch.object(
+            chooser_tasks, "_draw_forced_models", AsyncMock(return_value=drawn)
+        ), patch.object(
+            chooser_tasks, "_maybe_add_synthesized_candidate", new=AsyncMock()
+        ):
+            await _generate_appeal_candidates(task)
+
+        names = {
+            c.model_name async for c in ChooserCandidate.objects.filter(task=task)
+        }
+        assert names == {m.name for m in pool}
+
     async def test_the_coverage_refill_asks_for_a_forced_internal_model(self):
         """An internal model is not normally checked for coverage (internals
         fill their slots every task); a forced one is, so its first fresh

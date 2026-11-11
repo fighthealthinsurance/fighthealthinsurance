@@ -1461,7 +1461,8 @@ async def _fill_candidates(
     """
     # Drawn from the same list the coverage refill checks, so the two agree.
     comparable = _comparable_backends(task_type)
-    forced = await _draw_forced_models(task_type, _forced_arena_models(task_type))
+    pool = _forced_arena_models(task_type)
+    forced = await _draw_forced_models(task_type, pool)
     models = _select_candidate_models(comparable, CHOOSER_NUM_CANDIDATES, forced)
     if not models:
         logger.warning(f"No models available for {task_type} candidate generation")
@@ -1533,8 +1534,11 @@ async def _fill_candidates(
 
     # If we don't have enough candidates, give the open slots to backends
     # not asked yet, then (only to reach the READY minimum) re-sample one
-    # that answered.
-    spares = _spare_candidate_models(comparable, models)
+    # that answered. A forced pool that fills every slot is the whole
+    # experiment, so its failed slots go only to pool models not drawn.
+    spares = _spare_candidate_models(
+        pool if len(pool) >= CHOOSER_NUM_CANDIDATES else comparable, models
+    )
     for _ in range(CHOOSER_NUM_CANDIDATES * 2):  # Limit total retries
         if candidate_index >= CHOOSER_NUM_CANDIDATES:
             break
