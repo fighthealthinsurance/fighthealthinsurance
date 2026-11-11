@@ -363,10 +363,12 @@ class SendFaxHelper:
         try:
             _dispatch_or_ray_fax(hashed_email, uuid, force_restart=True)
         except Exception:
-            # Nothing started, so nothing is under way: unmark the attempt,
-            # and don't count it against the number.
+            # Nothing started, so nothing is under way: unmark the attempt.
+            # The count stays: the fax is left unsent with should_send, so
+            # the stranded-fax redispatch or the Ray sweep can still send it
+            # to this number, and that send must use up one of its tries.
             FaxesToSend.objects.filter(pk=f.pk, attempting_to_send_as_of=now).update(
-                attempting_to_send_as_of=None, resends_by_number=f.resends_by_number
+                attempting_to_send_as_of=None
             )
             raise
         return True

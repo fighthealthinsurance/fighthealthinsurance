@@ -325,13 +325,15 @@ class TestResendCapPerNumber:
             assert self._resend_and_fail(fax, fax_phone=spelling)[0] is True
         assert self._resend_and_fail(fax, fax_phone="800 555 9999")[0] is False
 
-    def test_a_resend_whose_dispatch_fails_is_not_counted(self, test_denial):
+    def test_a_resend_whose_dispatch_fails_is_still_counted(self, test_denial):
+        """The fax is left for the stranded-fax redispatch to send to that
+        number, so the try is used up all the same."""
         fax = _make_fax(test_denial, sent=True, fax_success=False)
         with patch(DISPATCH, side_effect=RuntimeError("no backend")):
             with pytest.raises(RuntimeError):
                 _resend(fax)
         fax.refresh_from_db()
-        assert SendFaxHelper.resends_to(fax, "8005559999") == 0
+        assert SendFaxHelper.resends_to(fax, "8005559999") == 1
 
     def test_a_resend_refused_while_a_send_is_running_is_not_counted(self, test_denial):
         fax = _make_fax(test_denial, sent=True, fax_success=False)
