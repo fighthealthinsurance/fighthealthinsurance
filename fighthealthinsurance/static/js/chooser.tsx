@@ -65,9 +65,6 @@ interface ToolCall {
   found: string;
   notes?: string[];
   timed_out?: boolean;
-  // On a synthesized draft: a lookup one of the drafts it merged made. The
-  // synthesis read those drafts, not the lookups themselves.
-  from_drafts?: boolean;
 }
 
 // What the automated reviewer made of one study for this treatment and
@@ -1121,7 +1118,6 @@ const ChatCase: React.FC<{ context: ChooserTaskContext }> = ({ context }) => {
 // nothing). The found text stays folded until asked for: it is long.
 const ToolCallList: React.FC<{ calls: ToolCall[] }> = ({ calls }) => {
   const [open, setOpen] = useState<Record<number, boolean>>({});
-  const fromDrafts = calls.some((call) => call.from_drafts);
   return (
     <Stack gap={6}>
       {calls.map((call, idx) => {
@@ -1191,9 +1187,8 @@ const ToolCallList: React.FC<{ calls: ToolCall[] }> = ({ calls }) => {
         );
       })}
       <Text size="xs" c="dimmed">
-        {fromDrafts
-          ? "The drafts this one combines looked this up; it read their answers, not the lookups. Does it claim no more than they found?"
-          : "The draft looked this up before answering. Did it use what it found, and say no more than that?"}
+        This was looked up before the draft was written. Does the draft say
+        no more than was found?
       </Text>
     </Stack>
   );

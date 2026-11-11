@@ -15,6 +15,7 @@ Covers two behaviors added alongside synthesis tracking:
 import asyncio
 import contextlib
 import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,6 +27,7 @@ from fighthealthinsurance.chooser_tasks import (
     CHOOSER_BACKFILL_STOP_AFTER_FAILURES,
     CHOOSER_GENERATION_CLAIM_SECONDS,
     _claim_generation,
+    _combiner_order,
     _count_unscored_tasks,
     _generate_batch_tasks,
     _generate_appeal_candidates,
@@ -68,6 +70,11 @@ async def _make_candidate(task, index=0, kind="appeal_letter", content="x"):
         model_name=f"model-{index}",
         content=content,
     )
+
+
+# The combiner the synthesized-candidate tests draw.
+COMBINER = SimpleNamespace(name="combiner-a")
+COMBINER_ORDER = "fighthealthinsurance.chooser_tasks._combiner_order"
 
 
 def _after_the_window():
@@ -799,7 +806,9 @@ async def test_appeal_synthesis_for_the_chooser_may_use_hosted_models():
         new=AsyncMock(return_value="A merged letter. " * 20),
     ) as synthesize:
         result = await _synthesize_appeal_candidate(
-            {"procedure": "MRI", "diagnosis": "back pain"}, ["draft one", "draft two"]
+            {"procedure": "MRI", "diagnosis": "back pain"},
+            ["draft one", "draft two"],
+            COMBINER,
         )
 
     assert result == "A merged letter. " * 20
@@ -808,9 +817,136 @@ async def test_appeal_synthesis_for_the_chooser_may_use_hosted_models():
 
 
 @pytest.mark.asyncio
+async def test_appeal_synthesis_for_the_chooser_asks_only_the_drawn_combiner():
+    with patch(
+        "fighthealthinsurance.generate_appeal.AppealGenerator.synthesize_appeals",
+        new=AsyncMock(return_value="A merged letter. " * 20),
+    ) as synthesize:
+        await _synthesize_appeal_candidate({}, ["draft one", "draft two"], COMBINER)
+
+    assert synthesize.call_args.kwargs["backends"] == [COMBINER]
+
+
+def _named(name, **attrs):
+    return SimpleNamespace(name=name, **attrs)
+
+
+class TestCombinerOrder:
+    """_combiner_order: who may combine a task's drafts, in random order."""
+
+    FORCED = "fighthealthinsurance.chooser_tasks._forced_arena_models"
+    SYNTHESIS_BACKENDS = (
+        "fighthealthinsurance.chooser_tasks.ml_router.synthesis_backends"
+    )
+
+    def _order(self, forced, ours=(), hosted=()):
+        with patch(self.FORCED, return_value=list(forced)), patch(
+            self.SYNTHESIS_BACKENDS, return_value=(list(ours), list(hosted))
+        ):
+            return _combiner_order("appeal")
+
+    def test_a_small_forced_set_combines_alongside_the_synthesis_backends(self):
+        order = self._order(
+            [_named("tryout")], ours=[_named("ours")], hosted=[_named("hosted")]
+        )
+        assert sorted(m.name for m in order) == ["hosted", "ours", "tryout"]
+
+    def test_a_forced_pool_that_fills_every_slot_is_the_only_combiners(self):
+        pool = [_named(f"pool-{i}") for i in range(5)]
+        order = self._order(pool, ours=[_named("ours")], hosted=[_named("hosted")])
+        assert sorted(m.name for m in order) == [f"pool-{i}" for i in range(5)]
+
+    def test_a_model_listed_twice_is_one_combiner(self):
+        order = self._order([_named("same")], ours=[_named("same")])
+        assert [m.name for m in order] == ["same"]
+
+    def test_an_appeal_only_fine_tune_never_combines(self):
+        fine_tune = _named("fhi-legacy", supports_general_instructions=lambda: False)
+        order = self._order([fine_tune], ours=[_named("ours")])
+        assert [m.name for m in order] == ["ours"]
+
+    def test_a_context_only_backend_never_combines(self):
+        order = self._order(
+            [_named("citations", context_only=True)], ours=[_named("ours")]
+        )
+        assert [m.name for m in order] == ["ours"]
+
+    def test_every_combiner_gets_a_turn_at_going_first(self):
+        models = [_named("a"), _named("b"), _named("c")]
+        first = {self._order([], ours=models)[0].name for _ in range(200)}
+        assert first == {"a", "b", "c"}
+
+
+@pytest.mark.asyncio
 @pytest.mark.django_db(transaction=True)
 class TestSynthesizedCandidate:
     """_maybe_add_synthesized_candidate appends a synthesized candidate."""
+
+    @pytest.fixture(autouse=True)
+    def one_combiner(self):
+        with patch(COMBINER_ORDER, return_value=[COMBINER]):
+            yield
+
+    async def _two_drafts(self):
+        task = await _make_task()
+        await _make_candidate(task, 0, content="Draft one appeal letter body. " * 5)
+        await _make_candidate(task, 1, content="Draft two appeal letter body. " * 5)
+        return task
+
+    async def test_records_the_model_that_combined_the_drafts(self):
+        task = await self._two_drafts()
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
+            new=AsyncMock(return_value="A combined appeal letter. " * 10),
+        ) as synthesize:
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
+
+        synth = await ChooserCandidate.objects.aget(task=task, synthesized=True)
+        assert synth.synthesized_by == "combiner-a"
+        assert synthesize.call_args.args[2] is COMBINER
+
+    async def test_the_next_combiner_drawn_is_asked_when_the_first_writes_nothing(
+        self,
+    ):
+        task = await self._two_drafts()
+        second = SimpleNamespace(name="combiner-b")
+
+        async def synthesize(context, contents, model):
+            return None if model is COMBINER else "A combined appeal letter. " * 10
+
+        with patch(COMBINER_ORDER, return_value=[COMBINER, second]), patch(
+            "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
+            new=synthesize,
+        ):
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
+
+        synth = await ChooserCandidate.objects.aget(task=task, synthesized=True)
+        assert synth.synthesized_by == "combiner-b"
+
+    async def test_stops_asking_after_the_attempt_limit(self):
+        task = await self._two_drafts()
+        combiners = [SimpleNamespace(name=f"combiner-{i}") for i in range(6)]
+
+        with patch(COMBINER_ORDER, return_value=combiners), patch(
+            "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
+            new=AsyncMock(return_value=None),
+        ) as synthesize:
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
+
+        assert synthesize.await_count == 3
+
+    async def test_skips_synthesis_without_a_model_that_can_combine(self):
+        task = await self._two_drafts()
+
+        with patch(COMBINER_ORDER, return_value=[]), patch(
+            "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
+            new=AsyncMock(return_value="A combined appeal letter. " * 10),
+        ) as synthesize:
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
+
+        synthesize.assert_not_called()
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 2
 
     async def test_adds_synthesized_appeal_candidate(self):
         task = await _make_task()
@@ -964,10 +1100,6 @@ class TestSynthesizedCandidate:
 class TestSynthesizeHelpers:
     """Direct tests for the synthesis helpers (these touch ML, not the DB)."""
 
-    SYNTHESIS_BACKENDS = (
-        "fighthealthinsurance.chooser_tasks.ml_router.synthesis_backends"
-    )
-
     async def test_chat_synthesis_builds_prompt_and_returns_result(self):
         model = MagicMock()
         model._infer_no_context = AsyncMock(
@@ -978,14 +1110,8 @@ class TestSynthesizeHelpers:
             "history": [{"role": "user", "content": "My MRI was denied."}],
         }
         responses = ["You need your denial letter.", "Bring your EOB and notes."]
-        with patch(
-            self.SYNTHESIS_BACKENDS, return_value=([model, MagicMock()], [])
-        ) as backends:
-            result = await _synthesize_chat_candidate(context, responses)
+        result = await _synthesize_chat_candidate(context, responses, model)
 
-        # The drafts came from hosted models too, so a hosted model may merge
-        # them, as for the appeal candidate.
-        assert backends.call_args.kwargs == {"use_external": True}
         assert (
             result == "A synthesized chat answer comfortably longer than fifty chars."
         )
@@ -998,33 +1124,20 @@ class TestSynthesizeHelpers:
             assert r in kwargs["prompt"]
         assert kwargs["temperature"] == 0.3
 
-    async def test_chat_synthesis_uses_a_hosted_model_when_none_of_ours_can(self):
-        hosted = MagicMock()
-        hosted._infer_no_context = AsyncMock(
-            return_value="A hosted model's merged answer, comfortably over fifty chars."
+    async def test_chat_synthesis_swallows_the_combiners_errors(self):
+        model = MagicMock()
+        model._infer_no_context = AsyncMock(side_effect=RuntimeError("boom"))
+        result = await _synthesize_chat_candidate(
+            {"prompt": "hi", "history": []}, ["a", "b"], model
         )
-        with patch(self.SYNTHESIS_BACKENDS, return_value=([], [hosted])):
-            result = await _synthesize_chat_candidate(
-                {"prompt": "hi", "history": []}, ["a", "b"]
-            )
-
-        assert result.startswith("A hosted model's merged answer")
-        hosted._infer_no_context.assert_awaited_once()
-
-    async def test_chat_synthesis_returns_none_without_a_model_that_can_merge(self):
-        with patch(self.SYNTHESIS_BACKENDS, return_value=([], [])):
-            result = await _synthesize_chat_candidate(
-                {"prompt": "hi", "history": []}, ["a", "b"]
-            )
         assert result is None
 
     async def test_chat_synthesis_rejects_too_short_model_output(self):
         model = MagicMock()
         model._infer_no_context = AsyncMock(return_value="short")
-        with patch(self.SYNTHESIS_BACKENDS, return_value=([model], [])):
-            result = await _synthesize_chat_candidate(
-                {"prompt": "hi", "history": []}, ["a", "b"]
-            )
+        result = await _synthesize_chat_candidate(
+            {"prompt": "hi", "history": []}, ["a", "b"], model
+        )
         assert result is None
 
     async def test_appeal_synthesis_maps_context_fields(self):
@@ -1040,7 +1153,9 @@ class TestSynthesizeHelpers:
             "fighthealthinsurance.generate_appeal.AppealGenerator",
             return_value=generator,
         ):
-            result = await _synthesize_appeal_candidate(context, ["draft a", "draft b"])
+            result = await _synthesize_appeal_candidate(
+                context, ["draft a", "draft b"], COMBINER
+            )
 
         assert result == "synthesized appeal text"
         kwargs = generator.synthesize_appeals.call_args.kwargs
@@ -1056,7 +1171,7 @@ class TestSynthesizeHelpers:
             "fighthealthinsurance.generate_appeal.AppealGenerator",
             return_value=generator,
         ):
-            result = await _synthesize_appeal_candidate({}, ["a", "b"])
+            result = await _synthesize_appeal_candidate({}, ["a", "b"], COMBINER)
         assert result is None
 
 

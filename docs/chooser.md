@@ -77,7 +77,11 @@ to the full page; without the JSON they show the link alone.
   that the vote endpoint resolves back (and takes nothing else: accepting
   plain ids would let a client learn a token's id by guessing), and the
   drafts are served in random order, so a vote is for the letter, not the
-  brand.
+  brand. The combined draft is blind like the rest: a chat draft's lookups
+  are served under one caption for every draft, and the mark the combined
+  draft's lookups are stored with (`from_drafts`: it read the drafts'
+  answers, not the lookups) is left off what is served
+  (`chooser_tasks.served_tool_calls`).
 - **Referee checklist.** Judge in order: truthful, responsive, useful, and
   clear. For appeals, that means answering the insurer's actual reason with
   case-specific reasons and a clear request; for chat, answering the person's
@@ -285,13 +289,22 @@ None of these fields leave the server in the exports.
    backend at a time, as before.
 6. **Synthesis.** When `CHOOSER_INCLUDE_SYNTHESIS` is on, one more
    candidate merges the drafts, so synthesis is measured against the single
-   models. It is written by a model that can merge drafts
-   (`ml_router.synthesis_backends`, with hosted models allowed since the
-   drafts came from them too): never the appeal-text fine-tune, which cannot
-   follow "merge these drafts" and answers with a stray number. An appeal
-   candidate races all of them (`AppealGenerator.synthesize_appeals`); a
-   chat candidate takes the strongest, ours before a hosted one. With none
-   available, the task skips synthesis.
+   models. The model that merges them is **drawn at random for each task**
+   (`_combiner_order`), not raced or ranked, so each model's combined
+   drafts get votes and the models can be compared at combining. The draw
+   is from the arena's own models: a `CHOOSER_FORCE_MODEL` pool big enough
+   to fill every slot is the combiners too; otherwise the forced models and
+   the router's synthesis backends (`ml_router.synthesis_backends`, with
+   hosted models allowed since the drafts came from them too). Never the
+   appeal-text fine-tune, which cannot follow "merge these drafts" and
+   answers with a stray number, nor a context-only backend. When the model
+   drawn writes nothing usable (nothing, too short, or a draft copied
+   verbatim) the next one drawn is asked, up to three; with none available,
+   or none of the three usable, the task skips synthesis. The candidate
+   keeps `model_name="synthesized"` and records the model that wrote it in
+   `ChooserCandidate.synthesized_by`, which the voter is never sent. The
+   staff model usage dashboard splits the "synthesized" row by it (see
+   Exports).
 7. **Backend-only judge picks.** Once at least two drafts are on file,
    `chooser_scoring.score_task_candidates` asks Jev and the strongest healthy
    internal model (fhi-local) which candidate each scores highest. Appeals use
@@ -628,9 +641,17 @@ environment variables of the same name.
 
 ## Exports
 
+The staff model usage dashboard (`ModelUsageDashboardView`) has, under each
+chooser table, a **combiner table**: the votes on the synthesized drafts
+alone, by the model that combined them (`synthesized_by`), with the same
+columns as the model table (votes won, votes shown in, win rate, flags).
+Synthesized drafts from before the combiner was recorded are under
+"(combiner not recorded)". It is not on the public rankings page.
+
 `charts:chooser_ranked_export` (staff only) carries each candidate's
 `votes` (ties split), `tie_count` and `flag_count`, so the preference data,
-the ties and the fabrication flags travel together. `vote_count` is the
+the ties and the fabrication flags travel together. A synthesized
+candidate also carries `synthesized_by`, the model that combined the drafts. `vote_count` is the
 winning candidate's `votes` and `total_votes` the number of reviews cast.
 `all_bad_count` records no-winner reviews; when they are a task's only
 reviews, `chosen_candidate` is null and `vote_count` is zero rather than the

@@ -38,6 +38,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.ml import letter_quality
 from fighthealthinsurance.staff_views import (
+    COMBINER_NOT_RECORDED_LABEL,
     MODEL_USAGE_VIEWS,
     NO_CONTEXT_LEVEL_LABEL,
     SHARED_APPEAL_LABEL,
@@ -1027,6 +1028,90 @@ class CalendarWindowsTest(SimpleTestCase):
                 ("m-2026-01", _utc(2026, 1, 1, 5), _utc(2026, 2, 1, 5)),
             ],
         )
+
+
+class ChooserCombinerStatsTest(ChooserStatsHelperMixin, TestCase):
+    """The combiner table: votes on synthesized drafts, by the model that
+    did the combining."""
+
+    def _combined_task(self, combiner):
+        task = self._make_task()
+        draft = self._make_candidate(task, 0, "writer")
+        combined = self._make_candidate(
+            task, 1, "synthesized", synthesized=True, synthesized_by=combiner
+        )
+        return task, draft, combined
+
+    def _rows(self, kind="appeal_letter"):
+        counts = ModelUsageDashboardView._chooser_vote_counts(kind, None)
+        rows = ModelUsageDashboardView._chooser_combiner_stats(kind, counts)
+        return {r["model_name"]: r for r in rows}
+
+    def test_a_combined_drafts_votes_are_credited_to_its_combiner(self):
+        task, draft, combined = self._combined_task("combiner-a")
+        self._vote(task, combined, [draft, combined], session="s1")
+        self._vote(task, draft, [draft, combined], session="s2")
+
+        row = self._rows()["combiner-a"]
+
+        self.assertEqual(
+            (row["chosen"], row["presented"], row["win_rate"]), (1, 2, 50.0)
+        )
+
+    def test_the_drafts_being_combined_are_not_in_the_table(self):
+        task, draft, combined = self._combined_task("combiner-a")
+        self._vote(task, draft, [draft, combined])
+
+        self.assertEqual(set(self._rows()), {"combiner-a"})
+
+    def test_each_combiner_has_its_own_row(self):
+        for combiner in ("combiner-a", "combiner-b"):
+            task, draft, combined = self._combined_task(combiner)
+            self._vote(task, combined, [draft, combined], session=combiner)
+
+        self.assertEqual(set(self._rows()), {"combiner-a", "combiner-b"})
+
+    def test_a_flag_on_the_combined_draft_counts_against_its_combiner(self):
+        task, draft, combined = self._combined_task("combiner-a")
+        vote = self._vote(task, draft, [draft, combined])
+        vote.flagged_candidate_ids = [combined.id]
+        vote.save()
+
+        self.assertEqual(self._rows()["combiner-a"]["flagged"], 1)
+
+    def test_a_combined_draft_with_no_combiner_on_record_has_its_own_bucket(self):
+        task, draft, combined = self._combined_task(None)
+        self._vote(task, combined, [draft, combined])
+
+        self.assertEqual(set(self._rows()), {COMBINER_NOT_RECORDED_LABEL})
+
+    def test_the_model_table_still_counts_it_as_synthesized(self):
+        task, draft, combined = self._combined_task("combiner-a")
+        self._vote(task, combined, [draft, combined])
+
+        rows = ModelUsageDashboardView._chooser_stats("appeal_letter", None)
+
+        self.assertEqual(
+            {r["model_name"]: r["chosen"] for r in rows},
+            {"synthesized": 1, "writer": 0},
+        )
+
+
+class ChooserCombinerDashboardPageTest(ChooserStatsHelperMixin, TestCase):
+    def test_the_dashboard_lists_the_combining_models(self):
+        task = self._make_task()
+        draft = self._make_candidate(task, 0, "writer")
+        combined = self._make_candidate(
+            task, 1, "synthesized", synthesized=True, synthesized_by="combiner-a"
+        )
+        self._vote(task, combined, [draft, combined])
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+
+        response = self.client.get(reverse("model_usage_dashboard"))
+
+        self.assertContains(response, "Combining model")
+        self.assertContains(response, "combiner-a")
 
 
 class UsageStatsUpperBoundTest(ChooserStatsHelperMixin, TestCase):

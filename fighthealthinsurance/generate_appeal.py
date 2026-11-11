@@ -4091,6 +4091,7 @@ class AppealGenerator(object):
         provenance: Optional[dict] = None,
         purpose: str = "appeal",
         use_external: bool = False,
+        backends: Optional[List[RemoteModelLike]] = None,
     ) -> Optional[str]:
         """
         Synthesize multiple appeal drafts into one best appeal: every
@@ -4113,6 +4114,10 @@ class AppealGenerator(object):
                 without this the author's identity was simply dropped.
             use_external: The user's external-model consent. Without it no
                 hosted model is asked.
+            backends: Ask exactly these instead of the router's choice. The
+                Appeal Arena passes the one combiner it drew, so the merge
+                is that model's and no other's. The caller answers for
+                consent: ``use_external`` does not filter this list.
 
         Returns:
             The synthesized appeal text, or None if synthesis fails.
@@ -4131,7 +4136,11 @@ class AppealGenerator(object):
                 f"Selected top {self.MAX_SYNTHESIS_DRAFTS} drafts for synthesis"
             )
 
-        ours, hosted = ml_router.synthesis_backends(use_external=use_external)
+        if backends is not None:
+            hosted = [m for m in backends if getattr(m, "external", False)]
+            ours = [m for m in backends if m not in hosted]
+        else:
+            ours, hosted = ml_router.synthesis_backends(use_external=use_external)
         if not ours and not hosted:
             logger.warning(
                 "No model available for appeal synthesis: no instruction-"

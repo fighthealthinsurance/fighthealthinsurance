@@ -2781,13 +2781,16 @@ class ChooserViewSet(viewsets.ViewSet):
         # tab could vote for a brand. Nor the row id or candidate_index:
         # both run in generation order (internal first, synthesized last),
         # so each candidate goes out as an opaque token instead.
+        from fighthealthinsurance.chooser_tasks import served_tool_calls
+
         candidate_data = [
             {
                 "id": candidate_token(c.id),
                 "kind": c.kind,
                 "content": c.content,
-                # Only the lookups from the metadata, never the rest of it.
-                "tool_calls": (c.metadata or {}).get("tool_calls") or [],
+                # Only the lookups from the metadata, never the rest of it,
+                # and without the mark the combined draft's lookups carry.
+                "tool_calls": served_tool_calls(c),
             }
             for c in candidates
         ]
