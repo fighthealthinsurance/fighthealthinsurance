@@ -2636,6 +2636,10 @@ SHARED_APPEAL_LABEL = "(shared-appeal text)"
 # (rows from before levels were recorded) is not a missing model.
 NO_CONTEXT_LEVEL_LABEL = "(no level recorded)"
 
+# The combiner table's bucket for synthesized chooser drafts stored before
+# the combining model was recorded (ChooserCandidate.synthesized_by).
+COMBINER_NOT_RECORDED_LABEL = "(combiner not recorded)"
+
 # What ModelAttemptRecorder stores when a call record has no model name.
 ATTEMPT_UNKNOWN_MODEL = "unknown"
 
@@ -2661,6 +2665,7 @@ PLACEHOLDER_MODEL_LABELS = frozenset(
         TEMPLATE_PICK_LABEL,
         SHARED_APPEAL_LABEL,
         ATTEMPT_UNKNOWN_MODEL,
+        COMBINER_NOT_RECORDED_LABEL,
     }
 )
 
@@ -3816,8 +3821,16 @@ class ModelUsageDashboardView(generic.TemplateView):
             proposed = self._proposed_appeal_stats(
                 since, until, shown_on_picks=shown_on_picks
             )
-            chooser_appeal = self._chooser_stats("appeal_letter", since, until)
-            chooser_chat = self._chooser_stats("chat_response", since, until)
+            # One walk of the window's votes per kind feeds both its model
+            # table and its combiner table.
+            appeal_counts = self._chooser_vote_counts("appeal_letter", since, until)
+            chat_counts = self._chooser_vote_counts("chat_response", since, until)
+            chooser_appeal = self._chooser_stats(
+                "appeal_letter", since, until, counts=appeal_counts
+            )
+            chooser_chat = self._chooser_stats(
+                "chat_response", since, until, counts=chat_counts
+            )
             windows_ctx.append(
                 {
                     "slug": slug,
@@ -3831,6 +3844,12 @@ class ModelUsageDashboardView(generic.TemplateView):
                     ),
                     "chooser_appeal": chooser_appeal,
                     "chooser_chat": chooser_chat,
+                    "combiner_appeal": self._chooser_combiner_stats(
+                        "appeal_letter", appeal_counts
+                    ),
+                    "combiner_chat": self._chooser_combiner_stats(
+                        "chat_response", chat_counts
+                    ),
                     "call_attempts": call_attempts.get(slug),
                     # Set on the calendar period the first stored call record
                     # falls in: its call table misses the calls before then.
@@ -3864,6 +3883,8 @@ class ModelUsageDashboardView(generic.TemplateView):
                 w["proposed_appeal"],
                 w["chooser_appeal"],
                 w["chooser_chat"],
+                w["combiner_appeal"],
+                w["combiner_chat"],
                 (w["call_attempts"] or {}).get("rows", []),
                 (w["live_chat"] or {}).get("rows", []),
                 (w["live_chat"] or {}).get("shadow_rows", []),
@@ -4732,7 +4753,10 @@ class ModelUsageDashboardView(generic.TemplateView):
         until: Optional[datetime.datetime] = None,
         source: Optional[str] = None,
         label_for: Callable[[Optional[str]], Optional[str]] = normalize_model_label,
+        counts: Optional[Tuple[Counter, Counter, Counter]] = None,
     ) -> List[Dict[str, Any]]:
+        # ``counts`` is the window's _chooser_vote_counts when the caller
+        # already has it (the dashboard reads it for two tables).
         # ``label_for`` maps a stored model name to the row it counts under;
         # the public rankings pass one that folds "provider/model" into
         # "model", so equivalent providers of one model share a row.
@@ -4746,6 +4770,88 @@ class ModelUsageDashboardView(generic.TemplateView):
         # ``source`` limits the votes to tasks of that ChooserTask.source;
         # the public rankings pass "synthetic" so nothing built from a
         # person's case can reach them, whatever else the pool holds.
+        chosen_credit, counter, flag_counter = (
+            counts
+            if counts is not None
+            else ModelUsageDashboardView._chooser_vote_counts(
+                kind, since, until, source
+            )
+        )
+        cand_to_model = dict(
+            ChooserCandidate.objects.filter(
+                id__in=list(set(counter) | set(flag_counter) | set(chosen_credit)),
+                kind=kind,
+            ).values_list("id", "model_name")
+        )
+        chosen_by_label: Counter = Counter()
+        for cid, credit in chosen_credit.items():
+            label = label_for(cand_to_model.get(cid)) or UNKNOWN_MODEL_LABEL
+            chosen_by_label[label] += credit
+        chosen = {
+            label: ChooserVote.rounded_credit(credit)
+            for label, credit in chosen_by_label.items()
+        }
+        presented: Counter = Counter()
+        for cid, n in counter.items():
+            presented_label = label_for(cand_to_model.get(cid))
+            if presented_label is not None:
+                presented[presented_label] += n
+        flagged: Counter = Counter()
+        for cid, n in flag_counter.items():
+            flagged_label = label_for(cand_to_model.get(cid))
+            if flagged_label is not None:
+                flagged[flagged_label] += n
+        return _merge_stats(chosen, dict(presented), flagged=dict(flagged))
+
+    @staticmethod
+    def _chooser_combiner_stats(
+        kind: str,
+        counts: Tuple[Counter, Counter, Counter],
+    ) -> List[Dict[str, Any]]:
+        """Which model combines drafts best: the window's votes on the
+        synthesized candidates only, by the model that did the combining
+        (ChooserCandidate.synthesized_by) where the model table puts them
+        all in the one "synthesized" row. Counted as that table counts:
+        votes won (a tie split), votes shown in, flags. ``counts`` is the
+        window's _chooser_vote_counts. A synthesized draft from before the
+        combiner was recorded counts under COMBINER_NOT_RECORDED_LABEL."""
+        chosen_credit, counter, flag_counter = counts
+        combiner_of = {
+            cid: normalize_model_label(name) or COMBINER_NOT_RECORDED_LABEL
+            for cid, name in ChooserCandidate.objects.filter(
+                id__in=list(set(counter) | set(flag_counter) | set(chosen_credit)),
+                kind=kind,
+                synthesized=True,
+            ).values_list("id", "synthesized_by")
+        }
+
+        def by_combiner(per_candidate: Mapping[int, Any]) -> Counter:
+            totals: Counter = Counter()
+            for cid, n in per_candidate.items():
+                if cid in combiner_of:
+                    totals[combiner_of[cid]] += n
+            return totals
+
+        chosen = {
+            label: ChooserVote.rounded_credit(credit)
+            for label, credit in by_combiner(chosen_credit).items()
+        }
+        return _merge_stats(
+            chosen,
+            dict(by_combiner(counter)),
+            flagged=dict(by_combiner(flag_counter)),
+        )
+
+    @staticmethod
+    def _chooser_vote_counts(
+        kind: str,
+        since: Optional[datetime.datetime],
+        until: Optional[datetime.datetime] = None,
+        source: Optional[str] = None,
+    ) -> Tuple[Counter, Counter, Counter]:
+        """One walk of the window's ``kind`` votes, as ``(credit, shown,
+        flagged)``, each keyed by candidate id; see _chooser_stats for what
+        each counts."""
         task_type = {"appeal_letter": "appeal", "chat_response": "chat"}[kind]
         votes = ChooserVote.objects.filter(task__task_type=task_type)
         if source is not None:
@@ -4784,31 +4890,7 @@ class ModelUsageDashboardView(generic.TemplateView):
                 counter.update(set(ids))
             if flagged_ids:
                 flag_counter.update(set(flagged_ids))
-        cand_to_model = dict(
-            ChooserCandidate.objects.filter(
-                id__in=list(set(counter) | set(flag_counter) | set(chosen_credit)),
-                kind=kind,
-            ).values_list("id", "model_name")
-        )
-        chosen_by_label: Counter = Counter()
-        for cid, credit in chosen_credit.items():
-            label = label_for(cand_to_model.get(cid)) or UNKNOWN_MODEL_LABEL
-            chosen_by_label[label] += credit
-        chosen = {
-            label: ChooserVote.rounded_credit(credit)
-            for label, credit in chosen_by_label.items()
-        }
-        presented: Counter = Counter()
-        for cid, n in counter.items():
-            presented_label = label_for(cand_to_model.get(cid))
-            if presented_label is not None:
-                presented[presented_label] += n
-        flagged: Counter = Counter()
-        for cid, n in flag_counter.items():
-            flagged_label = label_for(cand_to_model.get(cid))
-            if flagged_label is not None:
-                flagged[flagged_label] += n
-        return _merge_stats(chosen, dict(presented), flagged=dict(flagged))
+        return chosen_credit, counter, flag_counter
 
     @staticmethod
     def _chooser_participation(

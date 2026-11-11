@@ -1600,11 +1600,12 @@ class ChooserCandidateAdmin(admin.ModelAdmin):
         "candidate_index",
         "kind",
         "model_name",
+        "synthesized_by",
         "is_active",
         "created_at",
     )
-    search_fields = ("task__id", "model_name", "content")
-    list_filter = ("kind", "is_active", "created_at")
+    search_fields = ("task__id", "model_name", "synthesized_by", "content")
+    list_filter = ("kind", "synthesized", "is_active", "created_at")
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at")
 

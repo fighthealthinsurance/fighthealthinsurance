@@ -4749,6 +4749,14 @@ class ChooserCandidate(ExportModelOperationsMixin("ChooserCandidate"), models.Mo
     # alongside model_name so the chooser can compare synthesis vs. single
     # models when collecting preference data.
     synthesized = models.BooleanField(default=False)
+    # For a synthesized candidate, the model that did the combining (its
+    # canonical name, as model_name holds for an ordinary draft). model_name
+    # stays the reserved "synthesized" bucket, so synthesis is still measured
+    # against the single models; this says which combiner to credit. Drawn
+    # at random per task (chooser_tasks._combiner_order). Null for ordinary
+    # drafts and for synthesized ones from before this was recorded. Staff
+    # only: it never reaches the voter.
+    synthesized_by = models.CharField(max_length=200, null=True, blank=True)
     content = models.TextField()
     metadata = models.JSONField(null=True, blank=True)
     is_active = models.BooleanField(default=True)

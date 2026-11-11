@@ -87,6 +87,7 @@
     <li><strong>Buckets that are not models</strong>, with no presented counts by design:
       <ul>
         <li>&ldquo;synthesized&rdquo;: drafts merged from several models.</li>
+        <li>&ldquo;(combiner not recorded)&rdquo;: in the combiner tables, synthesized chooser drafts from before the combining model was recorded.</li>
         <li>&ldquo;legacy-unattributed&rdquo;: historical picks recorded before model tracking, whose generating model cannot be recovered.</li>
         <li>&ldquo;legacy-unresolved (Class)&rdquo;: legacy chooser rows that stored a Python object repr, aggregated by model class.</li>
         <li>&ldquo;template&rdquo;: non-AI drafts built from the appeal templates.</li>
@@ -149,8 +150,15 @@
     <h3>ChooserVote &mdash; Appeal Letter <span class="source-label">(synthetic chooser)</span></h3>
     {% include "model_usage_table_partial.html" with rows=w.chooser_appeal kind="votes" show_state=True %}
 
+    <h4>Combined appeal letters, by the model that combined them</h4>
+    <p class="note">The &ldquo;synthesized&rdquo; row above, split by combiner. Each new case draws its combiner at random, so the rows compare like with like; voters are not told which draft is the combined one.</p>
+    {% include "model_usage_table_partial.html" with rows=w.combiner_appeal kind="votes" show_state=True label_header="Combining model" %}
+
     <h3>ChooserVote &mdash; Chat Response <span class="source-label">(synthetic chooser)</span></h3>
     {% include "model_usage_table_partial.html" with rows=w.chooser_chat kind="votes" show_state=True %}
+
+    <h4>Combined chat responses, by the model that combined them</h4>
+    {% include "model_usage_table_partial.html" with rows=w.combiner_chat kind="votes" show_state=True label_header="Combining model" %}
 
     <h3>Appeal generation calls <span class="source-label">(ModelCallAttempt, live runs only)</span></h3>
     {% if w.call_attempts %}

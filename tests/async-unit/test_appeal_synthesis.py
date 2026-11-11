@@ -428,3 +428,22 @@ class TestSynthesizeAppeals(unittest.TestCase):
         result = asyncio.run(self._run_synthesize(appeal_texts=self.sample_appeals))
 
         self.assertIsNone(result)
+
+    @patch("fighthealthinsurance.generate_appeal.ml_router")
+    def test_given_backends_are_asked_in_place_of_the_routers(self, mock_router):
+        """The Appeal Arena draws one combiner and credits it with the merge."""
+        letter = "Dear Appeals Department,\n\n" + "I am writing to appeal. " * 10
+        drawn = self._backend(letter, quality=100, name="drawn")
+        provenance: dict = {}
+
+        result = asyncio.run(
+            self._run_synthesize(
+                appeal_texts=self.sample_appeals,
+                backends=[drawn],
+                provenance=provenance,
+            )
+        )
+
+        self.assertEqual(result, letter)
+        self.assertIs(provenance["model"], drawn)
+        mock_router.synthesis_backends.assert_not_called()

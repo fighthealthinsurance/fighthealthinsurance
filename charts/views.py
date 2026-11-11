@@ -537,6 +537,8 @@ def generate_chooser_ranked_lines():
                 "kind": c.kind,
                 "model_name": c.model_name,
                 "synthesized": c.synthesized,
+                # The model that combined the drafts, on a synthesized one.
+                "synthesized_by": c.synthesized_by,
                 "content": c.content,
                 "metadata": c.metadata,
                 "votes": ChooserVote.rounded_credit(task_credit.get(c.id, 0.0)),
@@ -566,6 +568,7 @@ def generate_chooser_ranked_lines():
                     "kind": chosen.kind,
                     "model_name": chosen.model_name,
                     "synthesized": chosen.synthesized,
+                    "synthesized_by": chosen.synthesized_by,
                     "content": chosen.content,
                 }
                 if chosen
