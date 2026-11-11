@@ -312,6 +312,8 @@ class RegulatorEscalationReasonsTest(TestCase):
             "Following a final adverse benefit determination, you can request external review.",
             "A final adverse determination is required to request external review.",
             "You must obtain a final adverse determination to request external review.",
+            "A final adverse determination is a prerequisite for external review.",
+            "A final adverse determination must be obtained before you request external review.",
         ):
             with self.subTest(text=text):
                 denial = _FakeDenial(state="", denial_text=text)
@@ -334,6 +336,7 @@ class RegulatorEscalationReasonsTest(TestCase):
             "We received and denied your second-level appeal.",
             "Your second-level appeal was denied and we will mail you the written decision.",
             "We denied your second-level appeal; you can request an external review.",
+            "Your first-level appeal was denied, and your second-level appeal was denied, and you can request external review.",
             "After review of your second level appeal we have once again upheld the denial; this is our final decision.",
             "We have once again reached our final adverse determination.",
         ):

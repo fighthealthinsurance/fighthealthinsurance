@@ -301,6 +301,16 @@ _PENDING_OR_RIGHTS_RE = re.compile(
     r"|decision will)\b",
     re.IGNORECASE,
 )
+# Only the still-under-way part of that: a rights notice later in the
+# clause ("…, and you can request external review") says nothing about
+# whether this appeal was decided.
+_PENDING_RE = re.compile(
+    r"\b(under review|being reviewed|being processed|processing|pending"
+    r"|in progress|are reviewing|is reviewing"
+    r"|will (be )?(review|decid|consider|issue|make|notify|respond)\w*"
+    r"|decision will)\b",
+    re.IGNORECASE,
+)
 # The same words in a clause about what could happen, not what did: the
 # rights notice on a first denial says "If our decision is upheld you may
 # request an external review", and "once you have exhausted your internal
@@ -399,7 +409,9 @@ def _later_level_decided(denial_text: str) -> bool:
         # Pending wording anywhere from this appeal's part to the end of
         # its clause still speaks of it: "your second-level appeal, which
         # is pending, will be decided next month".
-        if _PENDING_OR_RIGHTS_RE.search(denial_text[c_start:clause_end]):
+        if _PENDING_OR_RIGHTS_RE.search(
+            denial_text[c_start:c_end]
+        ) or _PENDING_RE.search(denial_text[c_end:clause_end]):
             continue
         if _DECISION_RE.search(denial_text[c_start:c_end]):
             return True
@@ -445,9 +457,11 @@ _PREREQUISITE_BEFORE_RE = re.compile(
 )
 _PREREQUISITE_MATCH_RE = re.compile(r"\b(?:must|be|need\s+to)\b", re.IGNORECASE)
 # After the match: "...exhausted before external review", "a final adverse
-# determination is required to request external review".
+# determination is required (is a prerequisite, must be obtained) to request
+# external review".
 _PREREQUISITE_AFTER_RE = re.compile(
-    r"\s*(?:before|prior\s+to|(?:is|are)\s+(?:required|needed)\b)\b",
+    r"\s*(?:before|prior\s+to|(?:is|are)\s+(?:required|needed|a\s+prerequisite)"
+    r"|must\s+(?:first\s+)?be\s+(?:obtained|issued|received))\b",
     re.IGNORECASE,
 )
 
