@@ -672,3 +672,168 @@ async def test_run_extraction_pipeline_exception(
     # Ensure file write was never reached due to the raised exception
     handle = mock_file_open()
     handle.write.assert_not_called()
+
+# ==============================================================================
+# Tests: fallback backend
+# ==============================================================================
+
+def _client_returning(resources: list[AppealsResource]) -> MagicMock:
+    client = MagicMock()
+    response = MagicMock(spec=PageExtraction)
+    response.resources = resources
+    client.chat.completions.create = AsyncMock(return_value=response)
+    return client
+
+
+def _failing_client() -> MagicMock:
+    client = MagicMock()
+    client.chat.completions.create = AsyncMock(side_effect=Exception("primary down"))
+    return client
+
+
+@pytest.fixture
+def fallback_backend() -> Generator[None, None, None]:
+    """Configure a fallback endpoint and start from a healthy primary."""
+    with patch("scripts.state_data.extract_info.HEALTH_BACKEND_FALLBACK_URL", "https://fallback.example/v1"), \
+         patch("scripts.state_data.extract_info.HEALTH_BACKEND_FALLBACK_API_KEY", "fallback-key"), \
+         patch("scripts.state_data.extract_info.HEALTH_BACKEND_FALLBACK_MODEL", "fallback-model"), \
+         patch("scripts.state_data.extract_info._consecutive_primary_failures", 0):
+        yield
+
+
+_FALLBACK_RESOURCE = AppealsResource(
+    agency_name="Fallback Agency",
+    state_code="CA",
+    category="SHIP",
+    phone_number=None,
+    url=None,
+    appeal_deadline_days=None,
+    notes=None,
+)
+
+
+@pytest.mark.asyncio
+@patch("scripts.state_data.extract_info.get_local_instructor_client")
+async def test_extract_resources_falls_back_when_primary_fails(
+    mock_get_client: MagicMock, fallback_backend: None
+) -> None:
+    """
+    Given: A fallback endpoint is configured and the primary call fails.
+    When: extract_resources_local is called.
+    Then: The page is retried on the fallback, with its URL, key and model.
+    """
+    primary = _failing_client()
+    fallback = _client_returning([_FALLBACK_RESOURCE])
+    mock_get_client.side_effect = [primary, fallback]
+
+    result = await extract_resources_local("text", "primary-model", "California", "SHIP")
+
+    assert [r.agency_name for r in result] == ["Fallback Agency"]
+    assert primary.chat.completions.create.call_args.kwargs["model"] == "primary-model"
+    assert fallback.chat.completions.create.call_args.kwargs["model"] == "fallback-model"
+    assert mock_get_client.call_args_list[1].kwargs == {
+        "base_url": "https://fallback.example/v1",
+        "api_key": "fallback-key",
+    }
+
+
+@pytest.mark.asyncio
+@patch("scripts.state_data.extract_info.get_local_instructor_client")
+async def test_extract_resources_does_not_use_fallback_when_primary_works(
+    mock_get_client: MagicMock, fallback_backend: None
+) -> None:
+    """
+    Given: A fallback endpoint is configured and the primary call succeeds.
+    When: extract_resources_local is called.
+    Then: Only the primary is called.
+    """
+    primary = _client_returning([])
+    mock_get_client.side_effect = [primary]
+
+    assert await extract_resources_local("text", "primary-model", "Texas", "SHIP") == []
+    assert mock_get_client.call_count == 1
+
+
+@pytest.mark.asyncio
+@patch("scripts.state_data.extract_info.get_local_instructor_client")
+async def test_extract_resources_gives_up_on_a_dead_primary(
+    mock_get_client: MagicMock, fallback_backend: None
+) -> None:
+    """
+    Given: A fallback endpoint is configured and the primary fails every call.
+    When: More pages are extracted than the give-up threshold.
+    Then: Later pages go to the fallback alone, without calling the primary.
+    """
+    from scripts.state_data import extract_info
+
+    primary = _failing_client()
+    fallback = _client_returning([_FALLBACK_RESOURCE])
+    mock_get_client.side_effect = lambda **kwargs: fallback if kwargs else primary
+
+    pages = extract_info.PRIMARY_FAILURES_BEFORE_GIVING_UP + 3
+    for _ in range(pages):
+        result = await extract_resources_local("text", "primary-model", "Ohio", "SHIP")
+        assert len(result) == 1
+
+    assert (
+        primary.chat.completions.create.call_count
+        == extract_info.PRIMARY_FAILURES_BEFORE_GIVING_UP
+    )
+    assert fallback.chat.completions.create.call_count == pages
+
+
+@pytest.mark.asyncio
+@patch("scripts.state_data.extract_info.get_local_instructor_client")
+async def test_extract_resources_returns_empty_when_both_backends_fail(
+    mock_get_client: MagicMock, fallback_backend: None
+) -> None:
+    """
+    Given: Both the primary and the fallback call fail.
+    When: extract_resources_local is called.
+    Then: It returns an empty list instead of raising.
+    """
+    mock_get_client.side_effect = [_failing_client(), _failing_client()]
+
+    assert await extract_resources_local("text", "primary-model", "Utah", "SHIP") == []
+
+
+@pytest.mark.asyncio
+@patch("scripts.state_data.extract_info.get_local_instructor_client")
+async def test_extract_resources_falls_back_when_primary_stalls(
+    mock_get_client: MagicMock, fallback_backend: None
+) -> None:
+    """
+    Given: A fallback endpoint is configured and the primary never answers.
+    When: extract_resources_local is called.
+    Then: The primary is abandoned at its own timeout, counted as a failure,
+          and the page is extracted by the fallback.
+    """
+    from scripts.state_data import extract_info
+
+    async def never_answers(**kwargs: Any) -> None:
+        await asyncio.sleep(3600)
+
+    primary = MagicMock()
+    primary.chat.completions.create = AsyncMock(side_effect=never_answers)
+    fallback = _client_returning([_FALLBACK_RESOURCE])
+    mock_get_client.side_effect = [primary, fallback]
+
+    with patch("scripts.state_data.extract_info.PRIMARY_TIMEOUT_SECONDS", 0.01):
+        result = await asyncio.wait_for(
+            extract_resources_local("text", "primary-model", "Maine", "SHIP"),
+            timeout=5,
+        )
+
+    assert [r.agency_name for r in result] == ["Fallback Agency"]
+    assert extract_info._consecutive_primary_failures == 1
+
+
+def test_primary_timeout_leaves_room_for_the_fallback() -> None:
+    """
+    Given: The per-page budgets for the primary call and for the whole URL.
+    Then: The primary's is the smaller, so a stalled primary still leaves the
+          fallback time to answer before the URL is abandoned.
+    """
+    from scripts.state_data import extract_info
+
+    assert extract_info.PRIMARY_TIMEOUT_SECONDS < extract_info.URL_TIMEOUT_SECONDS
