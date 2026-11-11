@@ -412,9 +412,9 @@ class Base(Configuration):
     # With more names than CHOOSER_NUM_CANDIDATES slots, the names are the
     # pool every slot is drawn from, least-covered first, and no other model
     # is seated while enough of them are up. By default: DeepSeek 4.1 Flash
-    # and GLM-5.3 (LunaRoute), the newest Anthropic and OpenAI models
-    # (OpenRouter, arena only: ml_models.OpenRouterArena), and Nemotron 3.5
-    # Super and DeepSeek V4 Pro (DeepInfra). Set CHOOSER_FORCE_MODEL="" to
+    # and GLM-5.3 (LunaRoute), Claude Opus 5.5 and GPT-6.1 Sol (OpenRouter,
+    # arena only: ml_models.OpenRouterArena), and DeepSeek V4 Pro
+    # (DeepInfra). Set CHOOSER_FORCE_MODEL="" to
     # stop. A name with no backend registered (no LUNA_ROUTE_KEY,
     # OPENROUTER_API_KEY or DEEPINFRA_API) is logged once and skipped; if
     # that leaves fewer than CHOOSER_NUM_CANDIDATES, the usual rotation fills
@@ -425,9 +425,8 @@ class Base(Configuration):
             [
                 "lunaroute/deepseek-4.1-flash",
                 "lunaroute/glm-5.3",
-                "openrouter-arena/anthropic/claude-fable-5.2",
-                "openrouter-arena/openai/gpt-6.1-terra",
-                "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+                "openrouter-arena/anthropic/claude-opus-5.5",
+                "openrouter-arena/openai/gpt-6.1-sol",
                 "deepseek-ai/DeepSeek-V4-Pro-0813",
             ]
         ),

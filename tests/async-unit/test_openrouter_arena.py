@@ -1,4 +1,4 @@
-"""OpenRouterArena: the Appeal Arena's frontier models over OpenRouter,
+"""OpenRouterArena: the Appeal Arena's hosted models over OpenRouter,
 synthetic-only like LunaRoute, and the arena's default forced models. No
 network: the router is built against a fake environment, and nothing is
 inferred.
@@ -11,7 +11,6 @@ import pytest
 
 from fighthealthinsurance.ml import ml_models
 from fighthealthinsurance.ml.ml_models import (
-    OpenRouter,
     OpenRouterArena,
     candidate_model_backends,
 )
@@ -47,13 +46,12 @@ def test_arena_instances_call_the_openrouter_model_id(router):
         assert router.chat_outside_models_by_name[name].model == model_id
 
 
-def test_arena_requests_deny_data_collection_without_requiring_zdr():
-    assert OpenRouterArena.provider_preferences() == {"data_collection": "deny"}
-
-
-def test_general_openrouter_models_still_require_zdr():
+def test_arena_requests_require_zdr_like_other_openrouter_requests():
     with patch.object(ml_models, "get_env_variable", return_value=None):
-        assert OpenRouter.provider_preferences()["zdr"] is True
+        assert OpenRouterArena.provider_preferences() == {
+            "data_collection": "deny",
+            "zdr": True,
+        }
 
 
 def test_no_arena_model_is_registered_without_a_key():
@@ -91,8 +89,7 @@ def test_the_default_arena_pool():
     assert Base.CHOOSER_FORCE_MODEL.split(",") == [
         "lunaroute/deepseek-4.1-flash",
         "lunaroute/glm-5.3",
-        "openrouter-arena/anthropic/claude-fable-5.2",
-        "openrouter-arena/openai/gpt-6.1-terra",
-        "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+        "openrouter-arena/anthropic/claude-opus-5.5",
+        "openrouter-arena/openai/gpt-6.1-sol",
         "deepseek-ai/DeepSeek-V4-Pro-0813",
     ]

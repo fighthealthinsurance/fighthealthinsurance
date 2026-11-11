@@ -205,12 +205,11 @@ token found` warning; without `LUNA_ROUTE_KEY` it logs `Skipping chat model
 fault.
 
 `OpenRouterArena` is the same arrangement over OpenRouter for the arena's
-default frontier models, `openrouter-arena/anthropic/claude-fable-5.2` and
-`openrouter-arena/openai/gpt-6.1-terra`: registered outside every general
-pool, synthetic-only, and seated by `CHOOSER_FORCE_MODEL`. Since they never
-see a person's text, their requests drop the zero-data-retention requirement
-the general OpenRouter models keep (Claude Fable 5.2 has no ZDR endpoint on
-OpenRouter) and still deny data collection.
+default hosted models, `openrouter-arena/anthropic/claude-opus-5.5` and
+`openrouter-arena/openai/gpt-6.1-sol`: registered outside every general
+pool, synthetic-only, and seated by `CHOOSER_FORCE_MODEL`. Their requests
+carry the same provider preferences as OpenRouter's other models (no data
+collection, zero data retention).
 
 LunaRoute serves one request at a time per model and hard-fails the rest, so
 each process lets only `LUNA_ROUTE_MAX_PARALLEL` (default 1; 0 for no limit)

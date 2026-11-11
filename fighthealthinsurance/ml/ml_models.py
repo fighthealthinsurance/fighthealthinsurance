@@ -8432,28 +8432,31 @@ class OpenRouterWebSearch(OpenRouter):
 
 
 class OpenRouterArena(OpenRouter):
-    """Frontier models reached through OpenRouter for the Appeal Arena only,
+    """Hosted models reached through OpenRouter for the Appeal Arena only,
     registered as ``openrouter-arena/<OpenRouter id>``.
 
     Synthetic-only, like LunaRoute: the models are registered by name outside
     every general pool (``chat_models``), and chat refuses them even if the
     roster names one, so they only ever see the arena's model-written cases
-    (CHOOSER_FORCE_MODEL seats them). That is also why these requests drop
-    OpenRouter's zero-data-retention requirement, which the general
-    OpenRouter backend keeps: there is no person's text to retain, and
-    Claude Fable 5.2 has no ZDR endpoint on OpenRouter (checked 2026-11-10),
-    so requiring one would fail every call. Data collection is still denied.
+    (CHOOSER_FORCE_MODEL seats them). Requests carry OpenRouter's usual
+    provider preferences (no data collection, zero data retention unless
+    OPENROUTER_REQUIRE_ZDR is off); both models had ZDR endpoints on
+    2026-11-11.
 
     Needs OPENROUTER_API_KEY, as OpenRouter does.
     """
 
     NAME_PREFIX: ClassVar[str] = "openrouter-arena"
     PROVIDER_LABEL: ClassVar[str] = "OpenRouter (Appeal Arena)"
-    # Friendly name -> OpenRouter model id. The newest Anthropic and OpenAI
-    # models in OpenRouter's catalog on 2026-11-10 (GET /api/v1/models).
+    # Friendly name -> OpenRouter model id. Each lab's model one step below
+    # its flagship, rather than the flagship itself (Claude Fable 5.2, GPT-6
+    # Astra), which costs several times as much (OpenRouter's catalog,
+    # 2026-11-11): Claude Opus 5.5 ($4/$20 per million tokens in/out) and
+    # GPT-6.1 Sol ($2/$10), OpenAI's "high-end model, positioned below the
+    # flagship".
     ARENA_MODELS: ClassVar[dict[str, str]] = {
-        "openrouter-arena/anthropic/claude-fable-5.2": "anthropic/claude-fable-5.2",
-        "openrouter-arena/openai/gpt-6.1-terra": "openai/gpt-6.1-terra",
+        "openrouter-arena/anthropic/claude-opus-5.5": "anthropic/claude-opus-5.5",
+        "openrouter-arena/openai/gpt-6.1-sol": "openai/gpt-6.1-sol",
     }
     # Separate rate-limit state from the general OpenRouter models'.
     _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
@@ -8465,12 +8468,6 @@ class OpenRouterArena(OpenRouter):
 
     def get_tier(self) -> str:
         return "frontier"
-
-    @classmethod
-    def provider_preferences(cls) -> dict[str, Any]:
-        """No ZDR requirement (see the class docstring); data collection is
-        still denied."""
-        return {"data_collection": "deny"}
 
     @classmethod
     def model_catalog(cls) -> List[ModelDescription]:

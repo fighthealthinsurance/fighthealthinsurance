@@ -647,8 +647,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 # Not configured here (no LUNA_ROUTE_KEY, no
                 # OPENROUTER_API_KEY): off. LunaRoute's arena models and
                 # OpenRouter's, its arena models and web search included.
-                "openrouter-arena/anthropic/claude-fable-5.2",
-                "openrouter-arena/openai/gpt-6.1-terra",
+                "openrouter-arena/anthropic/claude-opus-5.5",
+                "openrouter-arena/openai/gpt-6.1-sol",
                 "openrouter/anthropic/claude-sonnet-5.5",
                 "lunaroute/deepseek-4.1-flash",
                 "lunaroute/glm-5.3",

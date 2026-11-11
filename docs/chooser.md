@@ -474,15 +474,15 @@ rotation fills the rest.
 A forced name can also be a model kept out of every general pool (one a
 backend lists in `chat_models()`), so a provider can be tried on the arena's
 synthetic cases without being offered any real traffic. The default is a
-pool of six (see [ml-backends.md](ml-backends.md)):
+pool of five (see [ml-backends.md](ml-backends.md)):
 
 - `lunaroute/deepseek-4.1-flash` (DeepSeek 4.1 Flash, needs `LUNA_ROUTE_KEY`)
 - `lunaroute/glm-5.3` (GLM-5.3, needs `LUNA_ROUTE_KEY`)
-- `openrouter-arena/anthropic/claude-fable-5.2` (the newest Anthropic model)
-- `openrouter-arena/openai/gpt-6.1-terra` (the newest OpenAI model)
-- `nvidia/NVIDIA-Nemotron-3.5-Super-VL` (DeepInfra, needs `DEEPINFRA_API`)
-- `deepseek-ai/DeepSeek-V4-Pro-0813` (the full DeepSeek, DeepInfra; DeepInfra
-  serves no full 4.1 yet)
+- `openrouter-arena/anthropic/claude-opus-5.5` (Claude Opus 5.5)
+- `openrouter-arena/openai/gpt-6.1-sol` (GPT-6.1 Sol, OpenAI's tier below its
+  flagship, as Opus is below Fable)
+- `deepseek-ai/DeepSeek-V4-Pro-0813` (the full DeepSeek, DeepInfra, needs
+  `DEEPINFRA_API`; DeepInfra serves no full 4.1 yet)
 
 The two `openrouter-arena/` models need `OPENROUTER_API_KEY` and are
 synthetic-only, like LunaRoute's. `CHOOSER_FORCE_MODEL=""` turns forcing off.
@@ -611,7 +611,7 @@ environment variables of the same name.
 | `CHOOSER_LAUNCH_BACKFILL_SIZE` | `100` | Appeal tasks the launch backfill writes (`0` turns it off) |
 | `CHOOSER_LAUNCH_BACKFILL_MIN_VOTES` | `2` | Votes every current appeal task needs before the launch backfill is due |
 | `CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS` | `3600` | How long a due launch backfill waits for a generation claim another process holds |
-| `CHOOSER_FORCE_MODEL` | DeepSeek 4.1 Flash, GLM-5.3, Claude Fable 5.2, GPT-6.1 Terra, Nemotron 3.5 Super, DeepSeek V4 Pro (`""` in tests) | Registered model names seated in every new arena task; with more than `CHOOSER_NUM_CANDIDATES`, the pool every slot is drawn from |
+| `CHOOSER_FORCE_MODEL` | DeepSeek 4.1 Flash, GLM-5.3, Claude Opus 5.5, GPT-6.1 Sol, DeepSeek V4 Pro (`""` in tests) | Registered model names seated in every new arena task; with more than `CHOOSER_NUM_CANDIDATES`, the pool every slot is drawn from |
 | `CHOOSER_WARMUP_ROUNDS_PER_LEVEL` | `1` | Votes a judge casts before the complexity of the cases served to them may rise a level; `0` turns the warm-up off |
 | `CHOOSER_WARMUP_SATURATION_VOTES` | `5` | Votes after which a case yields its place, in the warm-up or in the order a judge chose, to a less-judged one |
 | `CONDITION_RANKING_MIN_PEOPLE` | `5` | The k in k-anonymity: different people per term |
