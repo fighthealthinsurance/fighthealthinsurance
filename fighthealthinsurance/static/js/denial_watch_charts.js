@@ -136,7 +136,7 @@ function sweep(svg){if(!MOTION||!svg)return;const slices=[...svg.querySelectorAl
   onView(svg,hold,()=>{hold();labels.forEach((l,i)=>{l.style.opacity='';l.animate({opacity:[0,1]},{duration:300,delay:900+i*60,fill:'backwards'});});
     ring.animate({strokeDashoffset:[1,0]},{duration:1100,easing:'cubic-bezier(.4,0,.2,1)',fill:'forwards'}).finished.then(clear,clear);});}
 
-/* The page's section links, kept in a slim bar under the site header once the big ones scroll away, with the section being read marked. Wide screens only: on a phone the header already takes a fifth of the screen. */
+/* The page's section links, kept in a slim bar under the site header once the big ones scroll away, with the section being read marked. Wide screens only: on a phone the header already takes a fifth of the screen. It also rechecks when the page changes height, e.g. a table opens. */
 function sectionStrip(nav){const root=document.querySelector('.dw');if(!nav||!root)return;
   const links=[...nav.querySelectorAll('a[href^="#"]')],secs=links.map(a=>document.getElementById(a.getAttribute('href').slice(1)));if(!links.length||secs.some(x=>!x))return;
   const bar=document.createElement('nav'),row=document.createElement('div');bar.className='dw-where';bar.setAttribute('aria-label','Sections');bar.hidden=true;row.className='dw-where-row';bar.append(row);
@@ -150,7 +150,8 @@ function sectionStrip(nav){const root=document.querySelector('.dw');if(!nav||!ro
     if(at===cur)return;cur=at;pills.forEach((p,i)=>{if(i===at)p.setAttribute('aria-current','location');else p.removeAttribute('aria-current');});
     const p=pills[at];if(p&&(p.offsetLeft<row.scrollLeft||p.offsetLeft+p.offsetWidth>row.scrollLeft+row.clientWidth))row.scrollLeft=p.offsetLeft-16;};
   const ask=()=>{if(!raf)raf=requestAnimationFrame(update);};
-  window.addEventListener('scroll',ask,{passive:true});window.addEventListener('resize',ask);update();}
+  window.addEventListener('scroll',ask,{passive:true});window.addEventListener('resize',ask);
+  if(window.ResizeObserver)new ResizeObserver(ask).observe(root);update();}
 
 /* The donut is drawn by the page itself, so it sweeps from here on any page that has one. */
 document.querySelectorAll('.dw .dw-mix-donut').forEach(sweep);

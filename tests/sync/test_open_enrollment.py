@@ -229,6 +229,10 @@ class TestOpenEnrollmentPage(TestCase):
         # On a tall screen the last section never reaches the marker line.
         self.assertIn("if(window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-2&&secs[secs.length-1].getBoundingClientRect().top<window.innerHeight)at=secs.length-1;", CHARTS_JS)
 
+    def test_section_bar_rechecks_when_the_page_changes_height(self):
+        # Opening a table moves the sections without a scroll event.
+        self.assertIn("if(window.ResizeObserver)new ResizeObserver(ask).observe(root);", CHARTS_JS)
+
     def test_map_colour_fade_respects_reduced_motion(self):
         fade = re.search(r"@media \(prefers-reduced-motion: no-preference\) \{\n    \.dw-map rect[^}]*\}", STYLE_PARTIAL)
         self.assertIsNotNone(fade)
