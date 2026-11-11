@@ -16,13 +16,20 @@ from fighthealthinsurance.medicaid_api import (
     MAX_TARGET_YEAR,
     WORK_REQUIREMENT_FIRST_YEAR,
     WORK_REQUIREMENT_UNIVERSAL_YEAR,
+    FaqEntry,
     MedicaidDataUnavailableError,
+    _faq_limit,
+    _faq_title,
+    _load_medicaid_resources,
     _normalize_applying_reason,
+    _parse_scraped_faq,
     current_eligibility_year,
     get_medicaid_info,
+    get_medicare_info,
     is_eligible,
     eligibility_timeline,
     resolve_target_year,
+    search_state_faq,
     summarize_eligibility_inputs,
     timeline_years,
     work_requirement_reach,
@@ -1448,3 +1455,183 @@ class TestTargetYear(SimpleTestCase):
         )
         self.assertTrue(eligible_target)
         self.assertFalse(any("qualifying hours" in q for q in missing))
+
+
+class TestMedicaidInfoUsesTheData(SimpleTestCase):
+    """get_medicaid_info hands the model the whole data row, not just the
+    agency's phone number: the official FAQ searched by topic, the legal
+    self-help guide, the state's standing on the work requirement, and the
+    state's Medicare counseling line. ("topic" and "limit" were advertised
+    in the prompt for a long time and silently ignored.)"""
+
+    def test_topic_returns_matching_faq_answers_with_their_source(self):
+        result = get_medicaid_info({"state": "Texas", "topic": "renew my medicaid"})
+        self.assertIn('matching "renew my medicaid"', result)
+        self.assertIn("Q: Do I still have to renew my Medicaid?", result)
+        self.assertIn("A: Yes. You must renew it", result)
+        self.assertIn("Source: https://www.hhs.texas.gov/", result)
+
+    def test_faq_answers_carry_their_capture_date_and_a_freshness_caveat(self):
+        # A 2025 income limit quoted as today's rule is the failure here: the
+        # date rides with each answer and the header says to give it.
+        result = get_medicaid_info({"state": "Maine", "topic": "income"})
+        self.assertRegex(result, r"-- captured 2025-\d\d-\d\d")
+        self.assertIn("give the capture date with any figure", result)
+        self.assertIn("eligibility_levels", result)
+
+    def test_limit_caps_the_faq_answers(self):
+        result = get_medicaid_info({"state": "Texas", "topic": "card", "limit": 1})
+        self.assertEqual(result.count("\nQ: "), 1)
+
+    def test_no_topic_lists_the_questions_on_file(self):
+        result = get_medicaid_info({"state": "ca", "topic": ""})
+        self.assertIn("questions on file", result)
+        self.assertIn("- What is Medi-Cal?", result)
+        self.assertIn('call medicaid_info again with a "topic"', result)
+        self.assertNotIn("\nQ: ", result)
+
+    def test_unmatched_topic_says_so_instead_of_inventing(self):
+        result = get_medicaid_info({"state": "ca", "topic": "unicorn"})
+        self.assertIn('Nothing in the official California Medicaid FAQ matched "unicorn"', result)
+        self.assertIn("rather than answering from memory", result)
+        # The questions on file still follow, so the model can retry in
+        # the FAQ's own words.
+        self.assertIn("- What is Medi-Cal?", result)
+
+    def test_state_without_a_faq_says_so_for_a_topic(self):
+        # Ohio's row has no scraped FAQ.
+        result = get_medicaid_info({"state": "Ohio", "topic": "renewal"})
+        self.assertIn("No official Ohio Medicaid FAQ is on file", result)
+
+    def test_legal_self_help_guide_is_included(self):
+        result = get_medicaid_info({"state": "ca"})
+        self.assertIn("Legal Resources:", result)
+        self.assertIn("Self-help guide", result)
+        self.assertIn("https://healthconsumer.org/", result)
+
+    def test_work_requirement_reach_is_stated_for_an_expansion_state(self):
+        result = get_medicaid_info({"state": "ca"})
+        self.assertIn("Federal Medicaid work requirement: it can apply", result)
+        self.assertIn("Only California's Medicaid agency can say", result)
+
+    def test_work_requirement_is_hedged_for_a_non_expansion_state(self):
+        result = get_medicaid_info({"state": "Texas"})
+        self.assertIn("Texas has not expanded Medicaid, so it may not apply", result)
+        self.assertNotIn("does not apply", result)
+
+    def test_states_own_waiver_activity_is_background(self):
+        result = get_medicaid_info({"state": "Georgia"})
+        self.assertIn("waiver activity on record (status: approved)", result)
+        self.assertIn("Pathways to Coverage", result)
+        self.assertIn("background, not a rule", result)
+
+    def test_medicare_help_names_the_states_ship_line(self):
+        result = get_medicaid_info({"state": "ca"})
+        self.assertIn("Medicare help in California:", result)
+        self.assertIn("HICAP", result)
+        self.assertIn("800-434-0222", result)
+        self.assertIn("800-633-4227", result)  # 1-800-MEDICARE, from state_help.json
+        self.assertIn("Social Security Administration", result)
+
+    def test_medicare_topic_puts_the_medicare_section_first(self):
+        result = get_medicaid_info({"state": "Ohio", "topic": "medicare"})
+        self.assertLess(result.index("Medicare help in Ohio:"), result.index("Ohio Department of Medicaid"))
+        self.assertIn("OSHIIP", result)
+
+    def test_medicaid_topic_keeps_the_agency_first(self):
+        result = get_medicaid_info({"state": "Ohio", "topic": "renewal"})
+        self.assertLess(result.index("Ohio Department of Medicaid"), result.index("Medicare help in Ohio:"))
+
+    def test_get_medicare_info_alone(self):
+        self.assertIn("SHIP", get_medicare_info("tx"))
+        self.assertIn("Medicare help in Texas:", get_medicare_info("tx"))
+
+
+class TestScrapedFaqParsing(SimpleTestCase):
+    """The CSV's FAQ cell is JSON objects one after another, not an array."""
+
+    RAW = (
+        '{"question": "How do I renew?", "answer": "Fill in the  renewal\\r\\n form.", "source_url": "https://x/renew", "fetched": "2025-06-24"}\n'
+        '{"question": "How do I renew?", "answer": "Fill in the renewal form.", "source_url": "https://x/dup"}\n'
+        '{"question": "How do I renew?", "answer": "Online, once a year.", "source_url": "https://x/renew2"}\n'
+        '{"question": "What does it cost?", "answer": "Nothing.", "source_url": ""}\n'
+        '{"question": "Answer:?", "answer": "Answer: Yes, you can apply online.", "source_url": "https://x/ct", "fetched": "2025-07-01"}\n'
+        '{"question": "", "answer": "no question"}\n'
+    )
+
+    def test_entries_are_read_deduped_on_the_pair_and_normalized(self):
+        entries = _parse_scraped_faq(self.RAW)
+        self.assertEqual(
+            entries,
+            [
+                FaqEntry("How do I renew?", "Fill in the renewal form.", "https://x/renew", "2025-06-24"),
+                # The same question with a DIFFERENT answer is a different
+                # entry (Connecticut's whole FAQ shares one question label).
+                FaqEntry("How do I renew?", "Online, once a year.", "https://x/renew2", ""),
+                FaqEntry("What does it cost?", "Nothing.", "", ""),
+                FaqEntry("Answer:?", "Yes, you can apply online.", "https://x/ct", "2025-07-01"),
+            ],
+        )
+
+    def test_a_label_only_question_is_titled_from_its_answer(self):
+        entries = _parse_scraped_faq(self.RAW)
+        self.assertEqual(_faq_title(entries[-1]), "(untitled) Yes, you can apply online.")
+        self.assertEqual(_faq_title(entries[0]), "How do I renew?")
+        long_answer = FaqEntry("?", "word " * 40, "", "")
+        self.assertTrue(_faq_title(long_answer).startswith("(untitled) word word"))
+        self.assertTrue(_faq_title(long_answer).endswith(" ..."))
+
+    def test_connecticuts_answers_all_survive(self):
+        # Every Connecticut entry carries the label "Answer:?" as its
+        # question; deduping on the question alone kept one of 22.
+        df = _load_medicaid_resources()
+        (raw,) = df[df["state"] == "Connecticut"]["scraped_faq"].tolist()
+        self.assertGreaterEqual(len(_parse_scraped_faq(raw)), 20)
+
+    def test_garbage_ends_the_read_but_keeps_what_came_before(self):
+        entries = _parse_scraped_faq(self.RAW + "{not json")
+        self.assertEqual(len(entries), 4)
+
+    def test_empty_and_non_string_cells_give_nothing(self):
+        self.assertEqual(_parse_scraped_faq(""), [])
+        self.assertEqual(_parse_scraped_faq(float("nan")), [])
+        self.assertEqual(_parse_scraped_faq(None), [])
+
+
+class TestFaqSearch(SimpleTestCase):
+    ENTRIES = [
+        FaqEntry("How do I renew?", "Fill in the renewal form.", "https://x/renew"),
+        FaqEntry("What does Medicaid cost?", "Nothing for most people.", "https://x/cost"),
+        FaqEntry(
+            "What is the difference between Medicaid and Medicare?",
+            "Medicare is federal; Medicaid is run by the state.",
+            "https://x/diff",
+        ),
+    ]
+
+    def test_prefix_matching_finds_the_word_family(self):
+        self.assertEqual(search_state_faq(self.ENTRIES, "renewal")[0].question, "How do I renew?")
+        self.assertEqual(search_state_faq(self.ENTRIES, "renewing")[0].question, "How do I renew?")
+
+    def test_medicare_does_not_match_medicaid(self):
+        hits = search_state_faq(self.ENTRIES, "medicare")
+        self.assertEqual([h.source_url for h in hits], ["https://x/diff"])
+
+    def test_a_question_match_outranks_an_answer_match(self):
+        entries = [
+            FaqEntry("Where is my card?", "Call us and we'll mail a card.", "a"),
+            FaqEntry("How do I get a new card?", "Order one online.", "b"),
+        ]
+        hits = search_state_faq(entries, "new card")
+        self.assertEqual(hits[0].source_url, "b")
+
+    def test_stopwords_alone_match_nothing(self):
+        self.assertEqual(search_state_faq(self.ENTRIES, "how do i"), [])
+        self.assertEqual(search_state_faq(self.ENTRIES, "medicaid"), [])
+
+    def test_limit_is_read_like_other_numbers(self):
+        self.assertEqual(_faq_limit("five"), 5)
+        self.assertEqual(_faq_limit(None), 5)
+        self.assertEqual(_faq_limit("3"), 3)
+        self.assertEqual(_faq_limit(50), 10)
+        self.assertEqual(_faq_limit(0), 1)

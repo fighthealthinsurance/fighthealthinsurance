@@ -20,7 +20,7 @@ checklist this follows is the OWASP File Upload Cheat Sheet and OWASP ASVS
 ## How many files one visitor may upload
 
 Across all of the pages above, one address (an IPv6 address by its /64)
-and one signed-in account may each upload 20 files an hour and 60 a day (`FHI_UPLOAD_FILES_PER_HOUR`, `FHI_UPLOAD_FILES_PER_DAY`). Files are
+and one signed-in account may each upload 30 files an hour and 60 a day (`FHI_UPLOAD_FILES_PER_HOUR`, `FHI_UPLOAD_FILES_PER_DAY`). Files are
 counted when they arrive, before any check, so files that fail the checks
 count too; an upload over the limit is refused whole and counts nothing.
 Logged-in staff are not counted. A typed email is not counted: anyone can

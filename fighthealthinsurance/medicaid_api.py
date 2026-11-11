@@ -1,4 +1,5 @@
 import difflib
+import json
 import re
 from datetime import date
 from pathlib import Path
@@ -6,6 +7,8 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 import pandas as pd
 from loguru import logger
+
+from fighthealthinsurance.ml.medicaid_names import MEDICAID_PROGRAM_STATES
 
 # Look for data/ next to the repo root
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -149,42 +152,33 @@ _ALIASES = {
 # from these; this is the backstop for when it passes the program name
 # straight through as the "state".
 #
+# The names come from ml/medicaid_names.py (MEDICAID_PROGRAM_STATES), the one
+# list the prompt's reminder, the verdict filter and the eligibility-request
+# detector also read, so a program added there resolves here too. Only the
+# spelling variants the model emits are kept locally.
+#
 # Kept separate from _ALIASES (and merged in below) so the fuzzy-exclusion
 # set can be DERIVED from it rather than hand-copied. A second hand-kept
 # list would drift, silently readmitting a program name to the fuzzy pool.
 #
-# Deliberately absent: a bare "medical". Pennsylvania, Minnesota and
-# Maryland all call their programs "Medical Assistance", so users there say
-# "Medical" and it must not resolve to California. Likewise "healthy
-# connections", which names both South Carolina's and Idaho's programs --
-# and they sit on opposite sides of the expansion line.
+# Deliberately absent (see medicaid_names): a bare "medical", and "healthy
+# connections", which names both South Carolina's and Idaho's programs.
+_CODE_TO_FULL_NAME: Dict[str, str] = {}
+for _full, _abbr in _STATE_MAP.items():
+    # First spelling wins, so "dc" maps to "district of columbia" rather
+    # than to one of its shorthand keys.
+    _CODE_TO_FULL_NAME.setdefault(_abbr, _full)
 _PROGRAM_NAME_TO_STATE = {
-    "medi-cal": "california",
-    "denalicare": "alaska",
-    "health first colorado": "colorado",
-    "husky health": "connecticut",
-    "diamond state health plan": "delaware",
-    "med-quest": "hawaii",
-    "medquest": "hawaii",
-    "healthchoice illinois": "illinois",
-    "hoosier healthwise": "indiana",
-    "kansas medical assistance program": "kansas",
-    "mainecare": "maine",
-    "masshealth": "massachusetts",
-    "mo healthnet": "missouri",
-    "nj familycare": "new jersey",
-    "turquoise care": "new mexico",
-    "soonercare": "oklahoma",
-    "tenncare": "tennessee",
-    "star+plus": "texas",
-    "star plus": "texas",
-    "green mountain care": "vermont",
-    "cardinal care": "virginia",
-    "apple health": "washington",
-    "forward health": "wisconsin",
-    "forwardhealth": "wisconsin",
-    "equality care": "wyoming",
+    name.lower(): _CODE_TO_FULL_NAME[code]
+    for name, code in MEDICAID_PROGRAM_STATES.items()
 }
+_PROGRAM_NAME_TO_STATE.update(
+    {
+        "medquest": "hawaii",
+        "star plus": "texas",
+        "forwardhealth": "wisconsin",
+    }
+)
 _ALIASES.update(_PROGRAM_NAME_TO_STATE)
 
 # Add 2-letter codes themselves as valid keys (so "CA"→"ca")
@@ -1996,10 +1990,415 @@ def summarize_eligibility_inputs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# ---- State resources: contact details, FAQ, work requirement, Medicare -----
+#
+# medicaid_resources.csv carries more than the agency's phone number: a free
+# legal-aid helpline and self-help guide, the state's official Medicaid FAQ
+# (scraped, with source pages), and the state's own work-requirement waiver
+# activity. get_medicaid_info used to return the contact columns only, so a
+# "topic" the chat prompt had advertised for a long time was silently
+# ignored and the model answered renewal and application questions from
+# memory. The sections below hand the rest of the row to the model, and the
+# state's Medicare counseling line (SHIP) from state_help.json beside it.
+
+# How many FAQ answers a lookup returns when the caller gives no usable
+# limit, and the most it may ask for: the whole result goes to a model, and
+# the longer answers run to several hundred characters each.
+DEFAULT_FAQ_LIMIT = 5
+MAX_FAQ_LIMIT = 10
+# Longest FAQ answer handed back whole; a longer one is cut at a word, and
+# its source URL is on the entry for the rest.
+_FAQ_ANSWER_MAX_CHARS = 700
+# The CSV's waiver notes are a paragraph each, with markdown links.
+_WAIVER_ACTIVITY_MAX_CHARS = 700
+
+# Words that carry no topic on their own, so "how do I renew my coverage"
+# searches for renew/coverage rather than "how" and "my". "medicaid" is one:
+# every entry of a state Medicaid FAQ says it. "medicare" is deliberately
+# NOT, so a Medicare topic finds the "Medicaid vs Medicare" entries.
+_FAQ_STOPWORDS = frozenset(
+    "a about an and any are as at be been but by can could did do does for from "
+    "get had has have how i if in into is it its just me my need no not of on or "
+    "our should so some than that the their them then there these they this to "
+    "up us want was we were what when where which who whom why will with would "
+    "you your medicaid".split()
+)
+
+
+class FaqEntry(NamedTuple):
+    """One question and answer from a state's official Medicaid FAQ."""
+
+    question: str
+    answer: str
+    source_url: str
+    # The day the scrape read it (YYYY-MM-DD), or "". A figure or deadline
+    # in an answer is only as current as this.
+    fetched: str = ""
+
+
+def _faq_is_label_only(question: str) -> bool:
+    """Whether a scraped "question" is just a heading or a label ("Answer:?",
+    "?", "Online", "Eligibility"): the scrape lost the real question, and the
+    answer is the only text with content."""
+    return len(re.findall(r"[a-z0-9]+", question.lower())) <= 1
+
+
+def _faq_title(entry: FaqEntry) -> str:
+    """What to call an entry: its question, or, when the scrape kept only a
+    label for the question, the answer's opening words marked untitled, so
+    the entry can still be listed and searched for by its own words."""
+    if not _faq_is_label_only(entry.question):
+        return entry.question
+    if len(entry.answer) <= 80:
+        return f"(untitled) {entry.answer}"
+    return f"(untitled) {entry.answer[:80].rsplit(' ', 1)[0]} ..."
+
+
+def _faq_terms(text: str) -> frozenset[str]:
+    """The searchable words of ``text``: lowercase, three or more characters,
+    minus the stopwords above."""
+    terms = set()
+    for word in re.findall(r"[a-z0-9][a-z0-9'-]*", text.lower()):
+        word = word.strip("'-")
+        if len(word) >= 3 and word not in _FAQ_STOPWORDS:
+            terms.add(word)
+    return frozenset(terms)
+
+
+def _faq_term_match(term: str, word: str) -> bool:
+    """Whether a topic word and a FAQ word are the same word for searching.
+
+    Exact, or one is a prefix of the other and at least four characters
+    long: "renew" finds "renewal" and "renewing", "apply" finds "applying",
+    while "medicare" and "medicaid" stay apart. Prefix rather than stemming
+    so no rule has to know that "applies" and "apply" share a stem.
+    """
+    if term == word:
+        return True
+    shorter, longer = sorted((term, word), key=len)
+    return len(shorter) >= 4 and longer.startswith(shorter)
+
+
+def _faq_score(terms: frozenset[str], entry: FaqEntry) -> int:
+    """How well ``entry`` answers a topic: two points per topic word in its
+    question, one per topic word in its answer."""
+    question_words = _faq_terms(entry.question)
+    answer_words = _faq_terms(entry.answer)
+    score = 0
+    for term in terms:
+        if any(_faq_term_match(term, word) for word in question_words):
+            score += 2
+        if any(_faq_term_match(term, word) for word in answer_words):
+            score += 1
+    return score
+
+
+def _parse_scraped_faq(raw: Any) -> List[FaqEntry]:
+    """The CSV's ``scraped_faq`` cell: JSON objects one after another (not a
+    JSON array), each with question, answer and source_url. An unreadable
+    object ends the read; what came before it is kept."""
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    decoder = json.JSONDecoder()
+    entries: List[FaqEntry] = []
+    text = raw
+    pos = 0
+    end = len(text)
+    while pos < end:
+        while pos < end and text[pos].isspace():
+            pos += 1
+        if pos >= end:
+            break
+        try:
+            obj, pos = decoder.raw_decode(text, pos)
+        except json.JSONDecodeError:
+            logger.warning(
+                f"Unreadable scraped_faq entry at offset {pos}; keeping "
+                f"{len(entries)} entries read before it"
+            )
+            break
+        if not isinstance(obj, dict):
+            continue
+        question = re.sub(r"\s+", " ", str(obj.get("question") or "")).strip()
+        answer = re.sub(r"\s+", " ", str(obj.get("answer") or "")).strip()
+        # Some pages put the "Answer:" label inside the answer itself.
+        answer = re.sub(r"^answer:\s*", "", answer, flags=re.IGNORECASE)
+        if not question or not answer:
+            continue
+        entry = FaqEntry(
+            question,
+            answer,
+            str(obj.get("source_url") or "").strip(),
+            str(obj.get("fetched") or "").strip(),
+        )
+        # The scrape picks the same entry up from several pages; one copy is
+        # enough. Deduped on the question AND the answer: Connecticut's 22
+        # entries all carry the label "Answer:?" as their question, with 20
+        # distinct answers, and deduping on the question alone kept one.
+        if any(
+            seen.question == entry.question and seen.answer == entry.answer
+            for seen in entries
+        ):
+            continue
+        entries.append(entry)
+    return entries
+
+
+def search_state_faq(
+    entries: Sequence[FaqEntry], topic: str, limit: int = DEFAULT_FAQ_LIMIT
+) -> List[FaqEntry]:
+    """The entries that match ``topic``, best first (ties keep the FAQ's own
+    order), at most ``limit``. Empty when the topic has no searchable words
+    or nothing matches."""
+    terms = _faq_terms(topic)
+    if not terms:
+        return []
+    scored = []
+    for position, entry in enumerate(entries):
+        score = _faq_score(terms, entry)
+        if score > 0:
+            scored.append((-score, position, entry))
+    scored.sort(key=lambda item: (item[0], item[1]))
+    return [entry for _, _, entry in scored[: max(1, limit)]]
+
+
+def _faq_limit(raw: Any) -> int:
+    """The caller's "limit", read like every other numeric field (so
+    "five" doesn't blow up the lookup) and kept within 1..MAX_FAQ_LIMIT."""
+    number = _parse_numeric(raw)
+    if number is None:
+        return DEFAULT_FAQ_LIMIT
+    return max(1, min(MAX_FAQ_LIMIT, int(number)))
+
+
+def _cell(row: "pd.Series", column: str) -> str:
+    """A CSV cell as text: "" for a missing column, a blank, NaN, or the
+    file's own "N/A" marker."""
+    if column not in row.index:
+        return ""
+    value = row[column]
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    text = str(value).strip()
+    return "" if text.upper() == "N/A" else text
+
+
+def _tidy_text(text: str, limit: int) -> str:
+    """Scraped text as the tool should hand it on: ``<br>`` tags become line
+    breaks, and a long passage is cut at a word with an ellipsis."""
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.IGNORECASE).strip()
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    if len(text) > limit:
+        text = text[:limit].rsplit(" ", 1)[0] + " ..."
+    return text
+
+
+def _contact_section(state: str, row: "pd.Series") -> str:
+    """The agency's contact details and the free legal help for Medicaid
+    problems, in the layout the chat tool has always passed on."""
+    lines: List[str] = []
+    agency = _cell(row, "agency")
+    phone = _cell(row, "agency_phone")
+    website = _cell(row, "agency_website")
+    if agency:
+        lines.append(agency)
+    if phone:
+        lines.append(f"Phone: {phone}")
+    if website:
+        lines.append(f"Website: {website}")
+
+    helpline = _cell(row, "helpline")
+    helpline_contact = _cell(row, "helpline_contact")
+    self_help = _cell(row, "self_help_resources")
+    if helpline or self_help:
+        if lines:
+            lines.append("")  # Empty line for spacing
+        lines.append("Legal Resources:")
+        if helpline:
+            lines.append(helpline)
+            if helpline_contact:
+                lines.append(f"Phone: {helpline_contact}")
+        if self_help:
+            lines.append(
+                f"Self-help guide (free legal information on {state} Medicaid "
+                f"problems, including denials and appeals): {self_help}"
+            )
+    return "\n".join(lines)
+
+
+def _faq_section(
+    state: str, entries: Sequence[FaqEntry], topic: str, limit: int
+) -> str:
+    """The state's official FAQ: the answers matching ``topic``, or without a
+    topic (or with one nothing matches) the questions on file, so the model
+    can ask again in the FAQ's own words."""
+    if not entries:
+        if topic:
+            return (
+                f"No official {state} Medicaid FAQ is on file to search for "
+                f'"{topic}"; the agency above is the place to ask.'
+            )
+        return ""
+
+    def question_list() -> str:
+        return "\n".join(f"- {_faq_title(entry)}" for entry in entries[:MAX_FAQ_LIMIT])
+
+    if not _faq_terms(topic):
+        return (
+            f"Official {state} Medicaid FAQ -- questions on file ({len(entries)} "
+            'in all; call medicaid_info again with a "topic" to get the answers):\n'
+            + question_list()
+        )
+
+    hits = search_state_faq(entries, topic, limit)
+    if not hits:
+        return (
+            f'Nothing in the official {state} Medicaid FAQ matched "{topic}". '
+            "Its questions are:\n"
+            + question_list()
+            + "\n\nTry again with one of their words, or send the person to the "
+            "agency above rather than answering from memory."
+        )
+
+    blocks = []
+    for entry in hits:
+        block = (
+            f"Q: {_faq_title(entry)}\n"
+            f"A: {_tidy_text(entry.answer, _FAQ_ANSWER_MAX_CHARS)}"
+        )
+        provenance = [
+            part
+            for part in (
+                f"Source: {entry.source_url}" if entry.source_url else "",
+                f"captured {entry.fetched}" if entry.fetched else "",
+            )
+            if part
+        ]
+        if provenance:
+            block += "\n" + " -- ".join(provenance)
+        blocks.append(block)
+    # The answers are a snapshot: an income limit or a deadline in one was
+    # true on its capture date and may not be now, and the eligibility
+    # checker scores against the current published table. The model is told
+    # to carry the date with any figure rather than to present a 2025 limit
+    # as today's rule.
+    return (
+        f"Official {state} Medicaid FAQ -- {len(hits)} answer(s) matching "
+        f'"{topic}". Quote and link them, and give the capture date with any '
+        "figure, limit or deadline: these are snapshots and can have changed "
+        "since. For a current income limit use the eligibility check or the "
+        'medicaid_gov_lookup "eligibility_levels" page, and do not add rules '
+        "from memory:\n\n" + "\n\n".join(blocks)
+    )
+
+
+def _work_requirement_section(state: str, state_short: str, row: "pd.Series") -> str:
+    """Where the state stands on the federal work requirement -- whether it
+    can reach adults there at all (work_requirement_reach), and the state's
+    own waiver activity from the CSV. Hedged on purpose: only the state
+    agency can say whether it reaches a given person, or when."""
+    lines: List[str] = []
+    reach = work_requirement_reach(state_short)
+    if reach is not None:
+        if reach.may_apply:
+            lines.append(
+                "Federal Medicaid work requirement: it can apply to adults "
+                f"ages 19-64 who get Medicaid through {reach.state_name}'s "
+                "expansion or a similar state program -- 80 qualifying hours a month "
+                "of work, job training, school or volunteering, with "
+                "exemptions (pregnancy, disability, caregiving and others). "
+                "States must start it no later than January 1, "
+                f"{WORK_REQUIREMENT_UNIVERSAL_YEAR}, and some started earlier. "
+                f"Only {reach.state_name}'s Medicaid agency can say when it "
+                "starts there and whether it reaches a particular person."
+            )
+        else:
+            lines.append(
+                f"Federal Medicaid work requirement: {reach.state_name} has not "
+                "expanded Medicaid, so it may not apply to anyone there -- "
+                f"{reach.state_name}'s Medicaid agency is the one to ask."
+            )
+    status = _cell(row, "work_requirement_waiver")
+    activity = _cell(row, "waiver_activity")
+    if status or activity:
+        lines.append(
+            f"{state}'s own work-requirement waiver activity on record "
+            f"(status: {status or 'see note'}) -- background, not a rule to "
+            "apply to anyone:"
+        )
+        if activity:
+            lines.append(_tidy_text(activity, _WAIVER_ACTIVITY_MAX_CHARS))
+    return "\n".join(lines)
+
+
+def get_medicare_info(state_short: str) -> Optional[str]:
+    """Where to get Medicare help in a state, or None when nothing is on
+    file: the state's free SHIP counseling line first (state_help.json), then
+    1-800-MEDICARE and Social Security's enrollment line from the same file's
+    national entry.
+
+    Medicare is federal, so the eligibility checker's Medicare verdict is the
+    same everywhere -- what differs by state is who will sit down with the
+    person and walk them through enrolling, which is exactly what SHIP does.
+    """
+    # Imported lazily: state_help reads Django's static files, and this
+    # module is also used from places that never need it.
+    from fighthealthinsurance.state_help import (
+        get_national_resource,
+        get_state_help_by_abbreviation,
+    )
+
+    lines: List[str] = []
+    state_help = get_state_help_by_abbreviation(state_short)
+    if state_help is not None:
+        ship = state_help.consumer_assistance
+        parts = [
+            part
+            for part in (
+                ship.ship_name,
+                f"Phone: {ship.ship_phone}" if ship.ship_phone else None,
+                ship.ship_url,
+            )
+            if part
+        ]
+        if parts:
+            lines.append(
+                "- Free one-on-one Medicare counseling (SHIP, the State Health "
+                "Insurance Assistance Program): " + " -- ".join(parts)
+            )
+    for name, why in (
+        ("Medicare (CMS)", "1-800-MEDICARE: enrollment, claims and plan questions"),
+        (
+            "Social Security Administration",
+            "enrolling in Medicare Part A and B, and disability benefits",
+        ),
+    ):
+        resource = get_national_resource(name)
+        if not resource:
+            continue
+        parts = [
+            part
+            for part in (
+                f"Phone: {resource['phone']}" if resource.get("phone") else None,
+                resource.get("url"),
+            )
+            if part
+        ]
+        if parts:
+            lines.append(f"- {name} ({why}): " + " -- ".join(parts))
+    if not lines:
+        return None
+    return f"Medicare help in {_ABBR_TO_NAME[state_short]}:\n" + "\n".join(lines)
+
+
 def get_medicaid_info(query: Dict[str, Any]) -> Optional[str]:
     """
-    query example: {"state":"StateName"}
-    Returns a clean, professional format with key contact info.
+    query example: {"state": "StateName", "topic": "renewal", "limit": 5}
+    Returns a clean, professional format with key contact info -- and, from
+    the same data row, the state's official FAQ (searched by ``topic``), the
+    free legal help and self-help guide, where the state stands on the
+    federal work requirement, and the state's Medicare counseling line. A
+    topic that names Medicare puts the Medicare section first.
 
     Returns None when the state can't be determined, so the caller can ask
     the user which state they're in. (Returning prose here would be
@@ -2054,67 +2453,24 @@ def get_medicaid_info(query: Dict[str, Any]) -> Optional[str]:
         # something useful instead.
         raise MedicaidDataUnavailableError(state, "no resources row for this state")
 
-    # Focus on the most important contact info
-    important_cols = [
-        "agency",
-        "agency_phone",
-        "helpline",
-        "helpline_contact",
-        "agency_website",
-    ]
-    available_cols = [col for col in important_cols if col in df.columns]
+    # One row per state in the file; the first is the state's.
+    row = df.iloc[0]
+    topic = str(query.get("topic") or "").strip()
+    limit = _faq_limit(query.get("limit"))
 
-    if not available_cols:
-        return f"Medicaid data found for {state}, but no contact information available."
+    contact = _contact_section(state, row) or (
+        f"Medicaid data found for {state}, but no contact information available."
+    )
+    faq = _faq_section(
+        state, _parse_scraped_faq(_cell(row, "scraped_faq")), topic, limit
+    )
+    work_requirement = _work_requirement_section(state, state_short, row)
+    medicare = get_medicare_info(state_short)
 
-    # Get the first few rows with contact info
-    contact_info = df[available_cols].drop_duplicates()
-
-    # Format in clean, simple style matching work requirements format
-    result = []
-
-    for _, row in contact_info.iterrows():
-        # Main Medicaid Agency Section
-        if (
-            "agency" in available_cols
-            and pd.notna(row["agency"])
-            and str(row["agency"]).strip()
-        ):
-            result.append(f"{row['agency']}")
-
-        # Contact Information
-        if (
-            "agency_phone" in available_cols
-            and pd.notna(row["agency_phone"])
-            and str(row["agency_phone"]).strip()
-        ):
-            phone = str(row["agency_phone"]).strip()
-            result.append(f"Phone: {phone}")
-
-        if (
-            "agency_website" in available_cols
-            and pd.notna(row["agency_website"])
-            and str(row["agency_website"]).strip()
-        ):
-            website = str(row["agency_website"]).strip()
-            result.append(f"Website: {website}")
-
-        # Add spacing before legal section
-        if (
-            "helpline" in available_cols
-            and pd.notna(row["helpline"])
-            and str(row["helpline"]).strip()
-        ):
-            result.append("")  # Empty line for spacing
-            result.append("Legal Resources:")
-            result.append(f"{row['helpline']}")
-
-            if (
-                "helpline_contact" in available_cols
-                and pd.notna(row["helpline_contact"])
-                and str(row["helpline_contact"]).strip()
-            ):
-                phone = str(row["helpline_contact"]).strip()
-                result.append(f"Phone: {phone}")
-
-    return "\n".join(result)
+    # A Medicare question gets the Medicare referral first; the agency's
+    # Medicaid line is still there for the many people who need both.
+    if "medicare" in topic.lower():
+        sections = [medicare, contact, faq, work_requirement]
+    else:
+        sections = [contact, faq, work_requirement, medicare]
+    return "\n\n".join(section for section in sections if section)

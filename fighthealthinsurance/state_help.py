@@ -393,3 +393,58 @@ def get_states_sorted_by_name() -> list[StateHelp]:
         A list of StateHelp objects sorted alphabetically by their `name` attribute.
     """
     return sorted(load_state_help().values(), key=lambda s: s.name)
+
+
+@lru_cache(maxsize=1)
+def _load_national_resources_cached() -> (
+    tuple[tuple[str, tuple[dict[str, Any], ...]], ...]
+):
+    """The "national" entry of state_help.json, which the state loader skips.
+
+    Its shape differs from a state's: sections (federal_resources,
+    consumer_advocacy, legal_resources, specialized_assistance), each a list
+    of ``{name, phone, url, description}``. Returned as nested tuples so the
+    cache hands out something callers cannot mutate.
+    """
+    try:
+        contents = read_static_text("state_help.json")
+        if contents is None:
+            raise FileNotFoundError("state_help.json")
+        data = json.loads(contents)
+        national = data.get("national") if isinstance(data, dict) else None
+        if not isinstance(national, dict):
+            logger.error("state_help.json has no national entry")
+            return ()
+        return tuple(
+            (section, tuple(entry for entry in entries if isinstance(entry, dict)))
+            for section, entries in national.items()
+            if isinstance(entries, list)
+        )
+    except FileNotFoundError:
+        logger.warning("state_help.json not found in static files")
+        return ()
+    except json.JSONDecodeError:
+        logger.exception("Error parsing state_help.json")
+        return ()
+    except Exception:
+        logger.exception("Unexpected error loading national resources")
+        return ()
+
+
+def load_national_resources() -> dict[str, list[dict[str, Any]]]:
+    """The national resources by section: ``{section: [{name, phone, url,
+    description}, ...]}``. Empty when the file or its entry is missing."""
+    return {
+        section: [dict(entry) for entry in entries]
+        for section, entries in _load_national_resources_cached()
+    }
+
+
+def get_national_resource(name: str) -> Optional[dict[str, Any]]:
+    """One national resource by its exact name (e.g. "Medicare (CMS)"),
+    whichever section it is in, or None."""
+    for entries in load_national_resources().values():
+        for entry in entries:
+            if entry.get("name") == name:
+                return entry
+    return None

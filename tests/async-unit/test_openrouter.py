@@ -264,6 +264,13 @@ class TestOpenRouterRequests(unittest.TestCase):
 
 
 class TestUrlCitationsFromAnnotations(unittest.TestCase):
+    def test_a_long_title_is_cut_to_what_the_judge_reads(self):
+        citation = WebCitation("t" * 500, "https://a.org/x")
+        self.assertEqual(
+            (citation.page_title, str(citation)),
+            ("t" * 200, "t" * 200 + ". https://a.org/x"),
+        )
+
     def test_reads_url_citations_with_their_parts(self):
         found = url_citations_from_annotations(
             [_url_citation("https://a.org/x", " Title  one ", "Some  text")]
@@ -347,6 +354,10 @@ class TestWebSearchCitations:
             patch.object(
                 web_search_context.ml_router, "best_internal_model", return_value=None
             ),
+            # Jev is on, so there is a judge to search for.
+            patch.object(
+                web_search_context.research_judging, "enabled", return_value=True
+            ),
             patch.object(
                 web_search_context,
                 "_consent_allows",
@@ -385,6 +396,22 @@ class TestWebSearchCitations:
         }
         cited = await web_search_context.web_search_citations(_denial(), 10)
         assert len(cited) == 1 and "https://a.org/good" in cited[0]
+
+    @pytest.mark.asyncio
+    async def test_does_not_search_with_no_judge_at_all(self):
+        self.backend.web_search.return_value = _results("https://a.org/x")
+        with patch.object(
+            web_search_context.research_judging, "enabled", return_value=False
+        ):
+            await web_search_context.web_search_citations(_denial(), 10)
+        self.backend.web_search.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_does_not_search_when_only_jev_could_judge_and_may_not(self):
+        self.backend.web_search.return_value = _results("https://a.org/x")
+        self.consent.return_value = False
+        await web_search_context.web_search_citations(_denial(), 10)
+        self.backend.web_search.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_drops_results_nobody_could_judge(self):
@@ -441,16 +468,27 @@ class TestWebSearchCitations:
         self.consent.return_value = False
         self.backend.web_search.return_value = _results("https://a.org/good")
         self.judgments = {"https://a.org/good": SUPPORTS}
-        cited = await web_search_context.web_search_citations(
-            _denial(use_external=False), 10
-        )
+        # Our own model is there to judge, so the search has a use.
+        with patch.object(
+            web_search_context.ml_router,
+            "best_internal_model",
+            return_value=MagicMock(),
+        ):
+            cited = await web_search_context.web_search_citations(
+                _denial(use_external=False), 10
+            )
         assert len(cited) == 1 and "https://a.org/good" in cited[0]
 
     @pytest.mark.asyncio
     async def test_jev_may_not_judge_without_consent(self):
         self.consent.return_value = False
         self.backend.web_search.return_value = _results("https://a.org/x")
-        await web_search_context.web_search_citations(_denial(), 10)
+        with patch.object(
+            web_search_context.ml_router,
+            "best_internal_model",
+            return_value=MagicMock(),
+        ):
+            await web_search_context.web_search_citations(_denial(), 10)
         assert [k["may_ask_jev"] for k in self.judge_kwargs] == [False]
 
     @pytest.mark.asyncio

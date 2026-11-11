@@ -10,6 +10,7 @@ from fighthealthinsurance.ml.ml_models import (
     ModelDescription,
     RemoteModel,
     RemoteFullOpenLike,
+    RemoteModelLike,
 )
 
 
@@ -429,6 +430,20 @@ class TestMedicaidPathPrompt(TestCase):
 
         return captured["system_prompt"]
 
+    def test_info_tool_prompt_explains_topic_search(self):
+        # "topic" was advertised and ignored for a long time; now that it
+        # searches the state's official FAQ the prompt has to say so, and
+        # tell the model to quote what comes back rather than its memory.
+        prompt = self._medicaid_system_prompt()
+        self.assertIn('"topic" (optional)', prompt)
+        self.assertIn("official FAQ", prompt)
+        self.assertIn('"topic": "renewal"', prompt)
+
+    def test_info_tool_prompt_routes_medicare_questions_to_ship(self):
+        prompt = self._medicaid_system_prompt()
+        self.assertIn("SHIP", prompt)
+        self.assertIn('"topic": "medicare"', prompt)
+
     def test_prompt_describes_the_medicaid_path(self):
         prompt = self._medicaid_system_prompt()
         self.assertIn("THE MEDICAID PATH", prompt)
@@ -569,3 +584,47 @@ class TestRemoteFullOpenLike(TestCase):
             len(generic_prompts) > 0,
             "Should return default prompts when specific ones don't exist",
         )
+
+
+class TestMedicaidAliasesDriveDetection(TestCase):
+    """The program names in ml/medicaid_names.py are the keyword list: a
+    program added there is detected here without a second, hand-kept copy."""
+
+    def setUp(self):
+        self.model = RemoteOpenLike(
+            api_base="http://test.com",
+            token="test_token",
+            model="test_model",
+            system_prompts_map={"test": ["test prompt"]},
+        )
+
+    def test_every_program_alias_is_detected(self):
+        from fighthealthinsurance.ml.medicaid_names import MEDICAID_PROGRAM_ALIASES
+
+        for alias in MEDICAID_PROGRAM_ALIASES:
+            if alias == "STAR":
+                continue  # a word first; see test_bare_star_is_not_a_keyword
+            self.assertTrue(
+                self.model._is_medicaid_related(f"I need help with {alias}", None, None),
+                alias,
+            )
+
+    def test_newer_program_names_are_detected(self):
+        for message in (
+            "Does AHCCCS cover this?",
+            "I'm on BadgerCare Plus",
+            "KanCare denied my claim",
+            "Oregon Health Plan question",
+            "Healthy Michigan Plan renewal",
+        ):
+            self.assertTrue(self.model._is_medicaid_related(message, None, None), message)
+
+    def test_bare_star_is_not_a_keyword(self):
+        # Keywords match as substrings, and "star" is inside "started".
+        self.assertNotIn("star", RemoteModelLike.MEDICAID_KEYWORDS)
+        self.assertFalse(
+            self.model._is_medicaid_related(
+                "I started a new job and my claim was denied", None, None
+            )
+        )
+        self.assertTrue(self.model._is_medicaid_related("I'm on Texas STAR", None, None))

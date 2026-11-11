@@ -186,6 +186,7 @@ such as `sonar` are not listed in that line.
 | Perplexity (citations only) | `RemotePerplexity` | `PERPLEXITY_API` | `sonar` |
 | LunaRoute (Appeal Arena only) | `LunaRoute` | `LUNA_ROUTE_KEY` | `lunaroute/` |
 | OpenRouter | `OpenRouter` | `OPENROUTER_API_KEY` | `openrouter/` |
+| OpenRouter (Appeal Arena only) | `OpenRouterArena` | `OPENROUTER_API_KEY` | `openrouter-arena/` |
 | OpenRouter web search (context only) | `OpenRouterWebSearch` | `OPENROUTER_API_KEY` | `openrouter-web-search` |
 
 Perplexity is context-only: it finds citations and never generates an appeal
@@ -202,6 +203,13 @@ Perplexity has no key, building the router logs a `Skipping model ... No
 token found` warning; without `LUNA_ROUTE_KEY` it logs `Skipping chat model
 <model id>: Exception` for each LunaRoute model. Either is expected, not a
 fault.
+
+`OpenRouterArena` is the same arrangement over OpenRouter for the arena's
+default hosted models, `openrouter-arena/anthropic/claude-opus-5.5` and
+`openrouter-arena/openai/gpt-6.1-sol`: registered outside every general
+pool, synthetic-only, and seated by `CHOOSER_FORCE_MODEL`. Their requests
+carry the same provider preferences as OpenRouter's other models (no data
+collection, zero data retention).
 
 LunaRoute serves one request at a time per model and hard-fails the rest, so
 each process lets only `LUNA_ROUTE_MAX_PARALLEL` (default 1; 0 for no limit)
@@ -249,7 +257,8 @@ citations to an appeal ([`ml/web_search_context.py`](../fighthealthinsurance/ml/
   Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on and the person allowed
   outside models (`Denial.use_external`, read again first), else by our own
   best general-purpose model. Pages judged off topic or against the treatment are
-  dropped, and so are pages nobody could judge in time. At most three are
+  dropped, and so are pages nobody could judge in time. With no judge at
+  all (no model of our own and Jev off) the search is not run. At most three are
   kept, strongest support first, and added after the CMS citations.
 - **The Appeal Arena too.** Its synthetic cases get the same judged web
   pages as evidence beside their PubMed articles, marked "web page" for

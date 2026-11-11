@@ -849,15 +849,18 @@ def prepare_document_fields(
         "char_count": len(text),
         "is_active": _bool(record, "is_active", True),
         "pipeline_version": _string(record, "pipeline_version", MAX_VERSION),
-        "notes": record.get("notes") if isinstance(record.get("notes"), str) else "",
         "import_batch": import_batch[:MAX_VERSION],
     }
-    # Staff deactivate a wrong document and note why in the admin; a record
-    # that doesn't say otherwise must not undo that on the next import. A new
-    # row gets the model's defaults (active, no notes).
-    for name in ("is_active", "notes"):
-        if name not in record:
-            del fields[name]
+    # Only when the record carries them: a re-import that says nothing about
+    # notes must not blank the ones staff wrote in the admin. A new row takes
+    # the model's default (none).
+    if isinstance(record.get("notes"), str):
+        fields["notes"] = record["notes"]
+    # Staff deactivate a wrong document in the admin; a record that doesn't
+    # say otherwise must not undo that on the next import. A new row gets the
+    # model's default (active).
+    if "is_active" not in record:
+        del fields["is_active"]
     return PreparedDocument(
         document_key=key,
         fields=fields,

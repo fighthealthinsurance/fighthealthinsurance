@@ -643,6 +643,23 @@ Explicit uploads take the same storage path under their own marker.
   and its ChatTurn row says "ok". A total failure keeps its "failed" count
   and row; only the frame the user sees changes.
 
+### Medicaid and Medicare data in chat
+
+`medicaid_info` (medicaid_api.get_medicaid_info) hands the model the whole
+row of data/medicaid_resources.csv, not just the agency's phone number --
+the free legal helpline and self-help guide, the state's official Medicaid
+FAQ searched by the call's `topic` (prefix-matched words, question matches
+outranking answer matches; without a topic the questions on file are listed
+so the model can ask again in the FAQ's words), where the state stands on
+the federal work requirement (`work_requirement_reach` plus the state's own
+waiver activity, as background), and the state's Medicare counseling line
+(SHIP) from static/state_help.json beside 1-800-MEDICARE and Social
+Security's enrollment line, which lead the result when the topic names
+Medicare. The program names that drive all of this -- the prompt's
+reminder, the keyword that attaches the Medicaid tool blocks, the verdict
+filter and `_normalize_state` -- come from one map in
+ml/medicaid_names.py.
+
 ## 7. Debuggability
 
 Three levels, in increasing detail:

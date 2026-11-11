@@ -581,6 +581,9 @@ class _TimeoutNote(str):
 
 # The most of a web page's excerpt a WebCitation keeps.
 WEB_CITATION_EXCERPT_CHARS = 1200
+# The most of its title: what the relevance judge reads of it
+# (research_judging.TERM_CHAR_CAP).
+WEB_CITATION_TITLE_CHARS = 200
 
 
 class WebCitation(str):
@@ -596,7 +599,9 @@ class WebCitation(str):
     excerpt: str
 
     def __new__(cls, title: str, url: str, excerpt: str = "") -> "WebCitation":
-        title = " ".join(str(title or "").split())
+        # Capped like the excerpt: a page's title is untrusted text that goes
+        # into the letter's prompt, and the judge reads only this much of it.
+        title = " ".join(str(title or "").split())[:WEB_CITATION_TITLE_CHARS]
         url = str(url or "").strip()
         text = f"{title}. {url}" if title else url
         obj = super().__new__(cls, text)
@@ -1758,89 +1763,47 @@ class RemoteModelLike(DenialBase):
     # an opaque ``<...object at 0x...>`` repr. ``None`` until the router stamps it.
     name: Optional[str] = None
 
-    # Keywords that indicate Medicaid/Medicare-related conversation
-    # Note: All keywords should be lowercase for case-insensitive matching
-    MEDICAID_KEYWORDS: ClassVar[List[str]] = [
-        # Generic terms
-        "medicaid",
-        "medicare",
-        "medi-cal",
-        "medical assistance",
-        "medical assistance program",
-        "eligibility",
-        "eligible",
-        "enrollment",
-        "enroll",
-        "work requirement",
-        "80 hours",
-        # State-specific Medicaid program names (comprehensive list)
-        # Alaska
-        "denalicare",
-        # California
-        "medi-cal",
-        # Colorado
-        "health first colorado",
-        # Connecticut
-        "husky health",
-        # Delaware
-        "diamond state health plan",
-        # Hawaii
-        "med-quest",
-        "medquest",
-        # Illinois
-        "healthchoice illinois",
-        # Indiana
-        "hoosier healthwise",
-        # Indiana
-        "iowa medicaid",
-        # Kansas
-        "kansas medical assistance",
-        "kansas medical assistance program",
-        # Maine
-        "mainecare",
-        # Massachusetts
-        "masshealth",
-        # Missouri
-        "mo healthnet",
-        # New Jersey
-        "nj familycare",
-        # New Mexico
-        "turquoise care",
-        # New York
-        "new york state medicaid",
-        # Oklahoma
-        "soonercare",
-        # South Carolina
-        "healthy connections",
-        # Tennessee
-        "tenncare",
-        # Texas
-        "star+plus",
-        "star plus",
-        "star medicaid",
-        "texas star",
-        # Vermont
-        "green mountain care",
-        # Virginia
-        "cardinal care",
-        # Washington
-        "apple health",
-        # Wisconsin
-        "forward health",
-        # Wyoming
-        "equality care",
-        # Common questions and phrases
-        "qualify for medicaid",
-        "qualify for medicare",
-        "am i eligible",
-        "can i get medicaid",
-        "can i get medicare",
-        "government insurance",
-        "public insurance",
-        "state insurance",
-        "government health",
-        "public health insurance",
-    ]
+    # Keywords that indicate Medicaid/Medicare-related conversation.
+    # Note: All keywords should be lowercase for case-insensitive matching;
+    # _is_medicaid_related tests each as a SUBSTRING of the chat text.
+    MEDICAID_KEYWORDS: ClassVar[List[str]] = (
+        [
+            # Generic terms
+            "medicaid",
+            "medicare",
+            "medi-cal",
+            "eligibility",
+            "eligible",
+            "enrollment",
+            "enroll",
+            "work requirement",
+            "80 hours",
+        ]
+        # Every state program name the prompt knows (ml/medicaid_names.py),
+        # so a program added there is detected here without a second,
+        # hand-copied list. Minus the bare "STAR": substring matching would
+        # find it inside "start" and "started"; its unambiguous forms are
+        # listed below instead.
+        + sorted(name.lower() for name in MEDICAID_PROGRAM_ALIASES if name != "STAR")
+        + [
+            # Spelling variants and the unambiguous forms of "STAR" (Texas)
+            "medquest",
+            "star plus",
+            "star medicaid",
+            "texas star",
+            # Common questions and phrases
+            "qualify for medicaid",
+            "qualify for medicare",
+            "am i eligible",
+            "can i get medicaid",
+            "can i get medicare",
+            "government insurance",
+            "public insurance",
+            "state insurance",
+            "government health",
+            "public health insurance",
+        ]
+    )
 
     def __str__(self) -> str:
         """Render as the friendly tracking name (stamped by MLRouter), falling
@@ -2278,7 +2241,10 @@ Use one option or the other for a letter, not both in the same message. Use crea
 (note: fill in the statename with the actual name of the state).
 When possible even if the user has not explicitly provided the state if they're using a state specific name (like MediCal) infer the state for them. Otherwise ask.
 
-This means, for example, you get the phone number for medical (california medicaid) by calling this tool and looking at the response.
+It returns the state agency's phone and website, free legal help and a self-help guide, the state's official Medicaid FAQ, its standing on the federal work requirement, and its free Medicare counseling line (SHIP).
+- "topic" (optional): what they want to know, in a few words ("renewal", "apply", "lost my card", "medicare"). It searches the state's official FAQ and returns matching answers with their source pages and capture dates; left empty, it lists the FAQ's questions, so call again with a topic that fits. Quote and link those answers, giving the date with any figure or deadline; if nothing matched, say so and give the agency contact rather than answering from memory. "limit" (optional, 1-10, default 5) caps the answers.
+- For Medicare questions (enrolling, Parts A/B/D, Medicare Advantage, Medicare Savings Programs), use "topic": "medicare": the result then leads with the state's SHIP counselors (free one-on-one Medicare help), 1-800-MEDICARE and Social Security. Hand over that line and link; don't paraphrase Medicare rules from memory.
+
 
 Rules for medicaid questions:
 - If user mentions Medicaid/Medicare + state → ONLY respond with the tool call, no other text. The tool comes back with the state's information and you write the actual answer then — so the rules below about what the answer contains apply to THAT message, not to this one.
@@ -2292,6 +2258,7 @@ Rules for medicaid questions:
 
 CORRECT Examples:
 User: "medicaid info in california" → Response: **medicaid_info {"state": "California", "topic": "", "limit": 5}**
+User: "how do I renew my Medi-Cal?" → Response: **medicaid_info {"state": "California", "topic": "renewal", "limit": 5}**
 User: "help with medicaid" → Response: "Which state are you in?"
 
 WRONG Examples:
@@ -8463,6 +8430,61 @@ class OpenRouterWebSearch(OpenRouter):
             return []
         _text, citations = result
         return [c for c in (citations or []) if isinstance(c, WebCitation)]
+
+
+class OpenRouterArena(OpenRouter):
+    """Hosted models reached through OpenRouter for the Appeal Arena only,
+    registered as ``openrouter-arena/<OpenRouter id>``.
+
+    Synthetic-only, like LunaRoute: the models are registered by name outside
+    every general pool (``chat_models``), and chat refuses them even if the
+    roster names one, so they only ever see the arena's model-written cases
+    (CHOOSER_FORCE_MODEL seats them). Requests carry OpenRouter's usual
+    provider preferences (no data collection, zero data retention unless
+    OPENROUTER_REQUIRE_ZDR is off); both models had ZDR endpoints on
+    2026-11-11.
+
+    Needs OPENROUTER_API_KEY, as OpenRouter does.
+    """
+
+    NAME_PREFIX: ClassVar[str] = "openrouter-arena"
+    PROVIDER_LABEL: ClassVar[str] = "OpenRouter (Appeal Arena)"
+    # Friendly name -> OpenRouter model id. Each lab's model one step below
+    # its flagship, rather than the flagship itself (Claude Fable 5.2, GPT-6
+    # Astra), which costs several times as much (OpenRouter's catalog,
+    # 2026-11-11): Claude Opus 5.5 ($4/$20 per million tokens in/out) and
+    # GPT-6.1 Sol ($2/$10), OpenAI's "high-end model, positioned below the
+    # flagship".
+    ARENA_MODELS: ClassVar[dict[str, str]] = {
+        "openrouter-arena/anthropic/claude-opus-5.5": "anthropic/claude-opus-5.5",
+        "openrouter-arena/openai/gpt-6.1-sol": "openai/gpt-6.1-sol",
+    }
+    # Separate rate-limit state from the general OpenRouter models'.
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @property
+    def synthetic_only(self):
+        return True
+
+    def get_tier(self) -> str:
+        return "frontier"
+
+    @classmethod
+    def model_catalog(cls) -> List[ModelDescription]:
+        """None in the general pools; see chat_models."""
+        return []
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        return []
+
+    @classmethod
+    def chat_models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(cost=0, name=name, internal_name=model_id)
+            for name, model_id in cls.ARENA_MODELS.items()
+        ]
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]

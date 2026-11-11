@@ -45,6 +45,25 @@ LOCAL_SERVER_URL = os.environ.get("HEALTH_BACKEND_URL") or (
 )
 HEALTH_BACKEND_API_KEY = os.environ.get("HEALTH_BACKEND_API_KEY") or "local_api_key"
 HEALTH_BACKEND_MODEL = os.environ.get("HEALTH_BACKEND_MODEL", "totallylegitco/fighthealthinsurance_model_v0.5")
+# An optional second OpenAI-compatible endpoint, tried for a page when the
+# call to the one above fails. The scheduled refresh prefers LunaRoute and
+# falls back to DeepInfra this way. All of URL and model must be set for the
+# fallback to exist; the key defaults to the same placeholder.
+HEALTH_BACKEND_FALLBACK_URL = os.environ.get("HEALTH_BACKEND_FALLBACK_URL") or None
+HEALTH_BACKEND_FALLBACK_API_KEY = os.environ.get("HEALTH_BACKEND_FALLBACK_API_KEY") or "local_api_key"
+HEALTH_BACKEND_FALLBACK_MODEL = os.environ.get("HEALTH_BACKEND_FALLBACK_MODEL") or None
+# After this many failed calls in a row the primary endpoint is taken to be
+# down (or not to serve the model) and the rest of the run goes straight to
+# the fallback, rather than paying for a doomed call and its retries on each
+# of the remaining pages.
+PRIMARY_FAILURES_BEFORE_GIVING_UP = 5
+# With a fallback configured, the primary gets this long per page before the
+# page moves on to the fallback. It has to be well inside the per-URL budget
+# (URL_TIMEOUT_SECONDS): a primary that stalls until that budget cancels the
+# whole page would never reach the fallback, and would never count as failed.
+PRIMARY_TIMEOUT_SECONDS = 120.0
+URL_TIMEOUT_SECONDS = 300.0
+_consecutive_primary_failures = 0
 
 STATES = [
     {"name": "Alabama", "abbr": "AL"}, {"name": "Alaska", "abbr": "AK"},
@@ -368,16 +387,46 @@ async def fetch_and_clean_text(url: str) -> str:
         return ""
 
 
-def get_local_instructor_client():
+def get_local_instructor_client(
+    base_url: Optional[str] = None, api_key: Optional[str] = None
+):
     """Initializes Instructor connected to an OpenAI-compatible server (local by default)."""
     openai_client = AsyncOpenAI(
-        base_url=LOCAL_SERVER_URL,
-        api_key=HEALTH_BACKEND_API_KEY  # A value is required here even if no key is needed
+        base_url=base_url or LOCAL_SERVER_URL,
+        api_key=api_key or HEALTH_BACKEND_API_KEY  # A value is required here even if no key is needed
     )
 
     # Using MD_JSON mode for improved Gemma compatibility.  Other models may perform better with
     # Mode.JSON_SCHEMA or simply Mode.JSON
     return instructor.from_openai(openai_client, mode=instructor.Mode.MD_JSON)
+
+
+def has_fallback_backend() -> bool:
+    """Whether a second endpoint is configured to take over from the first."""
+    return bool(HEALTH_BACKEND_FALLBACK_URL and HEALTH_BACKEND_FALLBACK_MODEL)
+
+
+async def _extract_with_client(
+    client: Any, model_name: str, system_prompt: str, text_content: str
+) -> List[AppealsResource]:
+    """Ask one endpoint to extract the resources on a page; raises on failure."""
+    response = await client.chat.completions.create(
+        model=model_name,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Website Text:\n\n{text_content}"}
+        ],
+        response_model=PageExtraction,
+        max_tokens=2048,
+        temperature=0.1,  # Low temperature prevents structural wandering
+        extra_body={
+            # Disables reasoning output channels across common local backends (llama.cpp, Ollama, vLLM)
+            "reasoning_effort": "none",
+            "chat_template_kwargs": {"thinking": False},
+        },
+        max_retries=2
+    )
+    return response.resources
 
 
 async def extract_resources_local(
@@ -386,8 +435,17 @@ async def extract_resources_local(
     target_state_name: str,
     search_category: str  # Add this parameter
 ) -> List[AppealsResource]:
-    client = get_local_instructor_client()
-    
+    """
+    Extract the appeal resources a page describes, never raising.
+
+    The configured endpoint is called first. When a fallback endpoint is also
+    configured, a failed or stalled call there is retried on the fallback, and
+    once the primary has failed PRIMARY_FAILURES_BEFORE_GIVING_UP times in a
+    row the fallback takes every later page. Returns [] when no endpoint
+    could extract the page.
+    """
+    global _consecutive_primary_failures
+
     system_prompt = f"""
     You are an expert data extraction agent for an open-source medical appeals project.
     Analyze the provided text and extract ONLY primary entities, organizations, or programs that help citizens of {target_state_name} with medical appeals.
@@ -402,27 +460,55 @@ async def extract_resources_local(
     4. CONCISE NOTES: Keep the `notes` field strictly under 2 sentences.
     5. GROUPING: If multiple programs share the exact same contact phone number and address under one parent organization, group them into ONE primary resource. Use the parent organization as the `agency_name`, and list the sub-organizations in the `notes` field.
     """
-    
+
+    fallback = has_fallback_backend()
+    primary_given_up = (
+        fallback and _consecutive_primary_failures >= PRIMARY_FAILURES_BEFORE_GIVING_UP
+    )
+
+    if not primary_given_up:
+        try:
+            primary_call = _extract_with_client(
+                get_local_instructor_client(), model_name, system_prompt, text_content
+            )
+            if fallback:
+                # Bound the call so that a stalled primary fails here, where
+                # the fallback can take over, not at the per-URL timeout.
+                resources = await asyncio.wait_for(
+                    primary_call, timeout=PRIMARY_TIMEOUT_SECONDS
+                )
+            else:
+                resources = await primary_call
+            _consecutive_primary_failures = 0
+            return resources
+        except Exception as e:
+            if isinstance(e, asyncio.TimeoutError):
+                e = TimeoutError(f"no answer within {PRIMARY_TIMEOUT_SECONDS:.0f}s")
+            print(f"Extraction LLM Error: {e}")
+            if not fallback:
+                return []
+            _consecutive_primary_failures += 1
+            if _consecutive_primary_failures == PRIMARY_FAILURES_BEFORE_GIVING_UP:
+                print(
+                    f"  [Backend] {PRIMARY_FAILURES_BEFORE_GIVING_UP} failed calls in a row to "
+                    f"'{model_name}'; using the fallback '{HEALTH_BACKEND_FALLBACK_MODEL}' "
+                    "for the rest of the run."
+                )
+            else:
+                print(f"  [Backend] Retrying with the fallback '{HEALTH_BACKEND_FALLBACK_MODEL}'.")
+
     try:
-        response = await client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Website Text:\n\n{text_content}"}
-            ],
-            response_model=PageExtraction,
-            max_tokens=2048,
-            temperature=0.1,  # Low temperature prevents structural wandering
-            extra_body={
-                # Disables reasoning output channels across common local backends (llama.cpp, Ollama, vLLM)
-                "reasoning_effort": "none",
-                "chat_template_kwargs": {"thinking": False},
-            },
-            max_retries=2
+        return await _extract_with_client(
+            get_local_instructor_client(
+                base_url=HEALTH_BACKEND_FALLBACK_URL,
+                api_key=HEALTH_BACKEND_FALLBACK_API_KEY,
+            ),
+            cast(str, HEALTH_BACKEND_FALLBACK_MODEL),
+            system_prompt,
+            text_content,
         )
-        return response.resources
     except Exception as e:
-        print(f"Extraction LLM Error: {e}")
+        print(f"Extraction LLM Error (fallback): {e}")
         return []
 
 
@@ -433,7 +519,7 @@ async def process_single_url(
     state_name: str,
     category_label: str, 
     model_name: str,
-    timeout_seconds: float = 300.0  # 5 minutes per URL, important for preventing local execution loops.
+    timeout_seconds: float = URL_TIMEOUT_SECONDS,  # 5 minutes per URL, important for preventing local execution loops.
 ) -> List[AppealsResource]:
     """Fetches a URL, runs extraction, applies state & URL fallbacks, and deduplicates.
 
@@ -615,6 +701,8 @@ async def run_extraction_pipeline():
     all_extracted_results: List[Dict[str, Any]] = []
 
     print(f"\nBeginning extraction across {len(state_index)} states using '{HEALTH_BACKEND_MODEL}'...\n")
+    if has_fallback_backend():
+        print(f"Falling back to '{HEALTH_BACKEND_FALLBACK_MODEL}' when a call to it fails.\n")
 
     for state_entry in state_index:
         state_name = state_entry.get("state_name")

@@ -23,6 +23,7 @@ from django.utils import timezone
 
 from loguru import logger
 
+from fighthealthinsurance.email_utils import is_blocked_email
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
 from fighthealthinsurance.pro_signups import intro_was_sent
@@ -95,6 +96,13 @@ def action_block_reason(pro: InterestedProfessional, action: str) -> Optional[st
         return (
             "This professional has unsubscribed from Fight Health Insurance "
             "emails, so the thank-you cannot be sent."
+        )
+    if is_blocked_email(pro.email):
+        # send_fallback_email skips these without raising, so the send would
+        # be recorded and announced to the team with nothing going out.
+        return (
+            "We don't send email to this address (a blocked domain, a test "
+            "address, or not a valid address), so the thank-you cannot be sent."
         )
     if intro_was_sent(pro.email):
         return (

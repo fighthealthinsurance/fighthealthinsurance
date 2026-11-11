@@ -2038,7 +2038,7 @@ class FindNextStepsHelper:
             if other_plan_source is not None:
                 denial.other_plan_source = other_plan_source
                 changed_fields.add("other_plan_source")
-            if other_insurance_company and len(other_insurance_company) < 300:
+            if other_insurance_company and len(other_insurance_company) <= 300:
                 denial.other_insurance_company = other_insurance_company
                 changed_fields.add("other_insurance_company")
             elif emptied("other_insurance_company", other_insurance_company):
