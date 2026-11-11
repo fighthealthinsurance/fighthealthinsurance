@@ -21,6 +21,26 @@ It looks like we don't have a fax number on file for your appeal. That's an erro
 <p>
 There may have been a problem sending the fax. This is fairly common, and you can re-send the fax for free.
 </p>
+{% if known_non_fax %}
+<p>
+We think {{ fax_number }} is {{ known_non_fax.description }}, so a fax to it can't go through.
+</p>
+{% elif failure_reason == "voice" %}
+<p>
+When we called {{ fax_number }}, a person or a phone menu answered instead of a fax machine. That usually means it's a phone number, not a fax number.
+</p>
+{% elif failure_reason == "disconnected" %}
+<p>
+The phone company told us {{ fax_number }} is disconnected or not in service.
+</p>
+{% elif failure_reason == "invalid_number" %}
+<p>
+We couldn't dial {{ fax_number }}: it isn't a number we can fax.
+</p>
+{% endif %}
+<p>
+Please double check that {% if fax_number %}{{ fax_number }}{% else %}the number{% endif %} is the fax number for appeals, not the phone number. Your denial letter or your insurance company's website usually lists both.
+</p>
 <p>
 To re-send the fax, or send it to another number, use the button below.
 </p>

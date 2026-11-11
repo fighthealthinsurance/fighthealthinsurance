@@ -61,6 +61,10 @@ these links, and the page shows the fax of the one opened last.
 {% if number_used_up %}
 <p>We've already re-sent this fax to {{ fax_number }} {{ max_resends }} times, so we can't send it there again. Please check the fax number with your insurance company and enter a different one below, or email <a href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a> and we'll help.</p>
 {% endif %}
+{% if known_non_fax %}
+<p><strong>We think {{ fax_number }} is {{ known_non_fax.description }}</strong>, so a fax to it can't go through. Please enter the fax number for appeals below.</p>
+{% endif %}
+<p>Before you re-send, please double check that the number below is the fax number for appeals, not the phone number. Your denial letter or your insurance company's website usually lists both.</p>
 <section class="scan-section">
   <form class="fhi-stack" action="{{ request.get_full_path }}" method="post" enctype="multipart/form-data">
     {% csrf_token %}

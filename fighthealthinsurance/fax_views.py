@@ -197,11 +197,16 @@ class FaxFollowUpView(generic.FormView):
     def get_context_data(self, **kwargs):
         # Which fax the form is for, in the person's own details: the day
         # they sent it and the number on file. Nothing from the letter.
+        # And, when the number on file is one we know is a voice line, a
+        # word saying so: that is the usual reason a fax lands here.
+        from fighthealthinsurance.fax_send_core import known_non_fax_number
+
         return super().get_context_data(
             fax_date=self.fax.date,
             fax_number=self.fax.destination,
             number_used_up=self.on_file_number_used_up(),
             max_resends=MAX_RESENDS_PER_NUMBER,
+            known_non_fax=known_non_fax_number(self.fax),
             **kwargs,
         )
 

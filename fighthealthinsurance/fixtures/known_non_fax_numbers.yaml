@@ -1,0 +1,17 @@
+# Numbers people try to fax appeals to that do not take faxes (mostly
+# insurers' member-services voice lines). See models.KnownNonFaxNumber.
+#
+# Every InsuranceCompany / InsurancePlan appeal_phone_number in
+# insurance_companies.yaml already counts as a voice line, so only add
+# numbers here that are not on file there. Store the 10 digits only.
+# loaddata overwrites the row with the same pk on every deploy, so a number
+# added here needs a pk no admin-added row already has (check prod first).
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 1
+  fields:
+    number: "8663481286"
+    kind: voice
+    label: ""
+    notes: Insurer voice line that appeals keep getting faxed to (reported by staff, 2026-11).
+    created: 2026-11-11T00:00:00Z

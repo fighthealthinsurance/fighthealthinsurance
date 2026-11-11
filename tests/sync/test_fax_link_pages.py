@@ -38,7 +38,7 @@ from fighthealthinsurance.helpers.fax_helpers import (
     MAX_RESENDS_PER_NUMBER,
     SendFaxHelper,
 )
-from fighthealthinsurance.models import Denial, FaxesToSend
+from fighthealthinsurance.models import Denial, FaxesToSend, KnownNonFaxNumber
 
 EMAIL = "patient@example.com"
 LETTER = "Dear Insurer, please cover my treatment. Signed, Pat Example."
@@ -143,10 +143,10 @@ class FaxLinkPageTestCase(TestCase):
             f"to {fax.destination}."
         )
 
-    def resend(self, fax_phone=NEW_NUMBER, ref=None):
+    def resend(self, fax_phone=NEW_NUMBER, ref=None, **extra):
         """Submit the re-send form, by default the one on the page opened
         last."""
-        data = {"fax_phone": fax_phone}
+        data = {"fax_phone": fax_phone, **extra}
         if ref or self.shown_ref:
             data["fax_ref"] = ref or self.shown_ref
         with patch(DISPATCH) as dispatch:
@@ -666,3 +666,30 @@ class SendFaxLinkTest(FaxLinkPageTestCase):
         self.assertIn("We couldn't find your fax", html)
         self.assertIn("support42@fighthealthinsurance.com", html)
         self.assertNotIn("Thank you!", html)
+
+    def test_the_followup_page_asks_to_double_check_the_fax_number(self):
+        response = self.open_followup()
+        self.assertIn(
+            "is the fax number for appeals, not the phone number",
+            response.content.decode(),
+        )
+
+    def test_the_followup_page_says_a_known_voice_line_is_one(self):
+        KnownNonFaxNumber.objects.create(number=ON_FILE, label="Acme member services")
+        response = self.open_followup()
+        self.assertIn(
+            "a voice phone line (Acme member services)", response.content.decode()
+        )
+
+    def test_a_resend_to_a_known_voice_line_is_turned_back(self):
+        KnownNonFaxNumber.objects.create(number=NEW_NUMBER)
+        self.open_followup()
+        response, dispatch = self.resend()
+        dispatch.assert_not_called()
+        self.assertIn("I&#x27;ve checked", response.content.decode())
+
+    def test_a_resend_to_a_known_voice_line_goes_once_the_box_is_ticked(self):
+        KnownNonFaxNumber.objects.create(number=NEW_NUMBER)
+        self.open_followup()
+        _response, dispatch = self.resend(fax_number_is_right="on")
+        dispatch.assert_called_once()

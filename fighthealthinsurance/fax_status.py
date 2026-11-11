@@ -1,4 +1,4 @@
-"""Fax precheck status constants.
+"""Fax precheck status and failure-reason constants.
 
 Kept in their own dependency-free module so they can be imported from both
 ``fax_send_core`` (which touches Django/PHI) and the Temporal workflow
@@ -11,3 +11,15 @@ STATUS_NOT_FOUND = "not_found"
 STATUS_ALREADY_SENT = "already_sent"
 STATUS_MISSING_DENIAL = "missing_denial"
 STATUS_MISSING_DESTINATION = "missing_destination"
+
+# Why a fax failed, as best the fax backends can tell (fax_utils.classify_fax_failure).
+# Stored on FaxesToSend.failure_reason and read by finalize_fax; a None reason
+# means the backend gave us nothing we recognise.
+FAILURE_VOICE = "voice"
+FAILURE_DISCONNECTED = "disconnected"
+FAILURE_INVALID_NUMBER = "invalid_number"
+FAILURE_BUSY = "busy"
+FAILURE_NO_ANSWER = "no_answer"
+# The reasons that mean the number itself is wrong, not the line being busy
+# or the fax machine at the other end having a bad day.
+WRONG_NUMBER_FAILURES = (FAILURE_VOICE, FAILURE_DISCONNECTED, FAILURE_INVALID_NUMBER)

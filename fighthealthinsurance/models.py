@@ -2280,6 +2280,58 @@ class ExtraLinkFetchLog(models.Model):
         return f"FetchLog {self.id}: {self.status} at {self.timestamp}"
 
 
+class KnownNonFaxNumber(models.Model):
+    """A number people try to fax their appeal to that does not take faxes.
+
+    Mostly insurers' member-services voice lines, which are printed on denial
+    letters next to (or instead of) the appeals fax and get typed into the fax
+    box. A fax to one rings a phone menu and fails, so the fax form asks the
+    person to check the number, and the failed-fax emails (to the person and
+    to support) say we think it is a voice line rather than a fax problem.
+
+    The appeal_phone_number of every InsuranceCompany and InsurancePlan counts
+    too (fax_number_check.lookup_non_fax_number); this table is for numbers
+    that are not on file there. Fixture: known_non_fax_numbers.
+    """
+
+    KIND_VOICE = "voice"
+    KIND_DISCONNECTED = "disconnected"
+    KIND_CHOICES = [
+        (KIND_VOICE, "Voice line (does not take faxes)"),
+        (KIND_DISCONNECTED, "Disconnected / out of service"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    number = models.CharField(
+        max_length=20,
+        unique=True,
+        help_text="10-digit US number; punctuation and a leading 1 are dropped on save",
+    )
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default=KIND_VOICE)
+    label = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text=(
+            "Shown to the person, e.g. 'Aetna member services'. Leave blank "
+            "when we don't know whose line it is."
+        ),
+    )
+    insurance_company = models.ForeignKey(
+        "InsuranceCompany", null=True, blank=True, on_delete=models.SET_NULL
+    )
+    notes = models.TextField(blank=True, help_text="Internal: how we found out")
+    created = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        from fighthealthinsurance.fax_number_check import normalize_phone_digits
+
+        self.number = normalize_phone_digits(self.number) or self.number
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.number} ({self.get_kind_display()}) {self.label}".strip()
+
+
 class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # type: ignore
     """
     Queues faxes to be sent with appeal documents.
@@ -2338,6 +2390,12 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     for_appeal = models.ForeignKey(
         "Appeal", on_delete=models.SET_NULL, null=True, blank=True
     )
+    # Why the latest attempt failed, as best the fax backends could tell
+    # (fax_status.FAILURE_*; None when it went through or nothing was
+    # recognised), and the backend's own words for it, for support.
+    # Written by fax_send_core.send_fax_via_vendor, read by finalize_fax.
+    failure_reason = models.CharField(max_length=40, null=True, blank=True)
+    failure_detail = models.TextField(null=True, blank=True)
 
     def _get_filename(self) -> str:
         if self.combined_document:
