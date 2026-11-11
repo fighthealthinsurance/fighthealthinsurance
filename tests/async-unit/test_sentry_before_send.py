@@ -688,6 +688,18 @@ class TestDeleteConfirmationLinkStaysOutOfSentry:
             event = send(self._opened_from_the_link(), {})
             assert _confirm_delete_values_left(event) == []
 
+    def test_a_page_opened_from_the_link_scrubs_the_values_outside_the_referer(
+        self,
+    ):
+        """The Referer's query is cut first, so a breadcrumb carrying the
+        link shows the values are found and replaced everywhere else too."""
+        event = self._opened_from_the_link()
+        event["breadcrumbs"] = {
+            "values": [{"category": "navigation", "data": {"from": CONFIRM_URL}}]
+        }
+        event = before_send_transaction_filter(event, {})
+        assert _confirm_delete_values_left(event) == []
+
     def test_a_page_opened_from_the_link_keeps_its_own_query_string(self):
         event = before_send_transaction_filter(self._opened_from_the_link(), {})
         assert event["request"]["query_string"] == "utm_source=nav"

@@ -437,11 +437,19 @@ _PREREQUISITE_BEFORE_RE = re.compile(
     r"(?:(?:a|an|the|your|all|any|internal)\s+)*$"
     # "required to have exhausted", "requires that": not "as required by
     # law, this is our final adverse determination".
-    r"|\brequire[sd]?\s+(?:that|to)\b",
+    r"|\brequire[sd]?\s+(?:that|to)\b"
+    # "You must obtain a final adverse determination to request...".
+    r"|\b(?:must|need\s+to)\s+(?:obtain|receive|get|have)\s+"
+    r"(?:(?:a|an|the|your)\s+)*$",
     re.IGNORECASE,
 )
 _PREREQUISITE_MATCH_RE = re.compile(r"\b(?:must|be|need\s+to)\b", re.IGNORECASE)
-_PREREQUISITE_AFTER_RE = re.compile(r"\s*(?:before|prior\s+to)\b", re.IGNORECASE)
+# After the match: "...exhausted before external review", "a final adverse
+# determination is required to request external review".
+_PREREQUISITE_AFTER_RE = re.compile(
+    r"\s*(?:before|prior\s+to|(?:is|are)\s+(?:required|needed)\b)\b",
+    re.IGNORECASE,
+)
 
 
 def _final_word_stated(denial_text: str) -> bool:

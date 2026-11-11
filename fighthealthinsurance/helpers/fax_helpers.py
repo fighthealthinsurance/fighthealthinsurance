@@ -82,19 +82,12 @@ STAFF_RESEND_AFTER = timedelta(minutes=75)
 def _no_send_running(now: datetime) -> Q:
     """Rows no send may still be running for: nothing holds the vendor-send
     claim, and the last attempt finished, none started, or it started more
-    than SEND_ATTEMPT_LIVE ago. A claim on an unsent row whose attempt
-    started more than SEND_ATTEMPT_LIVE ago is a sender that died holding
-    it (a Ray actor killed mid-send never releases it), so it no longer
-    counts. The update in SendFaxHelper.resend uses it;
+    than SEND_ATTEMPT_LIVE ago. The update in SendFaxHelper.resend uses it;
     SendFaxHelper.send_in_progress is the same rule for a loaded row."""
     return Q(vendor_send_completed=False) & (
         Q(sent=True)
         | Q(attempting_to_send_as_of__isnull=True)
         | Q(attempting_to_send_as_of__lt=now - SEND_ATTEMPT_LIVE)
-    ) | Q(
-        vendor_send_completed=True,
-        sent=False,
-        attempting_to_send_as_of__lt=now - SEND_ATTEMPT_LIVE,
     )
 
 
@@ -258,11 +251,9 @@ class SendFaxHelper:
         """Whether a send may still be running for this fax: one holds the
         vendor-send claim, or one started within SEND_ATTEMPT_LIVE and has
         not finished. The same rule as _no_send_running."""
-        started = fax.attempting_to_send_as_of
-        if fax.vendor_send_completed and (
-            fax.sent or started is None or timezone.now() - started < SEND_ATTEMPT_LIVE
-        ):
+        if fax.vendor_send_completed:
             return True
+        started = fax.attempting_to_send_as_of
         return (
             not fax.sent
             and started is not None
@@ -306,8 +297,6 @@ class SendFaxHelper:
                 destination=fax_phone,
                 should_send=True,
                 sent=False,
-                # A dead sender's claim goes with it; precheck claims anew.
-                vendor_send_completed=False,
                 attempting_to_send_as_of=now,
             )
         )

@@ -310,6 +310,8 @@ class RegulatorEscalationReasonsTest(TestCase):
             "Your plan requires that internal appeals be exhausted prior to filing a lawsuit.",
             "Upon a final adverse determination, you may request an external review.",
             "Following a final adverse benefit determination, you can request external review.",
+            "A final adverse determination is required to request external review.",
+            "You must obtain a final adverse determination to request external review.",
         ):
             with self.subTest(text=text):
                 denial = _FakeDenial(state="", denial_text=text)
