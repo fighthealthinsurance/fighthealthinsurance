@@ -34,7 +34,7 @@ class NonFaxNumber:
         if self.kind == DISCONNECTED:
             return "a number that is out of service"
         if self.label:
-            return f"a voice phone line ({self.label}), not a fax line"
+            return f"the {self.label} phone line, not a fax line"
         return "an insurance company's voice phone line, not a fax line"
 
 

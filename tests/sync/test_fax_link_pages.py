@@ -678,7 +678,8 @@ class SendFaxLinkTest(FaxLinkPageTestCase):
         KnownNonFaxNumber.objects.create(number=ON_FILE, label="Acme member services")
         response = self.open_followup()
         self.assertIn(
-            "a voice phone line (Acme member services)", response.content.decode()
+            "the Acme member services phone line, not a fax line",
+            response.content.decode(),
         )
 
     def test_a_resend_to_a_known_voice_line_is_turned_back(self):

@@ -228,10 +228,31 @@ def test_lookup_returns_none_for_an_unknown_number():
     assert lookup_non_fax_number("4255551234") is None
 
 
-@pytest.mark.django_db
-def test_fixture_seeds_the_reported_voice_line():
-    call_command("loaddata", "known_non_fax_numbers", verbosity=0)
-    assert lookup_non_fax_number(VOICE_LINE) is not None
+@pytest.fixture
+def seeded(db):
+    # The seed rows point at insurance_companies' carriers, which point at
+    # plan_source rows, so all three load, in order.
+    for fixture in ("plan_source", "insurance_companies", "known_non_fax_numbers"):
+        call_command("loaddata", fixture, verbosity=0)
+
+
+def test_fixture_seeds_the_apple_uhc_voice_line(seeded):
+    found = lookup_non_fax_number(VOICE_LINE)
+    assert found is not None and "Apple" in found.label
+
+
+def test_fixture_seeds_1_800_medicare(seeded):
+    assert lookup_non_fax_number("1-800-633-4227") is not None
+
+
+def test_no_seeded_voice_line_is_an_appeals_fax_on_file(seeded):
+    from fighthealthinsurance.fax_number_check import _numbers_on_file
+
+    seeded_numbers = set(KnownNonFaxNumber.objects.values_list("number", flat=True))
+    faxes = {
+        normalize_phone_digits(fax) for fax, _ in _numbers_on_file("appeal_fax_number")
+    }
+    assert seeded_numbers.isdisjoint(faxes)
 
 
 # --- what a send keeps, and the notes in the emails -----------------------------
@@ -363,7 +384,7 @@ def test_patient_email_says_we_think_it_is_their_voice_line(denial, support_mail
         fax_send_core.finalize_fax(fax, False, missing_destination=False)
     context = email.call_args[0][2]
     text = render_to_string("emails/fax_followup.txt", context)
-    assert "voice phone line (Acme member services)" in text
+    assert "the Acme member services phone line, not a fax line*" in text
 
 
 FAILED = {
