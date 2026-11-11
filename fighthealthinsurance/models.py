@@ -2328,6 +2328,11 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     delivery_counted = models.BooleanField(
         default=False, db_default=False, editable=False
     )
+    # How many times the follow-up link has re-sent this fax to each number,
+    # keyed by the number's digits (SendFaxHelper.resend_number_key). The
+    # link stops re-sending to a number after MAX_RESENDS_PER_NUMBER. Null
+    # means none yet. Staff can clear it here to let the link try again.
+    resends_by_number = models.JSONField(null=True, blank=True)
     # Professional we may use different backends.
     professional = models.BooleanField(default=False)
     for_appeal = models.ForeignKey(
