@@ -149,6 +149,9 @@ class SecondSubmissionTest(_SignupCase):
             [f"New pro version signup #{lead.id} (returning)"],
         )
 
+    def test_returning_notification_does_not_claim_nothing_was_sent(self):
+        self.assertNotIn("Nothing has been sent", _team_mail()[0].body)
+
     def test_lands_on_the_plain_thankyou_page(self):
         self.assertRedirects(self.response, reverse("pro_version_thankyou"))
 

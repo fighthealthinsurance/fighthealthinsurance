@@ -581,6 +581,9 @@ class _TimeoutNote(str):
 
 # The most of a web page's excerpt a WebCitation keeps.
 WEB_CITATION_EXCERPT_CHARS = 1200
+# The most of its title: what the relevance judge reads of it
+# (research_judging.TERM_CHAR_CAP).
+WEB_CITATION_TITLE_CHARS = 200
 
 
 class WebCitation(str):
@@ -596,7 +599,9 @@ class WebCitation(str):
     excerpt: str
 
     def __new__(cls, title: str, url: str, excerpt: str = "") -> "WebCitation":
-        title = " ".join(str(title or "").split())
+        # Capped like the excerpt: a page's title is untrusted text that goes
+        # into the letter's prompt, and the judge reads only this much of it.
+        title = " ".join(str(title or "").split())[:WEB_CITATION_TITLE_CHARS]
         url = str(url or "").strip()
         text = f"{title}. {url}" if title else url
         obj = super().__new__(cls, text)

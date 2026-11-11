@@ -356,6 +356,18 @@ class NewUpdatedUnchangedTest(_ImportTestCase):
         )
         self.assertIn("created=0 updated=1 unchanged=0", out)
 
+    def test_a_reimport_without_notes_keeps_the_notes_staff_wrote(self):
+        self.run_import([self.record()])
+        PublicPlanDocument.objects.update(notes="Checked against the 2025 filing.")
+        self.run_import([self.record(title="Kaiser NorCal 2025 HMO EOC, revised")])
+        self.assertEqual(self.the_document().notes, "Checked against the 2025 filing.")
+
+    def test_a_reimport_with_notes_replaces_them(self):
+        self.run_import([self.record()])
+        PublicPlanDocument.objects.update(notes="Old note.")
+        self.run_import([self.record(notes="From the pipeline.")])
+        self.assertEqual(self.the_document().notes, "From the pipeline.")
+
     def test_an_identical_reimport_is_counted_unchanged(self):
         self.run_import([self.record()])
         out, _ = self.run_import([self.record()])
@@ -1338,7 +1350,9 @@ class ReviewFindingsImportTest(_ImportTestCase):
         root, revised = self.pdf_under_root(pages=REVISED_PDF_PAGES)
         self.run_import([self.file_record()], files_root=root)
         with self.captureOnCommitCallbacks(execute=True):
-            out, _ = self.run_import([self.file_record()], files_root=root, store_file=True)
+            out, _ = self.run_import(
+                [self.file_record()], files_root=root, store_file=True
+            )
         self.assertIn("updated=1", out)
         doc = self.the_document(SBC_KEY)
         with backend.open(doc.stored_file.name, "rb") as fh:

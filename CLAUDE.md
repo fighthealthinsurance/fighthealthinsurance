@@ -53,6 +53,16 @@ python manage.py loaddata initial followup plan_source insurance_companies pa_re
 1. User submits denial information via web form or chat interface
 2. `common_view_logic.py` orchestrates the appeal workflow
 3. `generate_appeal.py` calls the ML backends to create the appeal letter: internal models first, hosted models as a backup only when the user allows external models (`Denial.use_external`)
+   - **Web search is not an external model.** With `OPENROUTER_API_KEY` set,
+     `ml/web_search_context.py` runs a web search for extra citations. It is
+     sent search terms only — the procedure and diagnosis, never the letter,
+     the history or anything about the person — the same terms the PubMed
+     search sends, so like that search it runs whatever `Denial.use_external`
+     says. Don't gate it on that consent, and don't add anything else to what
+     it is sent. Its results are untrusted web text: each is judged for
+     relevance before use, by our own best internal model (e.g. `fhi-local`),
+     or by the outside judge (Jev) only when `use_external` allows it, and
+     with no judge available the search is skipped.
 4. WebSocket consumers in `websockets.py` stream results in real-time
 5. Appeals can be sent via email, fax, or downloaded as PDF
 
