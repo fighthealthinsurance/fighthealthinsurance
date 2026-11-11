@@ -25,6 +25,7 @@ from fighthealthinsurance.chooser_practice_areas import (
     practice_area_texts_match,
 )
 from fighthealthinsurance.chooser_tasks import (
+    _draw_forced_models,
     _external_backends_without_fresh_tasks,
     _forced_arena_models,
     _generate_appeal_candidates,
@@ -396,7 +397,9 @@ class TestForcedArenaModels:
         ):
             assert _forced_arena_models("appeal") == [up]
 
-    def test_no_more_models_are_forced_than_there_are_slots(self):
+    def test_names_past_the_slot_count_stay_in_the_pool(self):
+        """More names than slots make a pool to draw from, not a list cut
+        short: every one is returned, in the order named."""
         models = {f"m-{i}": [FakeModel(f"m-{i}")] for i in range(6)}
         with override_settings(CHOOSER_FORCE_MODEL=",".join(models)), patch.object(
             chooser_tasks.ml_router, "models_by_name", models
@@ -405,7 +408,58 @@ class TestForcedArenaModels:
         ), patch.object(chooser_tasks, "CHOOSER_NUM_CANDIDATES", 4):
             forced = _forced_arena_models("appeal")
 
-        assert [m.name for m in forced] == ["m-0", "m-1", "m-2", "m-3"]
+        assert [m.name for m in forced] == [f"m-{i}" for i in range(6)]
+
+
+@pytest.mark.asyncio
+class TestDrawForcedModels:
+    """_draw_forced_models: which pool models one new task seats. Coverage
+    is mocked, so no database is read."""
+
+    POOL = [FakeModel(f"pool-{i}", external=True) for i in range(6)]
+
+    async def _draw(self, coverage, pool=None, slots=4):
+        with patch.object(chooser_tasks, "CHOOSER_NUM_CANDIDATES", slots), patch.object(
+            chooser_tasks, "_fresh_task_coverage", AsyncMock(return_value=coverage)
+        ):
+            return await _draw_forced_models("appeal", pool or self.POOL)
+
+    async def test_a_pool_that_fits_is_seated_whole(self):
+        drawn = await self._draw({}, pool=self.POOL[:3])
+
+        assert drawn == self.POOL[:3]
+
+    async def test_a_larger_pool_fills_exactly_the_slots(self):
+        drawn = await self._draw({})
+
+        assert len({m.name for m in drawn}) == 4
+
+    async def test_the_least_covered_pool_models_are_drawn(self):
+        coverage = {m.name: 5 for m in self.POOL}
+        coverage.update({"pool-1": 0, "pool-3": 1, "pool-4": 2, "pool-5": 3})
+
+        drawn = await self._draw(coverage)
+
+        assert {m.name for m in drawn} == {"pool-1", "pool-3", "pool-4", "pool-5"}
+
+    async def test_ties_are_broken_at_random(self):
+        """Six equally covered models: over many draws each gets seated, so
+        no pool model starves."""
+        seen = set()
+        for _ in range(50):
+            seen |= {m.name for m in await self._draw({})}
+
+        assert seen == {m.name for m in self.POOL}
+
+    async def test_an_unreadable_coverage_still_fills_the_slots(self):
+        with patch.object(chooser_tasks, "CHOOSER_NUM_CANDIDATES", 4), patch.object(
+            chooser_tasks,
+            "_fresh_task_coverage",
+            AsyncMock(side_effect=RuntimeError("db down")),
+        ):
+            drawn = await _draw_forced_models("appeal", self.POOL)
+
+        assert len(drawn) == 4
 
 
 @pytest.mark.asyncio

@@ -78,10 +78,21 @@ def test_every_default_forced_model_names_a_backend_model():
         known |= {m.name for m in backend.model_catalog()}
         known |= {m.name for m in backend.chat_models()}
     defaults = [n.strip() for n in Base.CHOOSER_FORCE_MODEL.split(",") if n.strip()]
-    assert defaults == [
+    assert set(defaults) <= known, set(defaults) - known
+
+
+@pytest.mark.skipif(
+    "CHOOSER_FORCE_MODEL" in os.environ,
+    reason="CHOOSER_FORCE_MODEL in the environment replaces the default",
+)
+def test_the_default_arena_pool():
+    from fighthealthinsurance.settings import Base
+
+    assert Base.CHOOSER_FORCE_MODEL.split(",") == [
         "lunaroute/deepseek-4.1-flash",
+        "lunaroute/glm-5.3",
         "openrouter-arena/anthropic/claude-fable-5.2",
         "openrouter-arena/openai/gpt-6.1-terra",
         "nvidia/NVIDIA-Nemotron-3.5-Super-VL",
+        "deepseek-ai/DeepSeek-V4-Pro-0813",
     ]
-    assert set(defaults) <= known, set(defaults) - known

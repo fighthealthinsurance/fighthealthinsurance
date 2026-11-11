@@ -280,9 +280,11 @@ _UNREGISTERED_FORCED_NAMES: set = set()
 
 def _forced_arena_models(task_type: str) -> List:
     """The backends ``CHOOSER_FORCE_MODEL`` names that can answer a
-    ``task_type`` task, one instance each, in the order named: a model being
-    tried out, seated in every new arena task (see _select_candidate_models)
-    so it collects votes against the usual rotation quickly. Names are the
+    ``task_type`` task, one instance each, in the order named. Up to
+    CHOOSER_NUM_CANDIDATES of them are seated in every new arena task (see
+    _draw_forced_models and _select_candidate_models): with no more than that,
+    models being tried out collect votes against the usual rotation quickly;
+    with more, they are the pool every slot is drawn from. Names are the
     router's registered names, comma-separated: the keys of
     ``models_by_name`` (as FORCE_MODEL takes), or of
     ``chat_outside_models_by_name`` for a model kept out of every general
@@ -295,9 +297,7 @@ def _forced_arena_models(task_type: str) -> List:
     A chat task skips an appeal-text fine-tune (one that says it doesn't
     follow general instructions), as the router's chat list does: it would
     only waste the slot, and the coverage refill would keep building chat
-    tasks waiting for a candidate it never writes. Past CHOOSER_NUM_CANDIDATES
-    names the rest are dropped, with a warning, for the same reason: they
-    would never be seated."""
+    tasks waiting for a candidate it never writes."""
     raw = getattr(settings, "CHOOSER_FORCE_MODEL", "") or ""
     names = raw.split(",") if isinstance(raw, str) else list(raw)
     forced: List = []
@@ -333,14 +333,30 @@ def _forced_arena_models(task_type: str) -> List:
             )
             continue
         forced.append(model)
-    if len(forced) > CHOOSER_NUM_CANDIDATES:
-        logger.warning(
-            f"CHOOSER_FORCE_MODEL names {len(forced)} backends for "
-            f"{CHOOSER_NUM_CANDIDATES} candidate slots; forcing only "
-            f"{[_model_display_name(m) for m in forced[:CHOOSER_NUM_CANDIDATES]]}"
-        )
-        forced = forced[:CHOOSER_NUM_CANDIDATES]
     return forced
+
+
+async def _draw_forced_models(task_type: str, forced: List) -> List:
+    """The ``forced`` backends to seat on one new ``task_type`` task: all of
+    them when they fit in CHOOSER_NUM_CANDIDATES slots, else that many drawn
+    from the pool, the ones on the fewest fresh tasks first (ties broken at
+    random), so every pool model keeps fresh tasks to be voted on. Drawn
+    models come back in random order, so a model's slot does not give it
+    away. When the coverage can't be read, the draw is plain random."""
+    if len(forced) <= CHOOSER_NUM_CANDIDATES:
+        return list(forced)
+    try:
+        coverage = await _fresh_task_coverage(task_type)
+    except Exception as e:
+        logger.warning(f"Chooser: could not read {task_type} coverage: {e}")
+        coverage = {}
+    ranked = sorted(
+        forced,
+        key=lambda m: (coverage.get(canonical_model_name(m), 0), random.random()),
+    )
+    drawn = ranked[:CHOOSER_NUM_CANDIDATES]
+    random.shuffle(drawn)
+    return drawn
 
 
 def _select_candidate_models(
@@ -1445,9 +1461,8 @@ async def _fill_candidates(
     """
     # Drawn from the same list the coverage refill checks, so the two agree.
     comparable = _comparable_backends(task_type)
-    models = _select_candidate_models(
-        comparable, CHOOSER_NUM_CANDIDATES, _forced_arena_models(task_type)
-    )
+    forced = await _draw_forced_models(task_type, _forced_arena_models(task_type))
+    models = _select_candidate_models(comparable, CHOOSER_NUM_CANDIDATES, forced)
     if not models:
         logger.warning(f"No models available for {task_type} candidate generation")
         return
@@ -2047,9 +2062,10 @@ async def _external_backends_without_fresh_tasks(task_type: str) -> set:
         return set()
     # Named the way candidates are stored, or the lookup below could miss.
     external = {canonical_model_name(m) for m in forced}
-    # Forced models that take every slot leave none for the rest, so only
-    # theirs can gain coverage; counting the others would build a batch every
-    # tick (up to the unscored ceiling) that compares none of them.
+    # Forced models that take every slot (a pool at least that big) leave
+    # none for the rest, so only theirs can gain coverage; counting the others
+    # would build a batch every tick (up to the unscored ceiling) that
+    # compares none of them.
     if len(forced) < CHOOSER_NUM_CANDIDATES:
         external |= {
             canonical_model_name(m) for m in backends if getattr(m, "external", False)

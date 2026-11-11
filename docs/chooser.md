@@ -449,36 +449,43 @@ at 1 however many rounds are judged, so the simplest case left comes first;
 counting as a 5. Both apply with the warm-up off too, since the judge asked;
 an unknown value is ignored. The choice is not stored with the vote.
 
-### Trying out a model (`CHOOSER_FORCE_MODEL`)
+### Trying out a model, or choosing the pool (`CHOOSER_FORCE_MODEL`)
 
 To get a new model votes quickly, set `CHOOSER_FORCE_MODEL` to its
 registered router name (a key of `ml_router.models_by_name`, as
-`FORCE_MODEL` takes; several may be given, comma-separated, up to
-`CHOOSER_NUM_CANDIDATES`). Every new arena task then seats it first, whether
-or not the router would have picked it, and fills the other slots as usual,
-so it is compared against the regular rotation rather than replacing it. An
-appeal-text fine-tune (one that doesn't follow general instructions) is
-forced into appeal tasks only, as chat routing leaves it out too. The coverage refill treats it like an
-external backend, building fresh tasks until enough of them include it. A
-name the router doesn't know is logged once and ignored. Unlike
-`FORCE_MODEL`, it changes nothing outside the arena.
+`FORCE_MODEL` takes; several may be given, comma-separated). With no more
+names than `CHOOSER_NUM_CANDIDATES`, every new arena task seats them all
+first, whether or not the router would have picked them, and fills the other
+slots as usual, so they are compared against the regular rotation rather
+than replacing it. An appeal-text fine-tune (one that doesn't follow general
+instructions) is forced into appeal tasks only, as chat routing leaves it out
+too. The coverage refill treats a forced model like an external backend,
+building fresh tasks until enough of them include it. A name the router
+doesn't know is logged once and ignored. Unlike `FORCE_MODEL`, it changes
+nothing outside the arena.
+
+With more names than slots, the names are the pool: each new task draws its
+`CHOOSER_NUM_CANDIDATES` slots from them (`_draw_forced_models`), the models
+on the fewest fresh tasks first, ties at random, so every pool model keeps
+fresh tasks to be voted on, and no model outside the pool is seated. If
+skipped names leave fewer registered pool models than slots, the usual
+rotation fills the rest.
 
 A forced name can also be a model kept out of every general pool (one a
 backend lists in `chat_models()`), so a provider can be tried on the arena's
-synthetic cases without being offered any real traffic. The default is four
-models (see [ml-backends.md](ml-backends.md)):
+synthetic cases without being offered any real traffic. The default is a
+pool of six (see [ml-backends.md](ml-backends.md)):
 
 - `lunaroute/deepseek-4.1-flash` (DeepSeek 4.1 Flash, needs `LUNA_ROUTE_KEY`)
+- `lunaroute/glm-5.3` (GLM-5.3, needs `LUNA_ROUTE_KEY`)
 - `openrouter-arena/anthropic/claude-fable-5.2` (the newest Anthropic model)
 - `openrouter-arena/openai/gpt-6.1-terra` (the newest OpenAI model)
 - `nvidia/NVIDIA-Nemotron-3.5-Super-VL` (DeepInfra, needs `DEEPINFRA_API`)
+- `deepseek-ai/DeepSeek-V4-Pro-0813` (the full DeepSeek, DeepInfra; DeepInfra
+  serves no full 4.1 yet)
 
 The two `openrouter-arena/` models need `OPENROUTER_API_KEY` and are
-synthetic-only, like LunaRoute's. Four names fill all
-`CHOOSER_NUM_CANDIDATES` slots, so while all four are registered no other
-model is seated in new tasks; a name without a backend is skipped and its
-slot goes back to the usual rotation. `CHOOSER_FORCE_MODEL=""` turns forcing
-off.
+synthetic-only, like LunaRoute's. `CHOOSER_FORCE_MODEL=""` turns forcing off.
 
 ## Keeping the pool stocked
 
@@ -604,7 +611,7 @@ environment variables of the same name.
 | `CHOOSER_LAUNCH_BACKFILL_SIZE` | `100` | Appeal tasks the launch backfill writes (`0` turns it off) |
 | `CHOOSER_LAUNCH_BACKFILL_MIN_VOTES` | `2` | Votes every current appeal task needs before the launch backfill is due |
 | `CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS` | `3600` | How long a due launch backfill waits for a generation claim another process holds |
-| `CHOOSER_FORCE_MODEL` | DeepSeek 4.1 Flash, Claude Fable 5.2, GPT-6.1 Terra, Nemotron 3.5 Super (`""` in tests) | Registered model names seated in every new arena task |
+| `CHOOSER_FORCE_MODEL` | DeepSeek 4.1 Flash, GLM-5.3, Claude Fable 5.2, GPT-6.1 Terra, Nemotron 3.5 Super, DeepSeek V4 Pro (`""` in tests) | Registered model names seated in every new arena task; with more than `CHOOSER_NUM_CANDIDATES`, the pool every slot is drawn from |
 | `CHOOSER_WARMUP_ROUNDS_PER_LEVEL` | `1` | Votes a judge casts before the complexity of the cases served to them may rise a level; `0` turns the warm-up off |
 | `CHOOSER_WARMUP_SATURATION_VOTES` | `5` | Votes after which a case yields its place, in the warm-up or in the order a judge chose, to a less-judged one |
 | `CONDITION_RANKING_MIN_PEOPLE` | `5` | The k in k-anonymity: different people per term |
