@@ -24,6 +24,7 @@ from fighthealthinsurance.fax_status import (
     FAILURE_DISCONNECTED,
     FAILURE_INVALID_NUMBER,
     FAILURE_NO_ANSWER,
+    FAILURE_OUR_SIDE,
     FAILURE_VOICE,
 )
 from fighthealthinsurance.fax_utils import (
@@ -62,6 +63,8 @@ VOICE_LINE = "866-348-1286"
             FAILURE_DISCONNECTED,
         ),
         ("<td>failed</td><td>Voice answered</td>", FAILURE_VOICE),
+        ("No local dialtone", FAILURE_OUR_SIDE),
+        ("Modem busy", FAILURE_OUR_SIDE),
     ],
 )
 def test_classify_fax_failure_recognises_backend_messages(text, reason):
@@ -78,6 +81,19 @@ def test_report_prefers_a_wrong_number_reason_over_a_later_busy():
     report.note("No carrier detected")
     report.note("No answer from remote")
     assert report.failure_reason == FAILURE_VOICE
+
+
+def test_report_prefers_what_a_call_reached_over_our_own_trouble():
+    report = FaxSendReport()
+    report.note("SonicFax: login failed", FAILURE_OUR_SIDE, classify=False)
+    report.note("Busy signal detected")
+    assert report.failure_reason == FAILURE_BUSY
+
+
+def test_report_falls_back_to_otherwise_for_unrecognised_text():
+    report = FaxSendReport()
+    report.note("ssh: connect to host fax port 22", otherwise=FAILURE_OUR_SIDE)
+    assert report.failure_reason == FAILURE_OUR_SIDE
 
 
 def test_report_does_not_classify_text_marked_as_not_a_call_result():
@@ -136,6 +152,17 @@ async def _send_with_report(backend, destination="14255555555"):
 async def test_send_fax_report_carries_the_backends_failure_reason():
     sent, report = await _send_with_report(_NotingBackend("No carrier detected"))
     assert (sent, report.failure_reason) == (False, FAILURE_VOICE)
+
+
+class _RaisingBackend(FaxSenderBase):
+    async def send_fax_blocking(self, destination, path, dest_name=None):
+        raise RuntimeError("Error logging into sonic: Internet, Voice and TV")
+
+
+@pytest.mark.asyncio
+async def test_send_fax_report_blames_our_side_when_a_backend_raises():
+    _sent, report = await _send_with_report(_RaisingBackend())
+    assert report.failure_reason == FAILURE_OUR_SIDE
 
 
 @pytest.mark.asyncio
@@ -252,6 +279,20 @@ def test_failed_send_keeps_the_failure_reason_on_the_row(mock_send, denial):
 
 @pytest.mark.django_db
 @patch("fighthealthinsurance.fax_send_core.flexible_fax_magic.send_fax")
+def test_a_send_that_raises_is_recorded_as_our_side(mock_send, denial):
+    mock_send.side_effect = RuntimeError("pandoc fell over")
+    fax = _make_fax(denial)
+    with (
+        patch.object(fax, "get_temporary_document_path", return_value="/tmp/x.pdf"),
+        pytest.raises(RuntimeError),
+    ):
+        fax_send_core.send_fax_via_vendor(fax)
+    fax.refresh_from_db()
+    assert fax.failure_reason == FAILURE_OUR_SIDE
+
+
+@pytest.mark.django_db
+@patch("fighthealthinsurance.fax_send_core.flexible_fax_magic.send_fax")
 def test_successful_send_clears_an_earlier_failure_reason(mock_send, denial):
     mock_send.return_value = True
     fax = _make_fax(denial, failure_reason=FAILURE_VOICE, failure_detail="old")
@@ -295,6 +336,21 @@ def test_support_email_includes_what_the_fax_line_reported(denial, support_mail)
 
 
 @pytest.mark.django_db
+def test_support_email_flags_our_own_fax_system(denial, support_mail):
+    fax = _make_fax(denial, failure_reason=FAILURE_OUR_SIDE, failure_detail="login")
+    fax_send_core.send_fax_status_notification(fax, False, False)
+    subject, body = support_mail.call_args[0][:2]
+    assert "likely OUR fax system" in subject and "worth investigating" in body
+
+
+@pytest.mark.django_db
+def test_support_email_says_a_busy_line_is_probably_not_us(denial, support_mail):
+    fax = _make_fax(denial, failure_reason=FAILURE_BUSY)
+    fax_send_core.send_fax_status_notification(fax, False, False)
+    assert "not our fax system" in support_mail.call_args[0][1]
+
+
+@pytest.mark.django_db
 def test_patient_email_says_we_think_it_is_their_voice_line(denial, support_mail):
     KnownNonFaxNumber.objects.create(number=VOICE_LINE, label="Acme member services")
     fax = _make_fax(denial, destination=VOICE_LINE)
@@ -329,6 +385,40 @@ def test_failed_fax_email_explains_a_voice_answer():
         "emails/fax_followup.txt", {**FAILED, "failure_reason": FAILURE_VOICE}
     )
     assert "a person or a phone menu answered" in rendered
+
+
+@pytest.mark.parametrize("template", ["fax_followup.txt", "fax_followup.html"])
+@pytest.mark.parametrize(
+    "reason",
+    [
+        FAILURE_VOICE,
+        FAILURE_DISCONNECTED,
+        FAILURE_INVALID_NUMBER,
+        FAILURE_BUSY,
+        FAILURE_NO_ANSWER,
+        FAILURE_OUR_SIDE,
+    ],
+)
+def test_failed_fax_email_stars_its_guess_and_says_we_could_be_wrong(
+    template, reason
+):
+    rendered = render_to_string(
+        f"emails/{template}", {**FAILED, "failure_reason": reason}
+    )
+    assert ".*" in rendered or "*," in rendered
+    assert "* This is our best guess" in rendered and "we could be wrong" in rendered
+
+
+def test_failed_fax_email_without_a_reason_has_no_footnote():
+    rendered = render_to_string("emails/fax_followup.txt", FAILED)
+    assert "we could be wrong" not in rendered
+
+
+def test_failed_fax_email_says_when_it_is_our_fax_system():
+    rendered = render_to_string(
+        "emails/fax_followup.txt", {**FAILED, "failure_reason": FAILURE_OUR_SIDE}
+    )
+    assert "a problem with our fax system*, not with the number" in rendered
 
 
 def test_successful_fax_email_has_no_double_check_note():

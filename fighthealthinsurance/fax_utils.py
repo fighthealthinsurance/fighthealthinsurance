@@ -22,7 +22,9 @@ from .fax_status import (
     FAILURE_DISCONNECTED,
     FAILURE_INVALID_NUMBER,
     FAILURE_NO_ANSWER,
+    FAILURE_OUR_SIDE,
     FAILURE_VOICE,
+    REMOTE_LINE_FAILURES,
     WRONG_NUMBER_FAILURES,
 )
 from .utils import _try_pandoc_engines, pandoc_convert_command
@@ -37,6 +39,16 @@ FROM_VOICE = os.getenv("FROM_VOICE", "2029383266")
 # call-status table (faxstat's Status column, sendfax -w's output); Sonic's
 # history page shows the carrier's message beside "failed".
 _FAILURE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        # Our own phone line / modem: first, so "modem busy" is ours.
+        FAILURE_OUR_SIDE,
+        re.compile(
+            r"no local dial ?tone|no dial ?tone|no modem"
+            r"|modem (?:is )?(?:busy|wedged|not ready|error|in use)"
+            r"|unable to (?:open|lock|setup) modem",
+            re.IGNORECASE,
+        ),
+    ),
     (
         FAILURE_DISCONNECTED,
         re.compile(
@@ -96,8 +108,11 @@ class FaxSendReport(object):
     ``FlexibleFaxMagic.send_fax`` puts it in a context variable for the
     duration of the send, so the backends can note what they saw without
     every backend's signature (and every test double of one) changing.
-    The first reason that is about the number itself wins over a later
-    busy / no-answer from another backend or a retry.
+    What a call actually reached beats what broke on our side: a reason
+    about the number itself (voice / dead / invalid) wins over busy or no
+    answer, which win over our own trouble (a backend login, a modem). So
+    "Sonic's login failed, then HylaFAX reached a phone menu" reads as the
+    phone menu. Ties keep the first reason.
     """
 
     def __init__(self) -> None:
@@ -105,27 +120,39 @@ class FaxSendReport(object):
         self.details: list[str] = []
 
     def note(
-        self, detail: str, reason: Optional[str] = None, classify: bool = True
+        self,
+        detail: str,
+        reason: Optional[str] = None,
+        classify: bool = True,
+        otherwise: Optional[str] = None,
     ) -> None:
         """Record a backend's failure message, classifying it when no reason
-        is given and ``classify`` is set. Details are kept short: they go in
-        a support email."""
+        is given and ``classify`` is set; ``otherwise`` is the reason when
+        nothing in it is recognised. Details are kept short: they go in a
+        support email."""
         detail = " ".join(html.unescape(_TAG.sub(" ", detail)).split())[:300]
         if detail and detail not in self.details:
             self.details.append(detail)
         if reason is None and classify:
             reason = classify_fax_failure(detail)
         if reason is None:
+            reason = otherwise
+        if reason is None:
             return
-        if self.failure_reason is None or (
-            reason in WRONG_NUMBER_FAILURES
-            and self.failure_reason not in WRONG_NUMBER_FAILURES
-        ):
+        if self.failure_reason is None or _rank(reason) > _rank(self.failure_reason):
             self.failure_reason = reason
 
     @property
     def detail(self) -> str:
         return " | ".join(self.details)[:1000]
+
+
+def _rank(reason: str) -> int:
+    if reason in WRONG_NUMBER_FAILURES:
+        return 3
+    if reason in REMOTE_LINE_FAILURES:
+        return 2
+    return 1
 
 
 _current_report: contextvars.ContextVar[Optional[FaxSendReport]] = (
@@ -134,7 +161,10 @@ _current_report: contextvars.ContextVar[Optional[FaxSendReport]] = (
 
 
 def note_fax_failure(
-    detail: str, reason: Optional[str] = None, classify: bool = True
+    detail: str,
+    reason: Optional[str] = None,
+    classify: bool = True,
+    otherwise: Optional[str] = None,
 ) -> None:
     """Note a failure message on the report of the send in progress, if any.
 
@@ -143,7 +173,7 @@ def note_fax_failure(
     about the number we dialed."""
     report = _current_report.get()
     if report is not None:
-        report.note(detail, reason, classify)
+        report.note(detail, reason, classify, otherwise)
 
 
 class FaxSenderBase(object):
@@ -366,7 +396,10 @@ class SonicFax(FaxSenderBase):
             if filename in r.text:
                 break
         if filename not in r.text:
-            note_fax_failure("Sonic: fax never showed up in the send history")
+            note_fax_failure(
+                "Sonic: fax never showed up in the send history",
+                FAILURE_OUR_SIDE,
+            )
             return False
         # A two page fax normally takes about two minutes
         await asyncio.sleep(120)
@@ -601,7 +634,12 @@ class HylaFaxClient(FaxSenderBase):
                     )
                     exitcode, result_text = await self._run_command(command)
                     if exitcode != 0:
-                        note_fax_failure(f"HylaFAX sendfax: {result_text}")
+                        # A call result if it says one; otherwise sendfax
+                        # itself (or the ssh hop to it) broke.
+                        note_fax_failure(
+                            f"HylaFAX sendfax: {result_text}",
+                            otherwise=FAILURE_OUR_SIDE,
+                        )
                         continue
                     if not blocking:
                         return True
@@ -619,6 +657,11 @@ class HylaFaxClient(FaxSenderBase):
                                 ["faxstat", "-d"]
                             )
                             if exit_code != 0:
+                                note_fax_failure(
+                                    f"HylaFAX faxstat failed: {result_text}",
+                                    FAILURE_OUR_SIDE,
+                                    classify=False,
+                                )
                                 continue
                             # Regular expression pattern to check if the job ID succeeded
                             pattern = rf"^{job_id}\s+\d+\s+D\b"
@@ -635,6 +678,11 @@ class HylaFaxClient(FaxSenderBase):
                                 return False
                         else:
                             logger.warning("No job ID found.")
+                            note_fax_failure(
+                                f"HylaFAX sendfax gave no job id: {result_text}",
+                                FAILURE_OUR_SIDE,
+                                classify=False,
+                            )
                             return False
                 return False
             finally:
@@ -916,10 +964,13 @@ class FlexibleFaxMagic(object):
                             return True
                     except Exception as e:
                         # Not a call result: a bad number was already noted
-                        # where it was refused, and anything else (a login
-                        # page, a timeout) says nothing about the number.
+                        # (and outranks this) where it was refused, and
+                        # anything else (a login page, a timeout, an ssh
+                        # error) is our end breaking, not the number.
                         note_fax_failure(
-                            f"{type(backend).__name__}: {e}", classify=False
+                            f"{type(backend).__name__}: {e}",
+                            FAILURE_OUR_SIDE,
+                            classify=False,
                         )
                         if attempt == 0:
                             logger.warning(

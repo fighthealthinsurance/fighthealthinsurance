@@ -29,7 +29,9 @@ from fighthealthinsurance.fax_status import (
     FAILURE_DISCONNECTED,
     FAILURE_INVALID_NUMBER,
     FAILURE_NO_ANSWER,
+    FAILURE_OUR_SIDE,
     FAILURE_VOICE,
+    REMOTE_LINE_FAILURES,
     STATUS_ALREADY_SENT,
     STATUS_MISSING_DENIAL,
     STATUS_MISSING_DESTINATION,
@@ -61,6 +63,7 @@ FAILURE_REASON_SUMMARIES = {
     FAILURE_INVALID_NUMBER: "number refused as invalid before dialing",
     FAILURE_BUSY: "line busy",
     FAILURE_NO_ANSWER: "no answer",
+    FAILURE_OUR_SIDE: "our fax system (backend login / modem / document / timeout)",
 }
 
 
@@ -75,23 +78,38 @@ def known_non_fax_number(fax) -> Optional[NonFaxNumber]:
         return None
 
 
-def wrong_number_note(fax, non_fax: Optional[NonFaxNumber]) -> Optional[str]:
-    """One line for support saying this failure is most likely the number,
-    not our fax setup, or None when nothing points that way."""
+def failure_note(fax, non_fax: Optional[NonFaxNumber]) -> tuple[str, str]:
+    """(status label, one line for support) saying whose problem a failed
+    fax most likely is: the number, the far end's line, or our fax system.
+    ("", "") when nothing points either way."""
     if non_fax is not None:
         return (
+            "likely wrong number",
             f"{fax.destination} is a known {non_fax.kind} number"
             + (f" ({non_fax.label})" if non_fax.label else "")
-            + ": almost certainly a wrong number, not a fax problem to investigate."
+            + ": almost certainly a wrong number, not a fax problem to investigate.",
         )
     reason = getattr(fax, "failure_reason", None)
     if reason in (FAILURE_VOICE, FAILURE_DISCONNECTED, FAILURE_INVALID_NUMBER):
         return (
+            "likely wrong number",
             f"The fax line reported: {FAILURE_REASON_SUMMARIES[reason]}. Probably "
-            "a wrong number; consider adding it in the admin under Known non "
-            "fax numbers if it keeps coming up."
+            "a wrong number, not our fax system; consider adding it in the "
+            "admin under Known non fax numbers if it keeps coming up.",
         )
-    return None
+    if reason in REMOTE_LINE_FAILURES:
+        return (
+            "remote line",
+            f"The fax line reported: {FAILURE_REASON_SUMMARIES[reason]}. Probably "
+            "the other end, not our fax system; a resend usually works.",
+        )
+    if reason == FAILURE_OUR_SIDE:
+        return (
+            "likely OUR fax system",
+            "This looks like a problem on our side, not the number: worth "
+            "investigating (see what the backend said).",
+        )
+    return ("", "")
 
 
 def send_fax_status_notification(
@@ -106,9 +124,9 @@ def send_fax_status_notification(
         status = "FAILED (missing destination)"
     if missing_denial:
         status = "FAILED (missing denial)"
-    note = None if fax_success else wrong_number_note(fax, non_fax)
-    if note is not None:
-        status = "FAILED (likely wrong number)"
+    label, note = ("", "") if fax_success else failure_note(fax, non_fax)
+    if label and not (missing_destination or missing_denial):
+        status = f"FAILED ({label})"
     denial_id = getattr(fax.denial_id, "pk", None)
     body = (
         f"Fax Status: {status}\n"
@@ -125,7 +143,7 @@ def send_fax_status_notification(
             body += f"Failure reason: {FAILURE_REASON_SUMMARIES.get(reason, reason)}\n"
         if detail:
             body += f"Backend said: {detail}\n"
-        if note is not None:
+        if note:
             body += f"Note: {note}\n"
     try:
         send_mail(
@@ -318,11 +336,13 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> str:
                 report=report,
             )
         )
-    except Exception:
+    except Exception as e:
         # The send genuinely failed before completing: release the claim so a
         # legitimate retry (the Temporal retry policy, or a Ray re-send) can send
         # again instead of short-circuiting on a marker for a fax that never
-        # went out.
+        # went out. Nothing a backend dialed raises out here (FlexibleFaxMagic
+        # catches those), so this is our end: building the document, say.
+        report.note(f"{type(e).__name__}: {e}", FAILURE_OUR_SIDE, classify=False)
         record_send_outcome(fax, report)
         release_send_claim(fax)
         raise

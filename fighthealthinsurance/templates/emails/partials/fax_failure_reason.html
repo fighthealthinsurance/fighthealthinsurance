@@ -1,0 +1,23 @@
+{% comment %}
+Why a fax may have failed, as best the fax line could tell: the HTML twin of
+fax_failure_reason.txt, also shown on the fax re-send page. Every guess is
+starred, with a footnote that we could be wrong.
+{% endcomment %}
+{% if known_non_fax %}
+<p>We think {{ fax_number }} is {{ known_non_fax.description }}*, so a fax to it can't go through.</p>
+{% elif failure_reason == "voice" %}
+<p>When we called {{ fax_number }}, a person or a phone menu answered instead of a fax machine.* That usually means it's a phone number, not a fax number.</p>
+{% elif failure_reason == "disconnected" %}
+<p>The phone company told us {{ fax_number }} is disconnected or not in service.*</p>
+{% elif failure_reason == "invalid_number" %}
+<p>We couldn't dial {{ fax_number }}: it doesn't look like a number we can fax.*</p>
+{% elif failure_reason == "busy" %}
+<p>When we called {{ fax_number }}, the line was busy.* That's usually temporary, so re-sending later often works.</p>
+{% elif failure_reason == "no_answer" %}
+<p>When we called {{ fax_number }}, nothing answered.* Re-sending later often works.</p>
+{% elif failure_reason == "our_side" %}
+<p>This looks like a problem with our fax system*, not with the number you gave us. We've been told about it, and re-sending is free.</p>
+{% endif %}
+{% if known_non_fax or failure_reason %}
+<p><small>* This is our best guess from what the fax line told us, and we could be wrong.</small></p>
+{% endif %}

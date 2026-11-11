@@ -693,3 +693,9 @@ class SendFaxLinkTest(FaxLinkPageTestCase):
         self.open_followup()
         _response, dispatch = self.resend(fax_number_is_right="on")
         dispatch.assert_called_once()
+
+    def test_the_followup_page_says_why_the_last_send_failed(self):
+        FaxesToSend.objects.filter(pk=self.fax.pk).update(failure_reason="our_side")
+        html = self.open_followup().content.decode()
+        self.assertIn("a problem with our fax system*", html)
+        self.assertIn("we could be wrong", html)

@@ -207,6 +207,13 @@ class FaxFollowUpView(generic.FormView):
             number_used_up=self.on_file_number_used_up(),
             max_resends=MAX_RESENDS_PER_NUMBER,
             known_non_fax=known_non_fax_number(self.fax),
+            # Why the last send failed, as the fax line told us; only for a
+            # send that did fail.
+            failure_reason=(
+                self.fax.failure_reason
+                if self.fax.sent and not self.fax.fax_success
+                else None
+            ),
             **kwargs,
         )
 

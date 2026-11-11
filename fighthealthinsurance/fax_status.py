@@ -20,6 +20,11 @@ FAILURE_DISCONNECTED = "disconnected"
 FAILURE_INVALID_NUMBER = "invalid_number"
 FAILURE_BUSY = "busy"
 FAILURE_NO_ANSWER = "no_answer"
+# Our end broke: a backend we could not log in to, a modem with no dial
+# tone, a document we could not build. Not the person's number at all.
+FAILURE_OUR_SIDE = "our_side"
 # The reasons that mean the number itself is wrong, not the line being busy
 # or the fax machine at the other end having a bad day.
 WRONG_NUMBER_FAILURES = (FAILURE_VOICE, FAILURE_DISCONNECTED, FAILURE_INVALID_NUMBER)
+# The far end answered (or didn't) but the number may be fine.
+REMOTE_LINE_FAILURES = (FAILURE_BUSY, FAILURE_NO_ANSWER)
