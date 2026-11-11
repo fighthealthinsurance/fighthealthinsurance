@@ -5,7 +5,11 @@ from typing import Dict, Iterable, Optional
 from asgiref.sync import sync_to_async
 from django import forms
 
-from fighthealthinsurance.form_utils import StyledWidgetsMixin, why_we_ask
+from fighthealthinsurance.form_utils import (
+    StyledWidgetsMixin,
+    YesNoNotSureField,
+    why_we_ask,
+)
 
 import requests
 from bs4 import BeautifulSoup
@@ -79,11 +83,14 @@ def wpath_version_in(texts: Iterable[str]) -> Optional[str]:
 class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
     """Insurance Questions"""
 
-    in_network = forms.BooleanField(required=False, label="In-network visit")
-    pre_service = forms.BooleanField(
-        required=False, label="Pre-service (claim before doctors visit/service)"
+    in_network = YesNoNotSureField(
+        required=False, label="Was this an in-network visit?"
     )
-    urgent = forms.BooleanField(required=False, label="Urgent claim")
+    pre_service = YesNoNotSureField(
+        required=False,
+        label="Is this a pre-service claim (made before the doctor's visit or service)?",
+    )
+    urgent = YesNoNotSureField(required=False, label="Is this an urgent claim?")
 
     def __init__(self, *args, prof_pov: bool = False, **kwargs):
         self.prof_pov = prof_pov
@@ -113,7 +120,7 @@ class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
         if val:
             if response and not response[-1].isspace():
                 response += " "
-            if isinstance(self.fields.get(field), forms.BooleanField):
+            if isinstance(self.fields.get(field), YesNoNotSureField):
                 response += f"{label}. "
             else:
                 response += f"{label}: {val}. "
@@ -249,18 +256,18 @@ class UnderpaidOutOfNetworkQuestions(InsuranceQuestions):
 
 # This is related to why weren't you able to get a prior auth.
 class PriorAuthQuestions(InsuranceQuestions):
-    emergency = forms.BooleanField(
+    emergency = YesNoNotSureField(
         required=False,
-        label="This was an emergency, so there was no time to get prior authorization",
+        label="Was this an emergency, with no time to get prior authorization?",
     )
-    contact_insurance_before = forms.BooleanField(
-        required=False, label="I contacted my insurance before the service"
+    contact_insurance_before = YesNoNotSureField(
+        required=False, label="Did you contact your insurance before the service?"
     )
-    told_prior_auth_not_needed = forms.BooleanField(
-        required=False, label="I was told prior authorization was not needed"
+    told_prior_auth_not_needed = YesNoNotSureField(
+        required=False, label="Were you told prior authorization was not needed?"
     )
-    prior_auth_obtained = forms.BooleanField(
-        required=False, label="Prior authorization was obtained"
+    prior_auth_obtained = YesNoNotSureField(
+        required=False, label="Was prior authorization obtained?"
     )
     prior_auth_id = forms.CharField(
         max_length=300,
@@ -410,7 +417,7 @@ class PreventiveCareQuestions(InsuranceQuestions):
         help_text="E.g., risk factors such as family history or prior conditions, their age, or their doctor's recommendation.",
     )
     trans_gender = why_we_ask(
-        forms.BooleanField(required=False, label="Is the patient transgender?"),
+        YesNoNotSureField(required=False, label="Is the patient transgender?"),
         "Some preventive care is only covered for certain genders, so insurance may incorrectly deny it to a transgender patient.",
     )
 
@@ -458,7 +465,7 @@ class ThirdPartyQuestions(InsuranceQuestions):
         required=False,
         label="Any details regarding secondary or other insurance if available?",
     )
-    is_known_3rd_party = forms.BooleanField(
+    is_known_3rd_party = YesNoNotSureField(
         required=False,
         label="Was this claim due to an accident covered by other insurance?",
         help_text="E.g., an auto accident covered by auto insurance, or workers' comp.",
@@ -479,19 +486,19 @@ class ThirdPartyQuestions(InsuranceQuestions):
 class FormularyChangeQuestions(InsuranceQuestions):
     """Questions for formulary changes and continuity of care appeals."""
 
-    currently_taking = forms.BooleanField(
+    currently_taking = YesNoNotSureField(
         required=False,
         label="Are you currently taking this medication?",
     )
-    medication_working = forms.BooleanField(
+    medication_working = YesNoNotSureField(
         required=False,
         label="Is the medication working well for you?",
     )
-    tried_alternatives = forms.BooleanField(
+    tried_alternatives = YesNoNotSureField(
         required=False,
         label="Did the alternative medication(s) the insurer suggests not work for you, or cause problems?",
     )
-    mid_year_change = forms.BooleanField(
+    mid_year_change = YesNoNotSureField(
         required=False,
         label="Is this a mid-year formulary change?",
         help_text="The plan's drug list changed during your plan year, not at renewal.",
@@ -575,14 +582,14 @@ class ColonoscopyQuestions(InsuranceQuestions):
         "Screening colonoscopies are preventive and often must be covered at no cost under the ACA.",
     )
     polyp_removal = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Were polyps removed during the procedure?",
         ),
         "Under the ACA and recent guidance, polyp removal during a screening colonoscopy should still be covered as preventive.",
     )
     family_history = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Does the patient have a family history of colorectal cancer?",
         ),
@@ -646,7 +653,7 @@ class WeightLossMedicationQuestions(InsuranceQuestions):
     """Questions for weight loss / anti-obesity medication denials (Zepbound, Ozempic, Mounjaro, Wegovy)."""
 
     tried_lifestyle = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Has the patient tried diet and exercise programs?",
         ),
@@ -685,14 +692,14 @@ class ImagingQuestions(InsuranceQuestions):
     """Questions for imaging denial appeals (MRI, CT scan, etc.)."""
 
     prior_imaging = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Was less advanced imaging already performed (e.g., X-ray before MRI)?",
         ),
         "Some insurers require step-through imaging, starting with an X-ray or ultrasound.",
     )
     physician_ordered = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Was this imaging ordered by the treating physician?",
         ),
@@ -733,7 +740,7 @@ class ImagingQuestions(InsuranceQuestions):
 class MentalHealthQuestions(InsuranceQuestions):
     """Questions for psychotherapy and mental health denial appeals."""
 
-    functional_impairment = forms.BooleanField(
+    functional_impairment = YesNoNotSureField(
         required=False,
         label="Does the condition cause significant functional impairment?",
         help_text="E.g., impacts work, school, relationships, or daily activities.",
@@ -772,21 +779,21 @@ class EmergencyServicesQuestions(InsuranceQuestions):
     """Questions for emergency room, ambulance, and emergency department denial appeals."""
 
     called_911 = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Was 911 called or was the patient transported by ambulance?",
         ),
         "Ambulance transport further supports the emergency nature of the situation.",
     )
     stabilization_needed = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Did the patient require stabilization treatment in the ER?",
         ),
         "Treatment received in the ER supports that the visit was medically necessary.",
     )
     denied_based_on_final_diagnosis = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Was the claim denied because the final diagnosis turned out not to be an emergency?",
         ),
@@ -869,7 +876,7 @@ class TherapyRehabQuestions(InsuranceQuestions):
         label="Type of therapy?",
     )
     progress_made = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Has the patient shown progress with this therapy?",
         ),
@@ -905,14 +912,14 @@ class GeneticTestingQuestions(InsuranceQuestions):
     """Questions for genetic testing denial appeals."""
 
     treatment_impact = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Will test results change the treatment plan?",
         ),
         "Genetic tests that inform treatment decisions (e.g., targeted therapy selection) have strong clinical utility.",
     )
     guideline_recommended = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Is this test recommended by clinical guidelines (e.g., NCCN, ACMG)?",
         ),
@@ -956,7 +963,7 @@ class InpatientHospitalQuestions(InsuranceQuestions):
     """Questions for inpatient care and hospital stay denial appeals."""
 
     observation_reclassified = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Was the stay reclassified from inpatient to observation?",
         ),
@@ -1009,7 +1016,7 @@ class LabWorkQuestions(InsuranceQuestions):
     """Questions for lab work denial appeals."""
 
     preventive = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Is this lab work part of preventive/routine screening?",
             help_text="E.g., cholesterol or diabetes screening.",
@@ -1017,7 +1024,7 @@ class LabWorkQuestions(InsuranceQuestions):
         "Many routine screening labs are required to be covered as preventive under the ACA.",
     )
     medication_monitoring = why_we_ask(
-        forms.BooleanField(
+        YesNoNotSureField(
             required=False,
             label="Is this lab work needed to monitor medication?",
             help_text="E.g., liver function for statins, or kidney function for metformin.",
@@ -1181,7 +1188,7 @@ class AssistiveDeviceQuestions(InsuranceQuestions):
         ),
         "The type of device helps determine applicable coverage rules and clinical guidelines.",
     )
-    professional_evaluation = forms.BooleanField(
+    professional_evaluation = YesNoNotSureField(
         required=False,
         label="Has a qualified professional evaluated the patient for this device?",
         help_text="E.g., SLP evaluation for AAC, PT/OT evaluation for mobility devices, audiologist for hearing aids.",

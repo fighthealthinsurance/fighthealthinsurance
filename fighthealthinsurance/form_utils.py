@@ -155,6 +155,82 @@ class RadioList(forms.RadioSelect):
         return context
 
 
+#: What a yes/no question posts for each answer, and what is stored in
+#: ``qa_context`` (read as prose by the appeal prompt) for a yes or a no.
+YES_NO_YES = "yes"
+YES_NO_NO = "no"
+YES_NO_NOT_SURE = "not_sure"
+YES_NO_STORED = {True: "Yes", False: "No"}
+
+_YES_WORDS = frozenset({"yes", "true", "on", "1"})
+_NO_WORDS = frozenset({"no", "false", "0"})
+
+
+def yes_no_answer(value: Any) -> Optional[bool]:
+    """A yes/no question's answer: True, False, or None for "not sure".
+
+    Reads what the radios post, what ``qa_context`` stores ("Yes"/"No"),
+    and what earlier pages stored when these questions were checkboxes: "on"
+    for a ticked box (what a browser posts) and "False" for one unticked
+    after it was answered. Anything else, a blank included, is not sure.
+    """
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in _YES_WORDS:
+        return True
+    if text in _NO_WORDS:
+        return False
+    return None
+
+
+class YesNoNotSureRadios(RadioList):
+    """Yes / No / Not sure as a column of round boxes, "Not sure" ticked
+    until the person picks another."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault(
+            "choices",
+            (
+                (YES_NO_YES, "Yes"),
+                (YES_NO_NO, "No"),
+                (YES_NO_NOT_SURE, "Not sure"),
+            ),
+        )
+        super().__init__(*args, **kwargs)
+
+    def format_value(self, value):
+        answer = yes_no_answer(value)
+        if answer is None:
+            return [YES_NO_NOT_SURE]
+        return [YES_NO_YES if answer else YES_NO_NO]
+
+
+class YesNoNotSureField(forms.NullBooleanField):
+    """A yes/no question whose default answer is "Not sure".
+
+    These were checkboxes, and an unticked box cleaned (and was stored) as
+    False, so a person who simply did not know told the appeal model
+    ``in_network:False``. Here "No" is an answer the person picks, and "Not
+    sure" cleans to None: the forms derive nothing from it and
+    ``GenerateAppeal`` leaves it out of ``qa_context``.
+    """
+
+    widget = YesNoNotSureRadios
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("required", False)
+        super().__init__(*args, **kwargs)
+
+    @property
+    def choices(self):
+        """The widget's answers, for the REST serialization of the form."""
+        return list(self.widget.choices)
+
+    def to_python(self, value):
+        return yes_no_answer(value)
+
+
 class CoreFirstCheckboxList(CheckboxList):
     """A CheckboxList over a long model list that shows the common choices
     first and folds the rest under a "More ..." disclosure.
