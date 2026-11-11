@@ -57,6 +57,12 @@ HEALTH_BACKEND_FALLBACK_MODEL = os.environ.get("HEALTH_BACKEND_FALLBACK_MODEL") 
 # the fallback, rather than paying for a doomed call and its retries on each
 # of the remaining pages.
 PRIMARY_FAILURES_BEFORE_GIVING_UP = 5
+# With a fallback configured, the primary gets this long per page before the
+# page moves on to the fallback. It has to be well inside the per-URL budget
+# (URL_TIMEOUT_SECONDS): a primary that stalls until that budget cancels the
+# whole page would never reach the fallback, and would never count as failed.
+PRIMARY_TIMEOUT_SECONDS = 120.0
+URL_TIMEOUT_SECONDS = 300.0
 _consecutive_primary_failures = 0
 
 STATES = [
@@ -403,6 +409,7 @@ def has_fallback_backend() -> bool:
 async def _extract_with_client(
     client: Any, model_name: str, system_prompt: str, text_content: str
 ) -> List[AppealsResource]:
+    """Ask one endpoint to extract the resources on a page; raises on failure."""
     response = await client.chat.completions.create(
         model=model_name,
         messages=[
@@ -428,6 +435,15 @@ async def extract_resources_local(
     target_state_name: str,
     search_category: str  # Add this parameter
 ) -> List[AppealsResource]:
+    """
+    Extract the appeal resources a page describes, never raising.
+
+    The configured endpoint is called first. When a fallback endpoint is also
+    configured, a failed or stalled call there is retried on the fallback, and
+    once the primary has failed PRIMARY_FAILURES_BEFORE_GIVING_UP times in a
+    row the fallback takes every later page. Returns [] when no endpoint
+    could extract the page.
+    """
     global _consecutive_primary_failures
 
     system_prompt = f"""
@@ -452,12 +468,22 @@ async def extract_resources_local(
 
     if not primary_given_up:
         try:
-            resources = await _extract_with_client(
+            primary_call = _extract_with_client(
                 get_local_instructor_client(), model_name, system_prompt, text_content
             )
+            if fallback:
+                # Bound the call so that a stalled primary fails here, where
+                # the fallback can take over, not at the per-URL timeout.
+                resources = await asyncio.wait_for(
+                    primary_call, timeout=PRIMARY_TIMEOUT_SECONDS
+                )
+            else:
+                resources = await primary_call
             _consecutive_primary_failures = 0
             return resources
         except Exception as e:
+            if isinstance(e, asyncio.TimeoutError):
+                e = TimeoutError(f"no answer within {PRIMARY_TIMEOUT_SECONDS:.0f}s")
             print(f"Extraction LLM Error: {e}")
             if not fallback:
                 return []
@@ -493,7 +519,7 @@ async def process_single_url(
     state_name: str,
     category_label: str, 
     model_name: str,
-    timeout_seconds: float = 300.0  # 5 minutes per URL, important for preventing local execution loops.
+    timeout_seconds: float = URL_TIMEOUT_SECONDS,  # 5 minutes per URL, important for preventing local execution loops.
 ) -> List[AppealsResource]:
     """Fetches a URL, runs extraction, applies state & URL fallbacks, and deduplicates.
 

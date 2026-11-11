@@ -27,7 +27,7 @@ the environment or from `scripts/.env`:
 | `HEALTH_BACKEND_URL` | unset | A full base URL, such as `https://api.deepinfra.com/v1/openai`; when set it wins over host and port |
 | `HEALTH_BACKEND_API_KEY` | a placeholder | The key a hosted endpoint wants; a local server ignores it |
 | `HEALTH_BACKEND_MODEL` | `totallylegitco/fighthealthinsurance_model_v0.5` | The model name the server expects |
-| `HEALTH_BACKEND_FALLBACK_URL`, `HEALTH_BACKEND_FALLBACK_MODEL`, `HEALTH_BACKEND_FALLBACK_API_KEY` | unset | An optional second endpoint. A page whose call to the first one fails is retried on it, and after 5 failures in a row the rest of the run uses it alone. The URL and the model must both be set |
+| `HEALTH_BACKEND_FALLBACK_URL`, `HEALTH_BACKEND_FALLBACK_MODEL`, `HEALTH_BACKEND_FALLBACK_API_KEY` | unset | An optional second endpoint. A page whose call to the first one fails, or gets no answer in 2 minutes, is retried on it, and after 5 failures in a row the rest of the run uses it alone. The URL and the model must both be set |
 
 A full run reads about 430 pages, one model call each; the pages are public
 and no patient data is involved, so a hosted model is fine for them.

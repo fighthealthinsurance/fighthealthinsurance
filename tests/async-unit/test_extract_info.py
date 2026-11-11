@@ -795,3 +795,45 @@ async def test_extract_resources_returns_empty_when_both_backends_fail(
     mock_get_client.side_effect = [_failing_client(), _failing_client()]
 
     assert await extract_resources_local("text", "primary-model", "Utah", "SHIP") == []
+
+
+@pytest.mark.asyncio
+@patch("scripts.state_data.extract_info.get_local_instructor_client")
+async def test_extract_resources_falls_back_when_primary_stalls(
+    mock_get_client: MagicMock, fallback_backend: None
+) -> None:
+    """
+    Given: A fallback endpoint is configured and the primary never answers.
+    When: extract_resources_local is called.
+    Then: The primary is abandoned at its own timeout, counted as a failure,
+          and the page is extracted by the fallback.
+    """
+    from scripts.state_data import extract_info
+
+    async def never_answers(**kwargs: Any) -> None:
+        await asyncio.sleep(3600)
+
+    primary = MagicMock()
+    primary.chat.completions.create = AsyncMock(side_effect=never_answers)
+    fallback = _client_returning([_FALLBACK_RESOURCE])
+    mock_get_client.side_effect = [primary, fallback]
+
+    with patch("scripts.state_data.extract_info.PRIMARY_TIMEOUT_SECONDS", 0.01):
+        result = await asyncio.wait_for(
+            extract_resources_local("text", "primary-model", "Maine", "SHIP"),
+            timeout=5,
+        )
+
+    assert [r.agency_name for r in result] == ["Fallback Agency"]
+    assert extract_info._consecutive_primary_failures == 1
+
+
+def test_primary_timeout_leaves_room_for_the_fallback() -> None:
+    """
+    Given: The per-page budgets for the primary call and for the whole URL.
+    Then: The primary's is the smaller, so a stalled primary still leaves the
+          fallback time to answer before the URL is abandoned.
+    """
+    from scripts.state_data import extract_info
+
+    assert extract_info.PRIMARY_TIMEOUT_SECONDS < extract_info.URL_TIMEOUT_SECONDS
