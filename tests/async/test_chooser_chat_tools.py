@@ -305,6 +305,30 @@ def test_the_next_task_serves_each_drafts_lookups():
     assert sorted((c["tool_calls"] for c in served), key=len) == [[], [search]]
 
 
+@pytest.mark.django_db
+def test_the_next_task_serves_the_combined_drafts_lookups_unmarked():
+    """``from_drafts`` is only on the combined draft's lookups: served, it
+    would tell the voter which draft that is."""
+    task = ChooserTask.objects.create(
+        task_type="chat",
+        status="READY",
+        source="synthetic",
+        context_json={"prompt": QUESTION, "history": []},
+    )
+    search = {"tool": "PubMed", "call": "semaglutide", "found": FOUND, "notes": []}
+    for index, calls in enumerate([[search], [dict(search, from_drafts=True)]]):
+        ChooserCandidate.objects.create(
+            task=task,
+            candidate_index=index,
+            kind="chat_response",
+            model_name=f"m{index}",
+            content=ANSWER + str(index),
+            metadata={"source": "synthetic", "tool_calls": calls},
+        )
+    served = APIClient().get(reverse("chooser-next-chat")).json()["candidates"]
+    assert [c["tool_calls"] for c in served] == [[search], [search]]
+
+
 def test_stripping_an_action_call_keeps_the_prose_after_it():
     text = (
         "I'll save that.\n"

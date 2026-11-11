@@ -941,7 +941,9 @@ class ChooserCandidateSerializer(serializers.Serializer):
     # A chat draft's lookups (chooser_chat_tools.ToolCallRecord.as_dict):
     # the tool, what it was asked and what it found, so the voter can check
     # the reply against it. Nothing about the author: which tool a draft
-    # reached for is part of the answer being judged.
+    # reached for is part of the answer being judged. The combined draft
+    # carries the lookups of the drafts it merged, served like any other's
+    # (chooser_tasks.served_tool_calls).
     tool_calls = serializers.ListField(
         child=serializers.DictField(), required=False, default=list
     )

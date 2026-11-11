@@ -2681,7 +2681,9 @@ def _merged_tool_calls(candidates: List[ChooserCandidate]) -> List[dict]:
     drafts made the same lookup, the record that shows most is kept: a
     timeout in one draft must not hide what the same search found in
     another. Each is marked ``from_drafts``: the synthesis read the drafts,
-    not the lookups, and the card says so."""
+    not the lookups. Staff provenance only: the mark would tell a voter
+    which draft is the combined one, so it is left off what they are served
+    (served_tool_calls)."""
     merged: dict = {}
     for candidate in candidates:
         for call in (candidate.metadata or {}).get("tool_calls") or []:
@@ -2694,6 +2696,58 @@ def _merged_tool_calls(candidates: List[ChooserCandidate]) -> List[dict]:
     return list(merged.values())
 
 
+# How many combiners one task asks, one after another, before it goes
+# without a synthesized draft: each is a paid call the task waits on.
+_MAX_COMBINER_ATTEMPTS = 3
+
+
+def _can_combine(model) -> bool:
+    """Whether ``model`` can be asked to merge drafts: not a context-only
+    backend, and not an appeal-text fine-tune, which answers "merge these
+    drafts" with a stray number (see ml_router.synthesis_backends)."""
+    if getattr(model, "context_only", False) is True:
+        return False
+    supports = getattr(model, "supports_general_instructions", None)
+    return supports is None or bool(supports())
+
+
+def _combiner_order(task_type: str) -> List:
+    """The models that may combine a ``task_type`` task's drafts, one per
+    name, in random order: the first is this task's combiner, the rest are
+    asked only if it writes nothing usable.
+
+    Drawn at random, not raced or ranked, so every model gets combined
+    drafts in front of voters and the staff dashboard can say which
+    combines best (ChooserCandidate.synthesized_by). The models are the
+    arena's own: a CHOOSER_FORCE_MODEL pool big enough to fill every slot is
+    the whole experiment, so it is the combiners too; otherwise the forced
+    models and the router's synthesis backends, hosted ones included since
+    the drafts came from them too."""
+    forced = [m for m in _forced_arena_models(task_type) if _can_combine(m)]
+    pool = list(forced)
+    if len(forced) < CHOOSER_NUM_CANDIDATES:
+        ours, hosted = ml_router.synthesis_backends(use_external=True)
+        pool += [m for m in list(ours) + list(hosted) if _can_combine(m)]
+    combiners: dict = {}
+    for model in pool:
+        combiners.setdefault(_model_display_name(model), model)
+    order = list(combiners.values())
+    random.shuffle(order)
+    return order
+
+
+def served_tool_calls(candidate: ChooserCandidate) -> List[dict]:
+    """``candidate``'s lookups as a voter is served them: the stored
+    ``tool_calls`` without ``from_drafts``, which only the combined draft
+    carries and would give it away. Applied as the task is served, so the
+    tasks stored with the mark are blind too."""
+    return [
+        {key: value for key, value in call.items() if key != "from_drafts"}
+        for call in (candidate.metadata or {}).get("tool_calls") or []
+        if isinstance(call, dict)
+    ]
+
+
 async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None:
     """Add one synthesized candidate combining the task's existing candidates.
 
@@ -2701,7 +2755,10 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
     models tend to echo it verbatim), mirroring the real appeal flow. The
     synthesized candidate is stored with ``synthesized=True`` and
     ``model_name="synthesized"`` so it is tracked and bucketed distinctly when
-    measuring synthesis against single models.
+    measuring synthesis against single models, and with the model that wrote
+    it in ``synthesized_by``. That model is drawn at random (_combiner_order);
+    when it writes nothing usable the next one drawn is asked, up to
+    _MAX_COMBINER_ATTEMPTS, and the one recorded is the one that wrote it.
     """
     if not CHOOSER_INCLUDE_SYNTHESIS:
         return
@@ -2729,28 +2786,40 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
             # Not enough distinct drafts to synthesize from.
             return
 
-        context = task.context_json or {}
-        if kind == "appeal_letter":
-            synthesized_text = await _synthesize_appeal_candidate(context, contents)
-        else:
-            synthesized_text = await _synthesize_chat_candidate(context, contents)
-
-        if not synthesized_text:
+        combiners = _combiner_order(task.task_type)
+        if not combiners:
+            logger.info(
+                f"Chooser: no model that can merge drafts for task {task.id}; "
+                "skipping synthesis"
+            )
             return
-        normalized = synthesized_text.strip()
+
+        context = task.context_json or {}
+        synthesize = (
+            _synthesize_appeal_candidate
+            if kind == "appeal_letter"
+            else _synthesize_chat_candidate
+        )
         # Hold the synthesized candidate to the same minimum-length bar the base
         # candidates must clear (>100 chars for appeals, >50 for chat).
         min_length = 100 if kind == "appeal_letter" else 50
-        if len(normalized) <= min_length:
+        normalized = ""
+        combiner = None
+        for model in combiners[:_MAX_COMBINER_ATTEMPTS]:
+            text = ((await synthesize(context, contents, model)) or "").strip()
+            if len(text) <= min_length:
+                problem = "nothing usable" if not text else "too-short output"
+            elif text in contents:
+                # Just a verbatim copy of a draft.
+                problem = "a verbatim draft"
+            else:
+                normalized, combiner = text, model
+                break
             logger.info(
-                f"Chooser synthesis for task {task.id} returned too-short output; skipping"
+                f"Chooser synthesis for task {task.id} by "
+                f"{_model_display_name(model)} returned {problem}; skipping it"
             )
-            return
-        # Skip a synthesized output that is just a verbatim copy of a draft.
-        if normalized in set(contents):
-            logger.info(
-                f"Chooser synthesis for task {task.id} returned a verbatim draft; skipping"
-            )
+        if combiner is None:
             return
 
         metadata: dict = {"source": "synthetic", "synthesized": True}
@@ -2770,6 +2839,7 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
             kind=kind,
             model_name=SYNTHESIZED_MODEL_NAME,
             synthesized=True,
+            synthesized_by=canonical_model_name(combiner),
             content=normalized,
             metadata=metadata,
         )
@@ -2780,7 +2850,8 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
         await database_sync_to_async(task.save)()
         logger.info(
             f"Added synthesized {kind} candidate to task {task.id} "
-            f"from {len(contents)} drafts"
+            f"from {len(contents)} drafts, combined by "
+            f"{_model_display_name(combiner)}"
         )
     except Exception as e:
         logger.opt(exception=True).warning(
@@ -2789,9 +2860,10 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
 
 
 async def _synthesize_appeal_candidate(
-    context: dict, contents: List[str]
+    context: dict, contents: List[str], model: Any
 ) -> Optional[str]:
-    """Synthesize multiple appeal drafts into one, reusing AppealGenerator."""
+    """``model``'s merge of multiple appeal drafts into one, reusing
+    AppealGenerator's prompt and checks with that one model asked."""
     from fighthealthinsurance.generate_appeal import AppealGenerator
 
     try:
@@ -2808,6 +2880,9 @@ async def _synthesize_appeal_candidate(
             # included (see the module docstring), so their merge may be
             # written by one too.
             use_external=True,
+            # The one combiner drawn for this task, not the router's race:
+            # the letter is credited to it (synthesized_by).
+            backends=[model],
         )
     except Exception as e:
         logger.opt(exception=True).warning(
@@ -2817,22 +2892,12 @@ async def _synthesize_appeal_candidate(
 
 
 async def _synthesize_chat_candidate(
-    context: dict, contents: List[str]
+    context: dict, contents: List[str], model: Any
 ) -> Optional[str]:
-    """Synthesize multiple chat responses into one using the strongest
-    model that can merge them (ml_router.synthesis_backends): ours first,
-    else a hosted one, as for the appeal candidate, since the drafts came
-    from hosted models too. Never the appeal-only fine-tune, which cannot
-    follow "merge these responses" and answers with a stray number."""
-    ours, hosted = ml_router.synthesis_backends(use_external=True)
-    if not ours and not hosted:
-        logger.info(
-            "Chooser: no model that can merge drafts to synthesize a chat "
-            "candidate; skipping synthesis"
-        )
-        return None
-    best_model = (ours + hosted)[0]
-
+    """``model``'s merge of multiple chat responses into one. The caller
+    draws the model (_combiner_order): never the appeal-only fine-tune,
+    which cannot follow "merge these responses" and answers with a stray
+    number."""
     history = context.get("history", []) or []
     user_prompt = context.get("prompt", "") or ""
 
@@ -2855,7 +2920,7 @@ async def _synthesize_chat_candidate(
         f"{numbered}"
     )
     try:
-        result = await best_model._infer_no_context(
+        result = await model._infer_no_context(
             system_prompts=[
                 "You combine multiple assistant responses into one best response "
                 "for a health insurance assistance chatbot. Keep it accurate, "
