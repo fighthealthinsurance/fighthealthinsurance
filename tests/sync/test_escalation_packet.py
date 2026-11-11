@@ -337,6 +337,7 @@ class RegulatorEscalationReasonsTest(TestCase):
             "Your second-level appeal was denied and we will mail you the written decision.",
             "We denied your second-level appeal; you can request an external review.",
             "Your first-level appeal was denied, and your second-level appeal was denied, and you can request external review.",
+            "Your first-level appeal was denied, and your second-level appeal was denied, and your external review is pending.",
             "After review of your second level appeal we have once again upheld the denial; this is our final decision.",
             "We have once again reached our final adverse determination.",
         ):

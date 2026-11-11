@@ -358,6 +358,7 @@ def _says_in_own_voice(pattern: re.Pattern, denial_text: str) -> bool:
 
 
 _SUBCLAUSE_BREAK_RE = re.compile(r",|\b(?:and|but)\b", re.IGNORECASE)
+_AND_BUT_RE = re.compile(r"\b(?:and|but)\b", re.IGNORECASE)
 
 
 def _subclause_breaks(denial_text: str, start: int, end: int) -> List[int]:
@@ -406,12 +407,17 @@ def _later_level_decided(denial_text: str) -> bool:
                 match.start(),
                 match.end(),
             )
-        # Pending wording anywhere from this appeal's part to the end of
-        # its clause still speaks of it: "your second-level appeal, which
+        # Pending wording after this appeal's part, up to the next "and" or
+        # "but" (which starts something else: "…, and your external review
+        # is pending"), still speaks of it: "your second-level appeal, which
         # is pending, will be decided next month".
+        rest = denial_text[c_end:clause_end]
+        next_part = _AND_BUT_RE.search(rest)
+        if next_part:
+            rest = rest[: next_part.start()]
         if _PENDING_OR_RIGHTS_RE.search(
             denial_text[c_start:c_end]
-        ) or _PENDING_RE.search(denial_text[c_end:clause_end]):
+        ) or _PENDING_RE.search(rest):
             continue
         if _DECISION_RE.search(denial_text[c_start:c_end]):
             return True
