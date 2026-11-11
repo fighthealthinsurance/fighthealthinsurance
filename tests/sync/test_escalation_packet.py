@@ -330,6 +330,7 @@ class RegulatorEscalationReasonsTest(TestCase):
             "We are required to inform you that this is our final adverse determination.",
             "The law requires that we tell you this is our final adverse determination.",
             "We are required to notify you that your internal appeals are exhausted.",
+            "We are required to notify you of your final adverse determination: your appeal was denied.",
         ):
             with self.subTest(text=text):
                 denial = _FakeDenial(state="", denial_text=text)
