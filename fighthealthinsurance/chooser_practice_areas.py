@@ -171,9 +171,14 @@ _PRACTICE_AREA_TERMS = {
         "genderqueer",
         "wpath",
         "feminiz*",
-        "feminis*",
+        # Not "feminis*"/"masculinis*": those read "feminist"/"masculinist".
+        "feminisation",
+        "feminising",
+        "feminised",
         "masculiniz*",
-        "masculinis*",
+        "masculinisation",
+        "masculinising",
+        "masculinised",
         "transmasc*",
         # Not "transfem*": that reads "transfemoral" (an amputation, a
         # catheter route) as gender-affirming care.

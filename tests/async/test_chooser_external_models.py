@@ -901,6 +901,17 @@ def test_gender_affirming_care_shared_term_alone_is_not_enough():
     assert not practice_area_text_matches("gender-affirming-care", "Estradiol")
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Does insurance cover feminist therapy for anxiety?",
+        "Masculinist support group",
+    ],
+)
+def test_feminist_and_masculinist_are_not_gender_affirming_care_terms(text):
+    assert not practice_area_text_matches("gender-affirming-care", text)
+
+
 def test_transfemoral_is_not_a_gender_affirming_care_term():
     assert not practice_area_text_matches(
         "gender-affirming-care", "Transfemoral amputation"
