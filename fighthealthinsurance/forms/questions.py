@@ -1,14 +1,16 @@
 import re
 import urllib
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Mapping, Optional
 
 from asgiref.sync import sync_to_async
 from django import forms
 
 from fighthealthinsurance.form_utils import (
+    RadioList,
     StyledWidgetsMixin,
     YesNoNotSureField,
     why_we_ask,
+    yes_no_answer,
 )
 
 import requests
@@ -111,6 +113,16 @@ class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
         ):
             response += "This is an in-network claim."
         return response
+
+    def fit_to_page(self, page_forms: list, answers: Mapping[str, str]) -> None:
+        """Adjust this form to the other question forms on the same page
+        (``page_forms``, this one included) and the stored ``answers``.
+        Called by FindNextStepsHelper._build_question_forms."""
+
+    def superseded_answers(self, posted: Mapping[str, str]) -> list[str]:
+        """Stored answer keys the questions page's ``posted`` answers make
+        stale, for GenerateAppeal to withdraw."""
+        return []
 
     def _append_context(self, response: str, field: str, label: str) -> str:
         """Append field value to context. Booleans get 'label.', others get 'label: val.'."""
@@ -258,42 +270,132 @@ class UnderpaidOutOfNetworkQuestions(InsuranceQuestions):
         ]
 
 
-# This is related to why weren't you able to get a prior auth.
+# Why there was no prior auth, or that there was one: one pick-one question.
+# It replaced four near-exclusive yes/no questions (tick boxes before that:
+# emergency, contact_insurance_before, told_prior_auth_not_needed,
+# prior_auth_obtained), whose answers older denials still hold; main() and
+# the page's starting choice read them when the person has not picked one.
+PRIOR_AUTH_OBTAINED = "obtained"
+PRIOR_AUTH_EMERGENCY = "emergency"
+PRIOR_AUTH_NOT_SURE = "not_sure"
+_LEGACY_PRIOR_AUTH_BOXES = (
+    # (old tick box, the choice it became), first match wins on the page.
+    ("prior_auth_obtained", PRIOR_AUTH_OBTAINED),
+    ("told_prior_auth_not_needed", "told_not_needed"),
+    ("emergency", PRIOR_AUTH_EMERGENCY),
+    ("contact_insurance_before", "asked_insurer"),
+)
+
+
+PRIOR_AUTH_CHOICES: list[tuple[str, str]] = [
+    (PRIOR_AUTH_OBTAINED, "Prior authorization was obtained"),
+    ("told_not_needed", "I was told prior authorization was not needed"),
+    (PRIOR_AUTH_EMERGENCY, "It was an emergency, so there was no time to get it"),
+    ("asked_insurer", "I contacted my insurance before the service"),
+    ("not_obtained", "Prior authorization was not obtained"),
+    (PRIOR_AUTH_NOT_SURE, "I'm not sure"),
+]
+
+
+class _NotSureUntilPickedRadios(RadioList):
+    """Like the yes/no questions (form_utils.YesNoNotSureRadios): "I'm not
+    sure" is ticked until the person picks another answer, with no initial
+    value that would be taken for one."""
+
+    def format_value(self, value):
+        return super().format_value(value or PRIOR_AUTH_NOT_SURE)
+
+
 class PriorAuthQuestions(InsuranceQuestions):
-    emergency = YesNoNotSureField(
+    prior_auth_status = forms.ChoiceField(
+        choices=PRIOR_AUTH_CHOICES,
         required=False,
-        label="Was this an emergency, with no time to get prior authorization?",
-    )
-    contact_insurance_before = YesNoNotSureField(
-        required=False, label="Did you contact your insurance before the service?"
-    )
-    told_prior_auth_not_needed = YesNoNotSureField(
-        required=False, label="Were you told prior authorization was not needed?"
-    )
-    prior_auth_obtained = YesNoNotSureField(
-        required=False, label="Was prior authorization obtained?"
+        widget=_NotSureUntilPickedRadios,
+        label="What happened with prior authorization?",
     )
     prior_auth_id = forms.CharField(
         max_length=300,
         required=False,
         label="Prior authorization number, if you have one",
+        # outside_help.html shows the box only while this choice is picked.
+        widget=forms.TextInput(
+            attrs={"data-shown-when": f"prior_auth_status={PRIOR_AUTH_OBTAINED}"}
+        ),
     )
 
+    def fit_to_page(self, page_forms: list, answers: Mapping[str, str]) -> None:
+        # The emergency-services questions already ask about the emergency.
+        if any(isinstance(f, EmergencyServicesQuestions) for f in page_forms):
+            field = self.fields["prior_auth_status"]
+            assert isinstance(field, forms.ChoiceField)
+            field.choices = [
+                c for c in PRIOR_AUTH_CHOICES if c[0] != PRIOR_AUTH_EMERGENCY
+            ]
+        if "prior_auth_status" not in answers:
+            legacy = self._legacy_status(answers)
+            if legacy:
+                self.initial["prior_auth_status"] = legacy
+
+    def superseded_answers(self, posted: Mapping[str, str]) -> list[str]:
+        status = posted.get("prior_auth_status")
+        if not status:
+            return []
+        stale = [box for box, _ in _LEGACY_PRIOR_AUTH_BOXES]
+        if status == PRIOR_AUTH_NOT_SURE:
+            # Not an answer, so kept out of qa_context like a yes/no one.
+            stale.append("prior_auth_status")
+        if status != PRIOR_AUTH_OBTAINED:
+            # The number box is hidden for any other answer, but still posts.
+            stale.append("prior_auth_id")
+        return stale
+
+    @staticmethod
+    def _ticked(answers: Mapping[str, str], box: str) -> bool:
+        # "Yes"/"No" as stored now, "on"/"False" from the tick-box days.
+        return yes_no_answer(answers.get(box)) is True
+
+    @classmethod
+    def _legacy_status(cls, answers: Mapping[str, str]) -> Optional[str]:
+        if answers.get("prior_auth_id"):
+            return PRIOR_AUTH_OBTAINED
+        for box, status in _LEGACY_PRIOR_AUTH_BOXES:
+            if cls._ticked(answers, box):
+                return status
+        return None
+
     def main(self):
+        status = self.cleaned_data.get("prior_auth_status")
+        prior_auth_id = self.cleaned_data.get("prior_auth_id")
+        if not status:
+            return self._legacy_main()
+        if status == PRIOR_AUTH_OBTAINED:
+            if prior_auth_id:
+                return [f"Prior auth was obtained (id {prior_auth_id})"]
+            return ["Prior authorization was obtained."]
+        sentence = {
+            "told_not_needed": "It was communicated that prior authorization was not necessary.",
+            PRIOR_AUTH_EMERGENCY: "This service was an emergency so prior auth could not be obtained.",
+            "asked_insurer": "The insurance company was contacted before the service.",
+        }.get(status)
+        return [sentence] if sentence else []
+
+    def _legacy_main(self) -> list[str]:
+        """What the four old tick boxes said, for answers stored before the
+        one question replaced them."""
         r: list[str] = []
-        if self.cleaned_data.get("emergency"):
+        if self._ticked(self.data, "emergency"):
             r.append(
                 "This service was an emergency so prior auth could not be obtained."
             )
-        if self.cleaned_data.get("told_prior_auth_not_needed"):
+        if self._ticked(self.data, "told_prior_auth_not_needed"):
             r.append("It was communicated that prior authorization was not necessary.")
-        elif self.cleaned_data.get("contact_insurance_before"):
+        elif self._ticked(self.data, "contact_insurance_before"):
             r.append("The insurance company was contacted before the service.")
         if self.cleaned_data.get("prior_auth_id"):
             r.append(
                 f"Prior auth was obtained (id {self.cleaned_data['prior_auth_id']})"
             )
-        elif self.cleaned_data.get("prior_auth_obtained"):
+        elif self._ticked(self.data, "prior_auth_obtained"):
             r.append("Prior authorization was obtained.")
         return r
 

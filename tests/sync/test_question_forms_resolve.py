@@ -246,28 +246,82 @@ class PriorAuthQuestionsMainTest(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
         return form.main()
 
-    def test_prior_auth_obtained_without_a_number_is_still_said(self):
+    def test_got_one_without_a_number_is_still_said(self):
+        self.assertEqual(
+            self._main(prior_auth_status="obtained"),
+            ["Prior authorization was obtained."],
+        )
+
+    def test_got_one_with_a_number_says_the_number(self):
+        self.assertEqual(
+            self._main(prior_auth_status="obtained", prior_auth_id="PA-123"),
+            ["Prior auth was obtained (id PA-123)"],
+        )
+
+    def test_a_number_left_from_got_one_is_not_said_for_another_answer(self):
+        self.assertEqual(
+            self._main(prior_auth_status="told_not_needed", prior_auth_id="PA-123"),
+            ["It was communicated that prior authorization was not necessary."],
+        )
+
+    def test_asked_the_insurer_first(self):
+        self.assertEqual(
+            self._main(prior_auth_status="asked_insurer"),
+            ["The insurance company was contacted before the service."],
+        )
+
+    def test_emergency(self):
+        self.assertEqual(
+            self._main(prior_auth_status="emergency"),
+            ["This service was an emergency so prior auth could not be obtained."],
+        )
+
+    def test_did_not_get_one_argues_nothing(self):
+        self.assertEqual(self._main(prior_auth_status="not_obtained"), [])
+
+    def test_not_sure_argues_nothing(self):
+        self.assertEqual(self._main(prior_auth_status="not_sure"), [])
+
+
+class PriorAuthQuestionsOldAnswersTest(TestCase):
+    """Denials answered before the one question still hold the old boxes."""
+
+    def _main(self, **data):
+        form = question_forms.PriorAuthQuestions(data)
+        self.assertTrue(form.is_valid(), form.errors)
+        return form.main()
+
+    def test_an_old_obtained_box_is_still_said(self):
         self.assertEqual(
             self._main(prior_auth_obtained="on"),
             ["Prior authorization was obtained."],
         )
 
-    def test_a_prior_auth_number_replaces_the_plain_obtained_sentence(self):
+    def test_old_boxes_ticked_together_are_all_still_said(self):
         self.assertEqual(
-            self._main(prior_auth_obtained="on", prior_auth_id="PA-123"),
-            ["Prior auth was obtained (id PA-123)"],
+            self._main(emergency="on", contact_insurance_before="on"),
+            [
+                "This service was an emergency so prior auth could not be obtained.",
+                "The insurance company was contacted before the service.",
+            ],
         )
 
-    def test_contacting_the_insurer_is_said_when_not_told_it_was_unneeded(self):
+    def test_an_old_yes_is_still_said(self):
         self.assertEqual(
-            self._main(contact_insurance_before="on"),
-            ["The insurance company was contacted before the service."],
-        )
-
-    def test_being_told_it_was_unneeded_covers_contacting_the_insurer(self):
-        self.assertEqual(
-            self._main(contact_insurance_before="on", told_prior_auth_not_needed="on"),
+            self._main(told_prior_auth_not_needed="Yes"),
             ["It was communicated that prior authorization was not necessary."],
+        )
+
+    def test_an_old_no_says_nothing(self):
+        self.assertEqual(self._main(prior_auth_obtained="No"), [])
+
+    def test_an_old_box_stored_unticked_says_nothing(self):
+        self.assertEqual(self._main(emergency="False"), [])
+
+    def test_the_new_answer_wins_over_an_old_box(self):
+        self.assertEqual(
+            self._main(prior_auth_status="not_obtained", emergency="on"),
+            [],
         )
 
 

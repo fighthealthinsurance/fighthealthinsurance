@@ -2080,6 +2080,27 @@ class GenerateAppeal(View):
             return {}
 
     @staticmethod
+    def _superseded_answers(denial, posted: dict[str, str]) -> list[str]:
+        """Answer keys the question forms say this post makes stale
+        (``InsuranceQuestions.superseded_answers``)."""
+        try:
+            stale: list[str] = []
+            question_forms = (
+                common_view_logic.FindNextStepsHelper._build_question_forms(denial)
+            )
+            for question_form in question_forms:
+                superseded = getattr(question_form, "superseded_answers", None)
+                if callable(superseded):
+                    stale.extend(superseded(posted))
+            return stale
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Could not work out which answers were superseded for "
+                f"denial {getattr(denial, 'denial_id', '?')}: {e}"
+            )
+            return []
+
+    @staticmethod
     def _appeals_context(
         *, request, denial, denial_id: str, email: str, semi_sekret: str, elems: dict
     ) -> dict:
@@ -2234,6 +2255,11 @@ class GenerateAppeal(View):
                 question = question_text_for_field(raw, generated_questions)
                 if question is not None and raw != qa_key_for_question(question):
                     withdrawn.append(raw)
+            # Answers this page's own answers make stale (a hidden box that
+            # still posted, an older form's keys): withdrawn, not saved.
+            for key in self._superseded_answers(denial, posted=elems):
+                updates.pop(key, None)
+                withdrawn.append(key)
             # A yes or no taken back to "Not sure" takes the sentence it
             # derived with it ("This is an urgent claim."). Nothing stored
             # answers that question any more, so a background run would not
