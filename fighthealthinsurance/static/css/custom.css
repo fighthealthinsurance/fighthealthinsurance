@@ -4190,7 +4190,6 @@ summary.fhi-nav-link::after {
 }
 .fhi-why > summary {
     cursor: pointer;
-    color: var(--fhi-green-ink);
     text-decoration: underline;
     width: fit-content;
 }
