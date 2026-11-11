@@ -113,10 +113,12 @@ _REQUEST_PATTERNS: List[str] = [
     r"still\s+qualify\s+for|get\s+kicked\s+off(?:\s+of)?)"
     rf"\s+(?:my\s+|our\s+|the\s+)?{_PROGRAM}\b",
     # "can I get Medicaid", "could we get on Medi-Cal" -- but not "can I get
-    # Medicaid to pay for X", which is a coverage question.
+    # Medicaid to pay for X" or "can I get Medicaid coverage for a
+    # wheelchair", which are coverage questions.
     rf"\b(?:can|could|would|will|might|do)\s+(?:i|we)\s+(?:{_ADVERB}\s+)?"
     r"(?:get|get\s+on(?:to)?|go\s+on|be\s+on|sign\s+up\s+for|enroll\s+in)\s+"
-    rf"(?:free\s+|the\s+)?{_PROGRAM}\b(?!\s+to\s+(?:pay|cover|reimburse))",
+    rf"(?:free\s+|the\s+)?{_PROGRAM}\b(?!\s+to\s+(?:pay|cover|reimburse))"
+    rf"{_NOT_A_BENEFIT}",
 ]
 
 # The work requirement is Medicaid's alone, so "do the work requirements

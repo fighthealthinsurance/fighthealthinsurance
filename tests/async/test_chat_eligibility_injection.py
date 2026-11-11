@@ -45,6 +45,8 @@ class MemoryAnsweringModel(RecordingChatModel):
         self._follow_up_reply = follow_up_reply
 
     async def generate_chat_response(self, current_message_for_llm, **kwargs):
+        """The follow-up reply for the checker's message, else a fresh
+        memory answer (numbered so later turns aren't repeats)."""
         await super().generate_chat_response(current_message_for_llm, **kwargs)
         if CHECKER_MARKER in (current_message_for_llm or ""):
             return (self._follow_up_reply, "Summary: eligibility check underway.")
@@ -55,14 +57,17 @@ class MemoryAnsweringModel(RecordingChatModel):
 
 
 def _messages(model: RecordingChatModel) -> list[str]:
+    """Every message the model was asked to reply to, in order."""
     return [call["message"] or "" for call in model.calls]
 
 
 def _follow_ups(model: RecordingChatModel) -> list[str]:
+    """The messages that carried the checker's follow-up."""
     return [m for m in _messages(model) if CHECKER_MARKER in m]
 
 
 def _assistant_replies(recorder: FrameRecorder) -> list[str]:
+    """The assistant replies the recorder saw go to the client."""
     return [f["content"] for f in recorder.frames if f.get("role") == "assistant"]
 
 

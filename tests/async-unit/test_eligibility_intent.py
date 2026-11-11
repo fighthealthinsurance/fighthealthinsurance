@@ -85,6 +85,8 @@ def test_the_landing_page_first_message_is_a_request():
         "Am I eligible to appeal this denial?",
         "Am I eligible for Medicaid coverage of a wheelchair?",
         "Can I get Medicaid to pay for my MRI?",
+        "Can I get Medicaid coverage for a wheelchair?",
+        "Do I get Medicaid coverage for dental?",
         "Can you do an eligibility check for this patient's BlueCross plan?",
         "Do I qualify for STAR?",
         "Do I qualify for medical assistance with my hospital bills?",
