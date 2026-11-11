@@ -466,9 +466,13 @@ _PREREQUISITE_BEFORE_RE = re.compile(
     # ...and only when that notice governs the match: "notify you of your
     # appeal rights and obtain a final adverse determination" is still a
     # requirement, while "inform you that your appeal was denied and this is
-    # our final adverse determination" adds another statement to the notice.
-    r"(?:(?!\b(?:and|but|or)\s+(?!(?:this|that|it|your|our|the)\s+"
-    r"(?:\w+\s+){0,3}?(?:is|was|are|were|constitutes?|(?:has|have)\s+been)\b)).)*$)"
+    # our final adverse determination" adds another statement about the
+    # decision to the notice. "Or" offers an alternative, so it always ends
+    # the notice, and an unrelated clause ("and your application is
+    # incomplete without a final...") does too.
+    r"(?:(?!\bor\b|\b(?:and|but)\s+(?!(?:(?:this|that|it)\s+|(?:your|our|the)\s+"
+    r"(?:\w+\s+){0,2}?(?:appeals?|determination|decision|denial)\s+)"
+    r"(?:is|was|are|were|constitutes?|(?:has|have)\s+been)\b)).)*$)"
     # "You must obtain a final adverse determination to request...".
     r"|\b(?:must|need\s+to)\s+(?:obtain|receive|get|have)\s+"
     r"(?:(?:a|an|the|your)\s+)*$",
