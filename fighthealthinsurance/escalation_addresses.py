@@ -457,9 +457,11 @@ _PREREQUISITE_BEFORE_RE = re.compile(
     # "rules require that you notify the Department of a final...": not "as
     # required by law, this is our final adverse determination" or "we are
     # required to inform you that this is our final...", which reports this
-    # letter's own decision to the reader.
+    # letter's own decision to the reader ("notify you of a final adverse
+    # determination" is still only a requirement).
     r"|\brequire[sd]?\s+(?:that|(?:you\s+)?to)\b"
-    r"(?!.*\b(?:(?:inform|notify|tell|advise)\s+you|let\s+you\s+know)\b)"
+    r"(?!.*\b(?:(?:inform|notify|tell|advise)\s+you|let\s+you\s+know)"
+    r"\s+(?:that|this|your)\b)"
     # "You must obtain a final adverse determination to request...".
     r"|\b(?:must|need\s+to)\s+(?:obtain|receive|get|have)\s+"
     r"(?:(?:a|an|the|your)\s+)*$",
