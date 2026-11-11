@@ -270,6 +270,9 @@ class NextStepInfo:
             "visible": visible,
             "required": required,
             "help_text": help_text,
+            # Why the answer helps the appeal; the page shows it collapsed
+            # (form_utils.why_we_ask). "" for a question without one.
+            "why_we_ask": field_why_we_ask(field),
             "initial": initial,
             "type": field_type,
         }

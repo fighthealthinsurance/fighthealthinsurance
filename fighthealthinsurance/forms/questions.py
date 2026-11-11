@@ -5,7 +5,7 @@ from typing import Dict, Iterable, Optional
 from asgiref.sync import sync_to_async
 from django import forms
 
-from fighthealthinsurance.form_utils import StyledWidgetsMixin
+from fighthealthinsurance.form_utils import StyledWidgetsMixin, why_we_ask
 
 import requests
 from bs4 import BeautifulSoup
@@ -64,6 +64,10 @@ def wpath_version_in(texts: Iterable[str]) -> Optional[str]:
 # - yes/no and pick-one questions whose answer unlocks a specific argument in
 #   ``main()`` (screening vs diagnostic, a mid-year formulary change, the
 #   final-diagnosis denial the prudent layperson standard forbids).
+#
+# Help text says only what a question means. Why the answer helps the appeal
+# is argued in ``main()`` and the person does not need it to answer, so it
+# goes on the field with ``why_we_ask`` and the page shows it collapsed.
 #
 # Free-text questions about the patient's history (age, symptoms, BMI,
 # diagnosis, how long in treatment) are left to the generated questions,
@@ -181,23 +185,26 @@ MedicalNeccessaryQuestions = MedicalNecessaryQuestions
 
 
 class ExperimentalQuestions(MedicalNecessaryQuestions):
-    medical_reason = forms.CharField(
-        max_length=200,
-        label="Why do you believe this is not experimental?",
-        help_text=(
-            "Insurance companies tend to claim anything expensive is experimental. "
-            "Good ways to show something is not experimental: look for documents like the 'standards of care' or medical journals (including the NIH or pubmed)."
+    medical_reason = why_we_ask(
+        forms.CharField(
+            max_length=200,
+            label="Why do you believe this is not experimental?",
+            help_text="E.g., the standards of care, or medical journals (including the NIH or PubMed).",
+            required=False,
         ),
-        required=False,
+        "Insurance companies tend to claim anything expensive is experimental.",
     )
 
 
 class NotCoveredQuestions(MedicalNecessaryQuestions):
-    medical_reason = forms.CharField(
-        max_length=200,
-        label="Why should this be covered?",
-        help_text="The plan may not say it's not medically necessary, just that they don't want to pay. Good arguments: request plan documents, demand the policy under which it is not covered, or explain why it should be covered.",
-        required=False,
+    medical_reason = why_we_ask(
+        forms.CharField(
+            max_length=200,
+            label="Why should this be covered?",
+            help_text="E.g., request plan documents, demand the policy under which it is not covered, or explain why it should be covered.",
+            required=False,
+        ),
+        "The plan may not say it's not medically necessary, just that it doesn't want to pay.",
     )
 
 
@@ -402,10 +409,9 @@ class PreventiveCareQuestions(InsuranceQuestions):
         label="Why does the patient need this preventive care (if you know)?",
         help_text="E.g., risk factors such as family history or prior conditions, their age, or their doctor's recommendation.",
     )
-    trans_gender = forms.BooleanField(
-        required=False,
-        label="Is the patient transgender?",
-        help_text="Some preventive care is only covered for certain genders. If the patient is transgender, insurance may incorrectly deny necessary coverage. Check this box if it applies.",
+    trans_gender = why_we_ask(
+        forms.BooleanField(required=False, label="Is the patient transgender?"),
+        "Some preventive care is only covered for certain genders, so insurance may incorrectly deny it to a transgender patient.",
     )
 
     def medical_context(self):
@@ -455,7 +461,7 @@ class ThirdPartyQuestions(InsuranceQuestions):
     is_known_3rd_party = forms.BooleanField(
         required=False,
         label="Was this claim due to an accident covered by other insurance?",
-        help_text="E.g., auto accident with known auto insurance, or workers comp. Check if another insurer should be responsible.",
+        help_text="E.g., an auto accident covered by auto insurance, or workers' comp.",
     )
 
     def preface(self):
@@ -476,22 +482,19 @@ class FormularyChangeQuestions(InsuranceQuestions):
     currently_taking = forms.BooleanField(
         required=False,
         label="Are you currently taking this medication?",
-        help_text="Check if you've been taking this medication and it's being removed from formulary or moved to a higher tier.",
     )
     medication_working = forms.BooleanField(
         required=False,
         label="Is the medication working well for you?",
-        help_text="Check if your condition is stable and well-controlled on this medication.",
     )
     tried_alternatives = forms.BooleanField(
         required=False,
         label="Did the alternative medication(s) the insurer suggests not work for you, or cause problems?",
-        help_text="Check if you tried the preferred/alternative medications and they didn't work, or caused side effects or other problems you couldn't continue with.",
     )
     mid_year_change = forms.BooleanField(
         required=False,
         label="Is this a mid-year formulary change?",
-        help_text="Check if the formulary changed during your plan year (not at annual renewal).",
+        help_text="The plan's drug list changed during your plan year, not at renewal.",
     )
 
     def medical_context(self):
@@ -559,25 +562,31 @@ class FormularyChangeQuestions(InsuranceQuestions):
 class ColonoscopyQuestions(InsuranceQuestions):
     """Questions for colonoscopy denial appeals."""
 
-    screening_or_diagnostic = forms.ChoiceField(
-        choices=[
-            ("", "---"),
-            ("screening", "Screening (preventive, no symptoms)"),
-            ("diagnostic", "Diagnostic (symptoms, follow-up, or surveillance)"),
-        ],
-        required=False,
-        label="Was this a screening or diagnostic colonoscopy?",
-        help_text="Screening colonoscopies are preventive and often must be covered at no cost under the ACA. Diagnostic colonoscopies are performed due to symptoms or prior findings.",
+    screening_or_diagnostic = why_we_ask(
+        forms.ChoiceField(
+            choices=[
+                ("", "---"),
+                ("screening", "Screening (preventive, no symptoms)"),
+                ("diagnostic", "Diagnostic (symptoms, follow-up, or surveillance)"),
+            ],
+            required=False,
+            label="Was this a screening or diagnostic colonoscopy?",
+        ),
+        "Screening colonoscopies are preventive and often must be covered at no cost under the ACA.",
     )
-    polyp_removal = forms.BooleanField(
-        required=False,
-        label="Were polyps removed during the procedure?",
-        help_text="Under the ACA and recent guidance, polyp removal during a screening colonoscopy should still be covered as preventive.",
+    polyp_removal = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Were polyps removed during the procedure?",
+        ),
+        "Under the ACA and recent guidance, polyp removal during a screening colonoscopy should still be covered as preventive.",
     )
-    family_history = forms.BooleanField(
-        required=False,
-        label="Does the patient have a family history of colorectal cancer?",
-        help_text="Family history may warrant earlier or more frequent screening.",
+    family_history = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Does the patient have a family history of colorectal cancer?",
+        ),
+        "Family history may warrant earlier or more frequent screening.",
     )
 
     def medical_context(self):
@@ -636,10 +645,12 @@ class ColonoscopyQuestions(InsuranceQuestions):
 class WeightLossMedicationQuestions(InsuranceQuestions):
     """Questions for weight loss / anti-obesity medication denials (Zepbound, Ozempic, Mounjaro, Wegovy)."""
 
-    tried_lifestyle = forms.BooleanField(
-        required=False,
-        label="Has the patient tried diet and exercise programs?",
-        help_text="Many insurers require documented lifestyle modification attempts before covering anti-obesity medications.",
+    tried_lifestyle = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Has the patient tried diet and exercise programs?",
+        ),
+        "Many insurers require documented lifestyle modification attempts before covering anti-obesity medications.",
     )
 
     def medical_context(self):
@@ -673,15 +684,19 @@ class WeightLossMedicationQuestions(InsuranceQuestions):
 class ImagingQuestions(InsuranceQuestions):
     """Questions for imaging denial appeals (MRI, CT scan, etc.)."""
 
-    prior_imaging = forms.BooleanField(
-        required=False,
-        label="Was less advanced imaging already performed (e.g., X-ray before MRI)?",
-        help_text="Some insurers require step-through imaging. If an X-ray or ultrasound was done first, note this.",
+    prior_imaging = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Was less advanced imaging already performed (e.g., X-ray before MRI)?",
+        ),
+        "Some insurers require step-through imaging, starting with an X-ray or ultrasound.",
     )
-    physician_ordered = forms.BooleanField(
-        required=False,
-        label="Was this imaging ordered by the treating physician?",
-        help_text="Physician-ordered imaging based on clinical findings supports medical necessity.",
+    physician_ordered = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Was this imaging ordered by the treating physician?",
+        ),
+        "Physician-ordered imaging based on clinical findings supports medical necessity.",
     )
 
     def medical_context(self):
@@ -756,23 +771,26 @@ class MentalHealthQuestions(InsuranceQuestions):
 class EmergencyServicesQuestions(InsuranceQuestions):
     """Questions for emergency room, ambulance, and emergency department denial appeals."""
 
-    called_911 = forms.BooleanField(
-        required=False,
-        label="Was 911 called or was the patient transported by ambulance?",
-        help_text="Ambulance transport further supports the emergency nature of the situation.",
-    )
-    stabilization_needed = forms.BooleanField(
-        required=False,
-        label="Did the patient require stabilization treatment in the ER?",
-        help_text="Treatment received in the ER supports that the visit was medically necessary.",
-    )
-    denied_based_on_final_diagnosis = forms.BooleanField(
-        required=False,
-        label="Was the claim denied because the final diagnosis turned out not to be an emergency?",
-        help_text=(
-            "The prudent layperson standard requires coverage based on your symptoms at "
-            "the time of the visit, not the final diagnosis."
+    called_911 = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Was 911 called or was the patient transported by ambulance?",
         ),
+        "Ambulance transport further supports the emergency nature of the situation.",
+    )
+    stabilization_needed = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Did the patient require stabilization treatment in the ER?",
+        ),
+        "Treatment received in the ER supports that the visit was medically necessary.",
+    )
+    denied_based_on_final_diagnosis = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Was the claim denied because the final diagnosis turned out not to be an emergency?",
+        ),
+        "The prudent layperson standard requires coverage based on your symptoms at the time of the visit, not the final diagnosis.",
     )
 
     def medical_context(self):
@@ -850,10 +868,12 @@ class TherapyRehabQuestions(InsuranceQuestions):
         required=False,
         label="Type of therapy?",
     )
-    progress_made = forms.BooleanField(
-        required=False,
-        label="Has the patient shown progress with this therapy?",
-        help_text="Documented progress supports continued medical necessity.",
+    progress_made = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Has the patient shown progress with this therapy?",
+        ),
+        "Documented progress supports continued medical necessity.",
     )
 
     def medical_context(self):
@@ -884,15 +904,19 @@ class TherapyRehabQuestions(InsuranceQuestions):
 class GeneticTestingQuestions(InsuranceQuestions):
     """Questions for genetic testing denial appeals."""
 
-    treatment_impact = forms.BooleanField(
-        required=False,
-        label="Will test results change the treatment plan?",
-        help_text="Genetic tests that inform treatment decisions (e.g., targeted therapy selection) have strong clinical utility.",
+    treatment_impact = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Will test results change the treatment plan?",
+        ),
+        "Genetic tests that inform treatment decisions (e.g., targeted therapy selection) have strong clinical utility.",
     )
-    guideline_recommended = forms.BooleanField(
-        required=False,
-        label="Is this test recommended by clinical guidelines (e.g., NCCN, ACMG)?",
-        help_text="Tests recommended by national guidelines have strong evidence for coverage.",
+    guideline_recommended = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Is this test recommended by clinical guidelines (e.g., NCCN, ACMG)?",
+        ),
+        "Tests recommended by national guidelines have strong evidence for coverage.",
     )
 
     def medical_context(self):
@@ -931,10 +955,12 @@ class GeneticTestingQuestions(InsuranceQuestions):
 class InpatientHospitalQuestions(InsuranceQuestions):
     """Questions for inpatient care and hospital stay denial appeals."""
 
-    observation_reclassified = forms.BooleanField(
-        required=False,
-        label="Was the stay reclassified from inpatient to observation?",
-        help_text="Hospitals sometimes reclassify stays to observation status, which can affect coverage.",
+    observation_reclassified = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Was the stay reclassified from inpatient to observation?",
+        ),
+        "Hospitals sometimes reclassify stays to observation status, which can affect coverage.",
     )
 
     def medical_context(self):
@@ -982,15 +1008,21 @@ class SleepStudyQuestions(InsuranceQuestions):
 class LabWorkQuestions(InsuranceQuestions):
     """Questions for lab work denial appeals."""
 
-    preventive = forms.BooleanField(
-        required=False,
-        label="Is this lab work part of preventive/routine screening?",
-        help_text="Many routine screening labs (e.g., cholesterol, diabetes screening) are required to be covered as preventive under the ACA.",
+    preventive = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Is this lab work part of preventive/routine screening?",
+            help_text="E.g., cholesterol or diabetes screening.",
+        ),
+        "Many routine screening labs are required to be covered as preventive under the ACA.",
     )
-    medication_monitoring = forms.BooleanField(
-        required=False,
-        label="Is this lab work needed to monitor medication?",
-        help_text="Lab work required to safely monitor medications (e.g., liver function for statins, kidney function for metformin) is medically necessary.",
+    medication_monitoring = why_we_ask(
+        forms.BooleanField(
+            required=False,
+            label="Is this lab work needed to monitor medication?",
+            help_text="E.g., liver function for statins, or kidney function for metformin.",
+        ),
+        "Lab work required to safely monitor medications is medically necessary.",
     )
 
     def medical_context(self):
@@ -1037,32 +1069,36 @@ class AphasiaTreatmentQuestions(InsuranceQuestions):
         "ppa": "Primary Progressive Aphasia",
     }
 
-    aphasia_type = forms.ChoiceField(
-        choices=[
-            ("", "---"),
-            ("brocas", "Broca's aphasia (non-fluent/expressive)"),
-            ("wernickes", "Wernicke's aphasia (fluent/receptive)"),
-            ("global", "Global aphasia"),
-            ("anomic", "Anomic aphasia"),
-            ("ppa", "Primary Progressive Aphasia"),
-            ("other", "Other / not sure"),
-        ],
-        required=False,
-        label="Type of aphasia (if known)?",
-        help_text="The type of aphasia helps determine which treatments are most appropriate.",
+    aphasia_type = why_we_ask(
+        forms.ChoiceField(
+            choices=[
+                ("", "---"),
+                ("brocas", "Broca's aphasia (non-fluent/expressive)"),
+                ("wernickes", "Wernicke's aphasia (fluent/receptive)"),
+                ("global", "Global aphasia"),
+                ("anomic", "Anomic aphasia"),
+                ("ppa", "Primary Progressive Aphasia"),
+                ("other", "Other / not sure"),
+            ],
+            required=False,
+            label="Type of aphasia (if known)?",
+        ),
+        "The type of aphasia helps determine which treatments are most appropriate.",
     )
-    cause = forms.ChoiceField(
-        choices=[
-            ("", "---"),
-            ("stroke", "Stroke"),
-            ("tbi", "Traumatic brain injury"),
-            ("tumor", "Brain tumor"),
-            ("neurodegenerative", "Neurodegenerative disease"),
-            ("other", "Other"),
-        ],
-        required=False,
-        label="What caused the aphasia?",
-        help_text="The underlying cause helps establish medical necessity and expected recovery trajectory.",
+    cause = why_we_ask(
+        forms.ChoiceField(
+            choices=[
+                ("", "---"),
+                ("stroke", "Stroke"),
+                ("tbi", "Traumatic brain injury"),
+                ("tumor", "Brain tumor"),
+                ("neurodegenerative", "Neurodegenerative disease"),
+                ("other", "Other"),
+            ],
+            required=False,
+            label="What caused the aphasia?",
+        ),
+        "The underlying cause helps establish medical necessity and expected recovery trajectory.",
     )
 
     def medical_context(self):
@@ -1125,23 +1161,25 @@ class AssistiveDeviceQuestions(InsuranceQuestions):
         "hearing": "Hearing aid or cochlear implant",
     }
 
-    device_type = forms.ChoiceField(
-        choices=[
-            ("", "---"),
-            (
-                "aac_high_tech",
-                "High-tech AAC device (tablet, speech-generating device)",
-            ),
-            ("aac_low_tech", "Low-tech AAC (picture boards, communication books)"),
-            ("mobility", "Mobility device (wheelchair, walker, scooter)"),
-            ("prosthetic", "Prosthetic device"),
-            ("orthotic", "Orthotic device"),
-            ("hearing", "Hearing aid or cochlear implant"),
-            ("other", "Other assistive device"),
-        ],
-        required=False,
-        label="Type of assistive device?",
-        help_text="The type of device helps determine applicable coverage rules and clinical guidelines.",
+    device_type = why_we_ask(
+        forms.ChoiceField(
+            choices=[
+                ("", "---"),
+                (
+                    "aac_high_tech",
+                    "High-tech AAC device (tablet, speech-generating device)",
+                ),
+                ("aac_low_tech", "Low-tech AAC (picture boards, communication books)"),
+                ("mobility", "Mobility device (wheelchair, walker, scooter)"),
+                ("prosthetic", "Prosthetic device"),
+                ("orthotic", "Orthotic device"),
+                ("hearing", "Hearing aid or cochlear implant"),
+                ("other", "Other assistive device"),
+            ],
+            required=False,
+            label="Type of assistive device?",
+        ),
+        "The type of device helps determine applicable coverage rules and clinical guidelines.",
     )
     professional_evaluation = forms.BooleanField(
         required=False,

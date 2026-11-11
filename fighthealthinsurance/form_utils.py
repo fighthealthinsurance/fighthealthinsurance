@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
 
 from django import forms
 from django.template.loader import render_to_string
@@ -21,6 +21,31 @@ def append_help_text(field: forms.Field, note: Any) -> None:
         if field.help_text
         else format_html("{}", note)
     )
+
+
+#: The table template the questions page renders its merged form with:
+#: Django's own, plus a collapsed "Why we ask" under any field that has one.
+QUESTIONS_TABLE_TEMPLATE = "partials/questions_table.html"
+
+_F = TypeVar("_F", bound=forms.Field)
+
+
+def why_we_ask(field: _F, reason: str) -> _F:
+    """Give a question the reason we ask it, shown collapsed under it.
+
+    The help text under a question is for what the question means; why the
+    answer helps the appeal is already argued in the form's ``main()``, and
+    the person does not need it to answer. Kept on the field rather than in
+    ``help_text`` so it travels with the field into the merged form, and so
+    the help text the REST API hands out stays plain.
+    """
+    setattr(field, "why_we_ask", reason)
+    return field
+
+
+def field_why_we_ask(field: forms.Field) -> str:
+    """The reason set by why_we_ask, or "" for a field without one."""
+    return str(getattr(field, "why_we_ask", "") or "")
 
 
 def from_your_letter_hint() -> SafeString:
@@ -513,6 +538,7 @@ def magic_combined_form(
                 ):
                     kept.initial = source_initial
 
+    combined_form.template_name_table = QUESTIONS_TABLE_TEMPLATE
     # The fields came from forms that may or may not carry the mixin, and
     # some are added at runtime, so the merged form is stamped here: this is
     # the one the questions page actually renders.
