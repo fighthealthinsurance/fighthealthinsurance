@@ -45,8 +45,10 @@ READ_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=30),
     maximum_interval=timedelta(minutes=2),
 )
-# The readers stop after 60s; this leaves room for fetching the file.
-READ_TIMEOUT = timedelta(minutes=3)
+# The readers stop after 60s and OCR after 4.5 minutes more
+# (plan_documents_processing.OCR_SECONDS plus the child's grace); this leaves
+# room for fetching the file.
+READ_TIMEOUT = timedelta(minutes=8)
 
 
 def shared_plan_documents_workflow_id(share_batch: str) -> str:

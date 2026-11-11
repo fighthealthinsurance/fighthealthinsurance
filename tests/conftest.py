@@ -186,6 +186,13 @@ skip_if_no_pandoc = pytest.mark.skipif(
     reason="pandoc is not installed",
 )
 
+# Tests that OCR a page need tesseract. CI installs it, so there they never
+# skip: a broken install must fail them rather than quietly drop them.
+skip_if_no_tesseract = pytest.mark.skipif(
+    shutil.which("tesseract") is None and not os.environ.get("CI"),
+    reason="tesseract is not installed",
+)
+
 skip_if_no_nice_api_key = pytest.mark.skipif(
     not os.environ.get("NICE_API_KEY"),
     reason="NICE_API_KEY environment variable is not set",

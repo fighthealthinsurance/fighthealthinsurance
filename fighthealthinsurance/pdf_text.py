@@ -16,6 +16,11 @@ PyMuPDF is C, so it is quick, but some PDFs make it hang (pymupdf/PyMuPDF
 made it. :func:`read_mupdf_pages` runs it in the same kind of child, for
 callers that are already on a worker thread.
 
+Scanned pages have no text to read, so :func:`aocr_pdf_pages` draws them with
+PyMuPDF and reads them with tesseract, in the same kind of child, with a time
+budget of its own. The page images and their text go through pipes only:
+nothing read from the document is written to disk.
+
 The text a read returns is capped too: a few kilobytes of PDF can draw
 millions of characters, so a text read stops once it has collected the
 characters asked for, and the calling process reads no more of the child's
@@ -25,6 +30,7 @@ output than those characters take.
 import asyncio
 import io
 import json
+import math
 import os
 import resource
 import selectors
@@ -144,6 +150,88 @@ def mupdf_pages(
             chars_left -= len(text)
             pages.append({"text": text, "tables": found})
     return pages
+
+
+#: Tesseract reading a page image from stdin and writing its text to stdout,
+#: so neither touches the disk.
+_TESSERACT = ("tesseract", "stdin", "stdout")
+#: Leave a page unread when less than this is left of the budget.
+_MIN_OCR_SECONDS = 5.0
+#: Draw a page no smaller than this, however large it is.
+_MIN_OCR_DPI = 50
+
+
+def ocr_pdf_pages(
+    content: bytes,
+    pages: Sequence[int],
+    max_chars: int,
+    dpi: int,
+    max_pixels: int,
+    seconds_per_page: float,
+    budget_seconds: float,
+) -> dict:
+    """Read the ``pages`` (0-based, in that order) with tesseract.
+
+    Each page is drawn in memory in grey at ``dpi``, or at the resolution that
+    keeps it within ``max_pixels``, and given to tesseract on stdin, which
+    writes its text to stdout and gets ``seconds_per_page`` for each page; a
+    page it doesn't finish reads as "". The texts hold at most ``max_chars``
+    characters in all. Reading stops before a page when less than
+    ``_MIN_OCR_SECONDS`` of ``budget_seconds`` is left.
+
+    Returns ``{"texts": [[page, text], ...], "stopped_at": page or None}``,
+    ``stopped_at`` being the first page left unread for want of time or
+    characters. Raises ValueError when tesseract is not installed.
+    """
+    import pymupdf
+
+    started = time.monotonic()
+    # One thread: several readings may run at once, each with its own child.
+    env = {**os.environ, "OMP_THREAD_LIMIT": "1"}
+    texts: List[List[Any]] = []
+    stopped_at: Optional[int] = None
+    chars_left = max_chars
+    with pymupdf.open(stream=content, filetype="pdf") as doc:
+        for number in pages:
+            left = budget_seconds - (time.monotonic() - started)
+            if left < _MIN_OCR_SECONDS or chars_left <= 0:
+                stopped_at = number
+                break
+            if not 0 <= number < doc.page_count:
+                continue
+            page = doc.load_page(number)
+            inches = (page.rect.width / 72) * (page.rect.height / 72)
+            fit = math.floor(math.sqrt(max_pixels / inches)) if inches > 0 else dpi
+            pixmap = page.get_pixmap(
+                dpi=max(min(dpi, fit), _MIN_OCR_DPI),
+                colorspace=pymupdf.csGRAY,
+                alpha=False,
+            )
+            if pixmap.width * pixmap.height > max_pixels:
+                texts.append([number, ""])
+                continue
+            image = pixmap.tobytes("png")
+            del pixmap
+            try:
+                done = subprocess.run(
+                    _TESSERACT,
+                    input=image,
+                    capture_output=True,
+                    timeout=min(seconds_per_page, left),
+                    env=env,
+                )
+            except FileNotFoundError:
+                raise ValueError("tesseract is not installed") from None
+            except subprocess.TimeoutExpired:
+                if seconds_per_page > left:
+                    stopped_at = number
+                    break
+                texts.append([number, ""])
+                continue
+            text = done.stdout.decode("utf-8", "replace")[:chars_left]
+            texts.append([number, text])
+            chars_left -= len(text)
+    return {"texts": texts, "stopped_at": stopped_at}
 
 
 def count_pdf_pages(content: bytes) -> int:
@@ -342,6 +430,53 @@ async def aextract_pdf_page_texts(
     return page_texts
 
 
+#: Time the child gets past its OCR budget to open the PDF and finish a page.
+_OCR_GRACE_SECONDS = 30
+
+
+async def aocr_pdf_pages(
+    content: bytes,
+    pages: Sequence[int],
+    max_chars: int,
+    dpi: int,
+    max_pixels: int,
+    seconds_per_page: float,
+    budget_seconds: float,
+    executor: Optional[ThreadPoolExecutor] = None,
+) -> dict:
+    """Run :func:`ocr_pdf_pages` in a child process.
+
+    The child stops itself within ``budget_seconds``; it is killed, raising
+    TimeoutError, if it is still running ``_OCR_GRACE_SECONDS`` later, as when
+    PyMuPDF hangs on a page. Raises ValueError for a PDF it could not open or
+    when tesseract is not installed, and RuntimeError if the child writes more
+    than ``max_chars`` characters of text can take.
+    """
+    max_output_bytes = (
+        _JSON_BYTES_PER_CHAR * max_chars
+        + _JSON_BYTES_PER_MUPDF_PAGE * len(pages)
+        + _REPORT_BYTES
+    )
+    arguments = [
+        "ocr",
+        ",".join(str(number) for number in pages),
+        str(max_chars),
+        str(dpi),
+        str(max_pixels),
+        str(seconds_per_page),
+        str(budget_seconds),
+    ]
+    result: dict = await _arun_child(
+        executor or _TEXT,
+        arguments,
+        content,
+        budget_seconds + _OCR_GRACE_SECONDS,
+        "OCR",
+        max_output_bytes,
+    )
+    return result
+
+
 async def acount_pdf_pages(content: bytes, timeout_secs: float) -> int:
     """Run :func:`count_pdf_pages` in a child process.
 
@@ -397,6 +532,16 @@ def _child_main(arguments: List[str], report: Optional[IO[str]] = None) -> int:
         elif operation == "mupdf":
             result = mupdf_pages(
                 sys.stdin.buffer.read(), int(rest[0]), int(rest[1]), rest[2] == "tables"
+            )
+        elif operation == "ocr":
+            result = ocr_pdf_pages(
+                sys.stdin.buffer.read(),
+                [int(number) for number in rest[0].split(",") if number],
+                int(rest[1]),
+                int(rest[2]),
+                int(rest[3]),
+                float(rest[4]),
+                float(rest[5]),
             )
         elif operation == "pages":
             result = count_pdf_pages(sys.stdin.buffer.read())

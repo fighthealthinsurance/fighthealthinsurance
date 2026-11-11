@@ -4,9 +4,15 @@ Each shared file is read once. Its text is pulled out with the bounded
 readers (a PDF in a child process, a Word file in one pass, a text file
 decoded), personal details are taken out as best we can
 (plan_document_scrub), and the cleaned text is stored on the row with where
-its reading ended: ready for review, or unreadable when no text could be
-read, as with a scanned PDF. The raw text is never stored, and nothing read
-from a file is logged or raised.
+its reading ended: ready for review, or unreadable when no real text could
+be read. The raw text is never stored, and nothing read from a file is
+logged or raised.
+
+A PDF page with no text, or with text that reads as garbage
+(text_quality.is_garbled: a font with its own encoding gives dots or shifted
+letters), is read again with OCR, up to OCR_MAX_PAGES pages and OCR_SECONDS
+in all. A page still garbled after that is left out, and the text says how
+many pages were. Text that is garbled as a whole is never stored as ready.
 
 Only shared files are read. A shared link has no file, and nothing here,
 or anywhere else on the server, fetches it: staff open links by hand.
@@ -29,7 +35,12 @@ from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance.models import PolicyDocument
-from fighthealthinsurance.upload_limits import MAX_STORED_POLICY_DOCUMENT_BYTES
+from fighthealthinsurance.text_quality import is_garbled
+from fighthealthinsurance.upload_limits import (
+    MAX_OCR_IMAGE_PIXELS,
+    MAX_STORED_POLICY_DOCUMENT_BYTES,
+    OCR_SECONDS_PER_IMAGE,
+)
 
 #: What a reading reports for a row that is no longer there.
 GONE = "gone"
@@ -42,10 +53,19 @@ READ_SECONDS = 60
 MAX_STORED_BYTES = MAX_STORED_POLICY_DOCUMENT_BYTES
 # More rows than one share can hold (ten files on the share page).
 MAX_ROWS_PER_BATCH = 50
+# OCR for pages with no text or garbled text: the first OCR_MAX_PAGES such
+# pages, in OCR_SECONDS in all, each drawn at OCR_DPI within the server OCR's
+# pixel cap and time per image. Pages past either bound are left out, and the
+# text says how many.
+OCR_MAX_PAGES = 40
+OCR_SECONDS = 240
+OCR_DPI = 200
 
 # Threads of its own for reading files, so these never wait behind, or hold
 # up, the PDF reads appeal generation makes in the same worker process.
 _READERS = ThreadPoolExecutor(max_workers=2, thread_name_prefix="fhi-plan-docs-read")
+# OCR's own, so a long scan never makes another file's text read wait.
+_OCR_READERS = ThreadPoolExecutor(max_workers=2, thread_name_prefix="fhi-plan-docs-ocr")
 
 
 class FileNotRead(Exception):
@@ -114,6 +134,31 @@ def _read_stored(doc: PolicyDocument) -> Optional[bytes]:
     return read_and_decrypt_file(doc.document_enc, max_bytes=MAX_STORED_BYTES)
 
 
+async def _aocr(content: bytes, pages: list[int]) -> tuple[dict[int, str], bool]:
+    """(page -> text read with OCR, whether a bound left pages unread).
+    Without tesseract, or for a PDF it can't open, no page is read; an OCR
+    that timed out or could not run raises, so the activity's retries apply."""
+    from fighthealthinsurance.pdf_text import aocr_pdf_pages
+
+    try:
+        result = await aocr_pdf_pages(
+            content,
+            pages[:OCR_MAX_PAGES],
+            MAX_CHARS,
+            OCR_DPI,
+            MAX_OCR_IMAGE_PIXELS,
+            OCR_SECONDS_PER_IMAGE,
+            OCR_SECONDS,
+            executor=_OCR_READERS,
+        )
+    except ValueError as e:
+        # The pages stay as they were; the error names only its class.
+        logger.warning(f"OCR of a shared plan document stopped: {type(e).__name__}")
+        return {}, False
+    read = {int(number): text for number, text in result["texts"]}
+    return read, len(pages) > OCR_MAX_PAGES or result["stopped_at"] is not None
+
+
 async def _apdf_text(content: bytes) -> str:
     from fighthealthinsurance.pdf_text import aextract_pdf_page_texts
 
@@ -124,11 +169,41 @@ async def _apdf_text(content: bytes) -> str:
     except ValueError:
         # The child's own report: locked, broken or too big to read.
         return ""
-    return "\n\n".join(
-        f"[Page {number}]\n{page.strip()}"
-        for number, page in enumerate(pages, start=1)
-        if page.strip()
-    )
+    if is_garbled("\n".join(pages)):
+        # Garbled as a whole, as with short pages each too short to judge.
+        retry = list(range(len(pages)))
+    else:
+        retry = [number for number, page in enumerate(pages) if is_garbled(page)]
+    read, bounded = await _aocr(content, retry) if retry else ({}, False)
+    # Retried pages OCR did not reach keep their own text, unless the whole
+    # text layer was garbled: then none of it is kept.
+    whole = len(retry) == len(pages)
+    texts = [
+        read.get(number, "" if whole else page).strip()
+        for number, page in enumerate(pages)
+    ]
+    kept = [number for number, text in enumerate(texts) if not is_garbled(text)]
+    if not kept or is_garbled("\n".join(texts[number] for number in kept)):
+        return ""
+    parts = [f"[Page {number + 1}]\n{texts[number]}" for number in kept]
+    # A blank page is left out quietly; a page with garbled text, or one OCR
+    # did not reach, is counted in a note.
+    unread = [
+        number
+        for number in set(range(len(pages))) - set(kept)
+        if pages[number].strip() or read.get(number, "").strip() or number not in read
+    ]
+    if unread:
+        note = (
+            f"[{len(unread)} of {len(pages)} pages could not be read and are left out"
+        )
+        if bounded:
+            note += (
+                f": reading scanned pages stops after {OCR_MAX_PAGES} pages"
+                f" or {OCR_SECONDS // 60} minutes"
+            )
+        parts.append(note + ".]")
+    return "\n\n".join(parts)
 
 
 async def aread_text(ext: str, content: bytes) -> str:
@@ -197,6 +272,8 @@ async def aprocess_document(document_id: str) -> str:
     ext = policy_document_extension(doc.filename or doc.document_enc.name or "")
     text = await aread_text(ext, content)
     del content
+    if text and is_garbled(text):
+        text = ""
     cleaned = await loop.run_in_executor(_READERS, clean, text) if text else ""
     status = (
         PolicyDocument.PROCESSING_READY
