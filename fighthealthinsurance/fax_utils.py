@@ -72,10 +72,13 @@ _FAILURE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         FAILURE_VOICE,
         re.compile(
             # A person or a phone menu picked up: no fax tone ever came.
+            # Not training / protocol failures ("Failure to train remote
+            # modem", "Phase A failure", "No response to DCS"): there a fax
+            # machine did answer and the two couldn't agree, so those stay
+            # unclassified rather than blame a real fax number.
             r"voice|human|ringback detected, no answer without ced"
             r"|no answer without ced|no carrier|no fax (?:tone|carrier|answer)"
-            r"|not a fax|no t\.?30|no response to dcs|no remote fax"
-            r"|failure to train|phase a failure|no ced|remote has no",
+            r"|not a fax|no remote fax|no ced",
             re.IGNORECASE,
         ),
     ),

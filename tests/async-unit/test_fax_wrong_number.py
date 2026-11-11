@@ -71,6 +71,19 @@ def test_classify_fax_failure_recognises_backend_messages(text, reason):
     assert classify_fax_failure(text) == reason
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Failure to train remote modem at 2400 bps or minimum speed",
+        "Carrier established, but Phase A failure",
+        "No response to DCS repeated 3 times",
+    ],
+)
+def test_classify_fax_failure_does_not_call_a_negotiation_failure_voice(text):
+    # A fax machine answered; the two couldn't agree. Not a wrong number.
+    assert classify_fax_failure(text) is None
+
+
 def test_classify_fax_failure_returns_none_for_unrecognised_text():
     assert classify_fax_failure("<td>failed</td><td>12:01</td>") is None
 
@@ -310,6 +323,28 @@ def test_a_send_that_raises_is_recorded_as_our_side(mock_send, denial):
         fax_send_core.send_fax_via_vendor(fax)
     fax.refresh_from_db()
     assert fax.failure_reason == FAILURE_OUR_SIDE
+
+
+@pytest.mark.django_db
+def test_a_document_that_cannot_be_built_is_recorded_as_our_side(denial):
+    fax = _make_fax(denial)
+    with (
+        patch.object(
+            fax, "get_temporary_document_path", side_effect=RuntimeError("no doc")
+        ),
+        pytest.raises(RuntimeError),
+    ):
+        fax_send_core.send_fax_via_vendor(fax)
+    fax.refresh_from_db()
+    assert fax.failure_reason == FAILURE_OUR_SIDE
+
+
+@pytest.mark.django_db
+def test_a_new_attempt_clears_the_last_attempts_failure_reason(denial):
+    fax = _make_fax(denial, failure_reason=FAILURE_VOICE, failure_detail="old")
+    fax_send_core.precheck_fax(fax)
+    fax.refresh_from_db()
+    assert (fax.failure_reason, fax.failure_detail) == (None, None)
 
 
 @pytest.mark.django_db

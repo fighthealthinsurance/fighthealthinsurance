@@ -215,9 +215,16 @@ def precheck_fax(fax: "FaxesToSend") -> str:
         logger.warning(f"Fax uuid={fax.uuid} has no destination")
         return STATUS_MISSING_DESTINATION
     fax.attempting_to_send_as_of = timezone.now()
-    # Only this field: a full save would write back a claim, number or
+    # A new attempt starts with no failure reason, so a send that dies
+    # before recording one (a worker killed mid-send, say) never reports
+    # the last attempt's reason as this one's.
+    fax.failure_reason = None
+    fax.failure_detail = None
+    # Only these fields: a full save would write back a claim, number or
     # sent flag another sender or a resend changed since this row loaded.
-    fax.save(update_fields=["attempting_to_send_as_of"])
+    fax.save(
+        update_fields=["attempting_to_send_as_of", "failure_reason", "failure_detail"]
+    )
     return STATUS_OK
 
 
@@ -297,7 +304,14 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> str:
     # guarantees only one transmits.
     # get_temporary_document_path leaves cleanup to the caller (delete=False),
     # so remove the temp file on both success and failure paths.
-    document_path = fax.get_temporary_document_path()
+    report = FaxSendReport()
+    try:
+        document_path = fax.get_temporary_document_path()
+    except Exception as e:
+        # The document could not be read or rebuilt: our end, not the number.
+        report.note(f"{type(e).__name__}: {e}", FAILURE_OUR_SIDE, classify=False)
+        record_send_outcome(fax, report)
+        raise
     try:
         claimed = FaxesToSend.objects.filter(
             pk=fax.pk, vendor_send_completed=False
@@ -324,7 +338,6 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> str:
     if fax.name is not None and len(fax.name) > 2:
         extra += f"This fax is sent on behalf of {fax.name}."
     logger.debug(f"Kicking off fax sending for uuid={fax.uuid}")
-    report = FaxSendReport()
     try:
         result = asyncio.run(
             flexible_fax_magic.send_fax(
