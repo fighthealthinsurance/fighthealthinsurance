@@ -92,7 +92,8 @@ class ChatOnlyModelsTest(SimpleTestCase):
         self.assertEqual(
             names,
             set(ml_models.DeepInfra.CHAT_MODELS)
-            | set(ml_models.LunaRoute.ARENA_MODELS),
+            | set(ml_models.LunaRoute.ARENA_MODELS)
+            | set(ml_models.OpenRouterArena.ARENA_MODELS),
         )
         general = {getattr(m, "model", None) for m in router.all_models_by_cost} | set(
             router.models_by_name

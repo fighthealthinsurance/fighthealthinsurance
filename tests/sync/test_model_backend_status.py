@@ -646,7 +646,9 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
                 "fhi-2025-may-0.3-float16-q8-vllm-compressed",
                 # Not configured here (no LUNA_ROUTE_KEY, no
                 # OPENROUTER_API_KEY): off. LunaRoute's arena models and
-                # OpenRouter's, its web search included.
+                # OpenRouter's, its arena models and web search included.
+                "openrouter-arena/anthropic/claude-opus-5.5",
+                "openrouter-arena/openai/gpt-6.1-sol",
                 "openrouter/anthropic/claude-sonnet-5.5",
                 "lunaroute/deepseek-4.1-flash",
                 "lunaroute/glm-5.3",

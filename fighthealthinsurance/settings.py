@@ -409,11 +409,27 @@ class Base(Configuration):
     )
     # Registered backend names (comma-separated) seated in every new arena
     # task, to try a model out against the rest; arena only, unlike FORCE_MODEL.
-    # Temporarily LunaRoute's two models (ml_models.LunaRoute), to get them
-    # votes; set CHOOSER_FORCE_MODEL="" to stop. A name with no backend
-    # registered (no LUNA_ROUTE_KEY) is logged once and skipped.
+    # With more names than CHOOSER_NUM_CANDIDATES slots, the names are the
+    # pool every slot is drawn from, least-covered first, and no other model
+    # is seated while enough of them are up. By default: DeepSeek 4.1 Flash
+    # and GLM-5.3 (LunaRoute), Claude Opus 5.5 and GPT-6.1 Sol (OpenRouter,
+    # arena only: ml_models.OpenRouterArena), and DeepSeek V4 Pro
+    # (DeepInfra). Set CHOOSER_FORCE_MODEL="" to
+    # stop. A name with no backend registered (no LUNA_ROUTE_KEY,
+    # OPENROUTER_API_KEY or DEEPINFRA_API) is logged once and skipped; if
+    # that leaves fewer than CHOOSER_NUM_CANDIDATES, the usual rotation fills
+    # the rest.
     CHOOSER_FORCE_MODEL = os.getenv(
-        "CHOOSER_FORCE_MODEL", "lunaroute/deepseek-4.1-flash,lunaroute/glm-5.3"
+        "CHOOSER_FORCE_MODEL",
+        ",".join(
+            [
+                "lunaroute/deepseek-4.1-flash",
+                "lunaroute/glm-5.3",
+                "openrouter-arena/anthropic/claude-opus-5.5",
+                "openrouter-arena/openai/gpt-6.1-sol",
+                "deepseek-ai/DeepSeek-V4-Pro-0813",
+            ]
+        ),
     )
     CHOOSER_MAX_QUESTIONS = _env_int("CHOOSER_MAX_QUESTIONS", 4, minimum=1, maximum=10)
     CHOOSER_QA_TIMEOUT = _env_int("CHOOSER_QA_TIMEOUT", 60, minimum=5, maximum=600)
