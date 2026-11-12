@@ -190,6 +190,21 @@ class ASharedFileNeedsABucketCopyTest(_BucketTest):
         error.assert_called_once()
         self.assertIn("No object store is configured", error.call_args.args[0])
 
+    @override_settings(
+        SHARED_FILES_NEED_BUCKET_COPY=True,
+        MINIO_STORAGE_ENDPOINT="bucket.example.test",
+        MINIO_STORAGE_ACCESS_KEY="test-access",
+        MINIO_STORAGE_SECRET_KEY="test-secret",
+        MINIO_STORAGE_MEDIA_BUCKET_NAME="plans",
+    )
+    def test_a_configured_object_store_that_is_not_running_refuses(self):
+        with patch.object(_storage(), "backends", _storage().backends[:-1]), patch(
+            "fighthealthinsurance.shared_plan_documents.logger.error"
+        ):
+            with self.assertRaises(NoBucketCopy):
+                self.share(PLAN_TEXT.encode())
+        self.assertFalse(PolicyDocument.objects.exists())
+
     def test_where_it_is_off_a_pod_disk_copy_is_enough(self):
         with patch.object(self.bucket, "exists", return_value=False):
             (doc,) = self.share(PLAN_TEXT.encode())
