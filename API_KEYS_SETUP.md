@@ -21,6 +21,7 @@ the rest of the app keeps working.
 | none | RxNav / RxNorm | No key needed | Drug-name normalization (brand and generic names, misspellings) |
 | `LOG_ANALYTICS_WORKSPACE_ID`, `LOG_ANALYTICS_WORKSPACE_KEY` | Azure Log Analytics | Optional | Ship app logs to a Log Analytics workspace |
 | `HUMANJUDGE_API_KEY`, `HUMANJUDGE_TOKEN`, `HUMANJUDGE_MODEL_ID` | HumanJudge | Optional | Outside human review of Appeal Arena drafts, from the admin |
+| `RENTAHUMAN_API_KEY`, `RENTAHUMAN_WEBHOOK_SECRET` | RentAHuman | Optional | Paid reviewers judging in the Appeal Arena itself |
 | See [docs/ml-backends.md](docs/ml-backends.md) | Model backends | At least one | Appeal generation |
 
 ## Setting the variables
@@ -287,6 +288,62 @@ when they start. The Ray pods do not need it.
 - To check the setup, upload one case, then download. A message that votes
   "matched no draft we uploaded" means verdicts are arriving but cannot be
   tied to drafts; report it, as the vote format is not fully documented.
+
+## RentAHuman (`RENTAHUMAN_API_KEY` / `RENTAHUMAN_WEBHOOK_SECRET`)
+
+Optional: hires paid reviewers through [RentAHuman](https://rentahuman.ai)
+to judge in the Appeal Arena itself, as a bounty with a join link; their
+votes are ordinary Arena votes tagged with the paid run. Only the Arena's
+synthetic cases are shown. How it works: [docs/chooser.md](docs/chooser.md),
+"Paid reviewers (RentAHuman)".
+
+### Sign up
+
+RentAHuman's website screens out people, so sign up the way it asks agents
+to: `POST https://rentahuman.ai/api/agents/signup` with
+`{"email": ..., "acceptTerms": true, "country": "US"}` (this accepts their
+Terms of Service and Privacy Policy), then
+`POST https://rentahuman.ai/api/agents/signup/verify` with the email and the
+6-digit code they email. The answer holds the API key (`rah_...`), shown
+once. An email that already has an account gets no code; with any working
+key, `POST https://rentahuman.ai/api/keys` (`{"name": ...}`) makes another,
+and `DELETE /api/keys/{id}` revokes one. Their answers repeat the key in more
+than one field, so keep them out of logs.
+
+### Configure
+
+```bash
+export RENTAHUMAN_API_KEY="rah_your-key"
+# Printed once by `manage.py rentahuman_setup --webhook` (after deploy).
+export RENTAHUMAN_WEBHOOK_SECRET="whsec_your-secret"
+```
+
+In production, add them to the shared `fight-health-insurance-secret`
+Secret (namespace `totallylegitco`) and restart the web pods, which serve
+the join link and the webhook:
+
+```bash
+kubectl -n totallylegitco patch secret fight-health-insurance-secret \
+  --type merge -p '{"stringData":{"RENTAHUMAN_API_KEY":"rah_your-key"}}'
+kubectl -n totallylegitco rollout restart deployment/web
+```
+
+Then, from a web pod (`kubectl -n totallylegitco exec -it deploy/web -- ...`):
+`python manage.py rentahuman_setup` checks the wallet; `--deposit 6` prints
+a Stripe link to fund it; `--webhook` registers the webhook and prints its
+secret; `--test-webhook <id>` sends a signed test event. Post bounties from
+there too (`post_paid_review_bounty`), since the join link only works for a
+bounty saved in the production database.
+
+### Behavior
+
+- **With the key set:** `post_paid_review_bounty` previews (and with
+  `--post`, posts) bounties, and submissions are checked and approved or
+  sent back for a redo. Payment is released by a person on RentAHuman.
+- **With the webhook secret set:** submissions are checked as they come in;
+  without it, run `sync_paid_reviews`.
+- **Without the key:** nothing is sent anywhere; join links of bounties
+  already saved still work.
 
 ---
 

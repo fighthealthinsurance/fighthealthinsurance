@@ -142,6 +142,7 @@ ML backends (at least one; either kind works on its own):
 
 Appeal Arena:
 - `HUMANJUDGE_API_KEY` - lets staff upload synthetic Arena appeal drafts (never real ones) to HumanJudge's human reviewers from the admin; their verdicts live in `HumanJudgeVerdict`, apart from `ChooserVote` (see docs/chooser.md)
+- `RENTAHUMAN_API_KEY`, `RENTAHUMAN_WEBHOOK_SECRET` - paid reviewers hired through RentAHuman bounties judge in the Arena itself; their votes are `ChooserVote` rows tagged with `paid_review` (see docs/chooser.md, "Paid reviewers")
 
 Development:
 - `RECAPTCHA_TESTING=true` - Disable reCAPTCHA locally
