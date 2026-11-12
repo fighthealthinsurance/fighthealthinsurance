@@ -94,6 +94,16 @@ class JoinLinkTest(TestCase):
         response = self.client.get(reverse("paid_review_join", args=[bounty.join_token]))
         self.assertEqual(response.status_code, 410)
 
+    def test_worker_already_on_a_closed_bounty_gets_back_to_the_arena(self):
+        bounty = make_bounty()
+        url = reverse("paid_review_join", args=[bounty.join_token])
+        self.client.get(url)
+        bounty.status = "closed"
+        bounty.save()
+        self.assertRedirects(
+            self.client.get(url), reverse("chooser"), fetch_redirect_response=False
+        )
+
     def test_closed_bounty_link_starts_no_run(self):
         bounty = make_bounty(status="closed")
         self.client.get(reverse("paid_review_join", args=[bounty.join_token]))
@@ -463,19 +473,36 @@ class ReviewFollowUpTest(TestCase):
         attempts = [c.kwargs["attempt"] for c in client.review_submission.call_args_list]
         self.assertNotEqual(attempts[0], attempts[1])
 
-    def test_lost_claim_to_the_same_submission_sends_no_redo(self):
-        # The other path (webhook or poll) claimed sub-1 between the checks.
+    def _process_after_losing_the_claim(self):
+        """Run process_submission as if the webhook or the poll claimed sub-1
+        after this call's first look found no claim: the first lookup by
+        submission id answers empty, while the row is already claimed."""
         PaidReviewSession.objects.filter(id=self.run.id).update(
             rah_submission_id="sub-1", status="verified"
         )
+        real_filter = PaidReviewSession.objects.filter
+        first_lookup = {"done": False}
+
+        def filter_(*args, **kwargs):
+            if kwargs == {"rah_submission_id": "sub-1"} and not first_lookup["done"]:
+                first_lookup["done"] = True
+                return PaidReviewSession.objects.none()
+            return real_filter(*args, **kwargs)
+
         client = mock.Mock()
-        outcome = paid_reviews.process_submission(
-            self.bounty, {"id": "sub-1", "text": "FHI-ABCD-EFGH"}, client
-        )
-        self.assertFalse(
-            any(c.args[2] == "request_redo" for c in client.review_submission.call_args_list),
-            outcome,
-        )
+        with mock.patch.object(PaidReviewSession.objects, "filter", side_effect=filter_):
+            outcome = paid_reviews.process_submission(
+                self.bounty, {"id": "sub-1", "text": "FHI-ABCD-EFGH"}, client
+            )
+        return outcome, client
+
+    def test_lost_claim_to_the_same_submission_is_already_handled(self):
+        outcome, _client = self._process_after_losing_the_claim()
+        self.assertEqual(outcome, "already handled (claimed concurrently)")
+
+    def test_lost_claim_to_the_same_submission_sends_no_redo(self):
+        _outcome, client = self._process_after_losing_the_claim()
+        client.review_submission.assert_not_called()
 
     def test_example_code_in_the_bounty_text_is_not_a_code(self):
         payload = paid_reviews.bounty_payload(self.bounty, dry_run=True)

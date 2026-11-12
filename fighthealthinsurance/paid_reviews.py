@@ -612,6 +612,15 @@ class PaidReviewJoinView(View):
 
     def get(self, request: HttpRequest, join_token: str) -> HttpResponse:
         bounty = PaidReviewBounty.objects.filter(join_token=join_token).first()
+        current = session_for(request)
+        if (
+            bounty is not None
+            and current is not None
+            and current.bounty_id == bounty.id
+        ):
+            # A worker already on this bounty's run reopening the link: back
+            # to the Arena, even after the join link closed to new workers.
+            return redirect("chooser")
         if bounty is None or bounty.status != "open":
             response = render(
                 request, "paid_review_closed.html", {"title": "Task closed"}, status=410
