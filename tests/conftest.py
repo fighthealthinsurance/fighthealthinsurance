@@ -164,6 +164,11 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
+        "real_ocr: reads with the real OCR; without it, sync tests stand OCR in "
+        "with an empty reading (tests/sync/conftest.py)",
+    )
+    config.addinivalue_line(
+        "markers",
         f"{PANDOC_PDF_MARKER}: renders a real PDF with pandoc; skipped (outside "
         "CI) when no PDF engine on this machine can, decided lazily the first "
         "time such a test is about to run",

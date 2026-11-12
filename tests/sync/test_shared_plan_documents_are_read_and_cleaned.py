@@ -14,6 +14,7 @@ import datetime
 import time
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from asgiref.sync import async_to_sync, sync_to_async
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.forms.models import model_to_dict
@@ -401,6 +402,7 @@ class ScansAndGarbledTextAreReadWithOcrTest(_ReadingTest):
         self.assertIn("[2 of 2 pages could not be read: OCR could not run.]", doc.cleaned_text)
 
     @skip_if_no_tesseract
+    @pytest.mark.real_ocr
     def test_a_real_stamped_scan_is_read(self):
         content = make_scanned_pdf_bytes([PLAN_TEXT], hidden_texts=["Page 1"])
         status, doc = self.read("scan.pdf", content)
@@ -414,12 +416,14 @@ class ScansAndGarbledTextAreReadWithOcrTest(_ReadingTest):
         read.assert_not_awaited()
 
     @skip_if_no_tesseract
+    @pytest.mark.real_ocr
     def test_a_real_scan_is_read(self):
         status, doc = self.read("scan.pdf", make_scanned_pdf_bytes([PLAN_TEXT]))
         self.assertEqual(status, READY)
         self.assertIn("deductible", doc.cleaned_text.lower())
 
     @skip_if_no_tesseract
+    @pytest.mark.real_ocr
     def test_a_page_that_shows_real_text_over_a_garbled_text_layer_is_read_from_the_picture(self):
         content = make_scanned_pdf_bytes([PLAN_TEXT], hidden_texts=[shifted(PLAN_TEXT, 3)])
         status, doc = self.read("plan.pdf", content)
@@ -626,3 +630,18 @@ class ReadingStartsOnceTheRowsCommitTest(TestCase):
             share(upload("plan.txt", b"$1,500"))
         connect.assert_not_awaited()
         self.assertEqual(PolicyDocument.objects.count(), 1)
+
+
+def test_sync_tests_read_nothing_with_ocr_unless_they_ask():
+    from fighthealthinsurance import pdf_text
+
+    assert pdf_text.aocr_pdf_pages.__name__ == "nothing_read"
+
+
+@pytest.mark.real_ocr
+def test_the_real_ocr_marker_reaches_the_real_ocr():
+    # A change to the stand-in must never silently stub the real-tesseract tests.
+    from fighthealthinsurance import pdf_text
+
+    assert pdf_text.aocr_pdf_pages.__name__ == "aocr_pdf_pages"
+    assert pdf_text.aocr_pdf_pages.__module__ == "fighthealthinsurance.pdf_text"
