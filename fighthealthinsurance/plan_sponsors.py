@@ -308,8 +308,12 @@ def link_sponsor(doc_id: Union[str, uuid.UUID], sponsor: Sponsor) -> PlanSponsor
         open_to_link = Q(plan_sponsor__isnull=True)
         if sponsor.source != SOURCE_PERSON:
             open_to_link |= Q(plan_sponsor_source=SOURCE_PERSON)
+        # A person's own papers keep no text, so no quoted line either.
         PolicyDocument.objects.filter(open_to_link, pk=doc_id).exclude(
-            processing_status=PolicyDocument.PROCESSING_REMOVED
+            processing_status__in=(
+                PolicyDocument.PROCESSING_REMOVED,
+                PolicyDocument.PROCESSING_PERSONAL,
+            )
         ).update(
             plan_sponsor=company,
             plan_sponsor_source=sponsor.source,

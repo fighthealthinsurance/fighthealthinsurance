@@ -8,6 +8,12 @@ its reading ended: ready for review, or unreadable when no real text could
 be read. The raw text is never stored, and nothing read from a file is
 logged or raised.
 
+Text that reads as a person's own papers (plan_document_kind: a bill, an
+EOB, a letter about them) keeps no text at all, only its encrypted file;
+text with no health plan words is kept but marked not a plan. Neither is
+looked up for a company. Staff can say a file is a plan, and its next
+reading then skips this check.
+
 A PDF page with no text, or with text that reads as garbage
 (text_quality.is_garbled: a font with its own encoding gives dots or shifted
 letters), is read again with OCR, up to OCR_MAX_PAGES pages and OCR_SECONDS
@@ -36,6 +42,7 @@ from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.plan_document_kind import OTHER, PERSONAL, PLAN, document_kind
 from fighthealthinsurance.text_quality import (
     is_clearly_text,
     is_garbled,
@@ -300,7 +307,9 @@ def clean(text: str) -> str:
     return scrub(text.strip())[:MAX_CHARS].strip()
 
 
-async def _astore(document_id: str, status: str, cleaned_text: str) -> str:
+async def _astore(
+    document_id: str, status: str, cleaned_text: str, **cleared: str
+) -> str:
     """Store a reading on a row still waiting; report the row's status."""
     stored = await (
         _shared_rows()
@@ -309,6 +318,7 @@ async def _astore(document_id: str, status: str, cleaned_text: str) -> str:
             processing_status=status,
             processed_at=timezone.now(),
             cleaned_text=cleaned_text,
+            **cleared,
         )
     )
     return status if stored else await _status_now(document_id)
@@ -335,13 +345,25 @@ async def aprocess_document(document_id: str) -> str:
     del content
     if text and is_garbled(text):
         text = ""
-    cleaned = await loop.run_in_executor(_READERS, clean, text) if text else ""
-    status = (
-        PolicyDocument.PROCESSING_READY
-        if cleaned
-        else PolicyDocument.PROCESSING_UNREADABLE
-    )
-    stored = await _astore(document_id, status, cleaned)
+    kind = PLAN
+    if text and not doc.staff_says_plan:
+        kind = await loop.run_in_executor(_READERS, document_kind, text)
+        logger.info(f"Shared plan document {document_id} reads as {kind}")
+    cleared: dict[str, str] = {}
+    if kind == PERSONAL:
+        # A person's own papers: the file stays, encrypted; no text is kept,
+        # nor a line an earlier reading quoted for its company.
+        status, cleaned = PolicyDocument.PROCESSING_PERSONAL, ""
+        cleared["plan_sponsor_evidence"] = ""
+    else:
+        cleaned = await loop.run_in_executor(_READERS, clean, text) if text else ""
+        if not cleaned:
+            status = PolicyDocument.PROCESSING_UNREADABLE
+        elif kind == OTHER:
+            status = PolicyDocument.PROCESSING_NOT_A_PLAN
+        else:
+            status = PolicyDocument.PROCESSING_READY
+    stored = await _astore(document_id, status, cleaned, **cleared)
     if stored == PolicyDocument.PROCESSING_READY and text:
         # The company is read from the text before cleaning, which may have
         # taken a line that looked personal.
