@@ -17,6 +17,9 @@ A run does three things, and a failure in one never stops the next:
 3. Asks for the daily staff summary of shared plan documents
    (plan_documents_summary): the first run of each UTC day sends it, and
    the rest find it sent. Run once, never retried.
+4. Asks for the daily check that each shared file is still whole in the
+   bucket (shared_file_check): the first run of each UTC day runs it.
+   Counts only; run once, never retried.
 
 History holds the run's numbers, the reminders' row ids, true or false for
 each, the shares' uuids, the counts and whether the summary went.
@@ -65,7 +68,20 @@ class PlanDocumentsSweepWorkflow:
         result = {"reminders_sent": sent, "readings_started": started}
         if workflow.patched("plan-documents-staff-summary"):
             result["summary_sent"] = int(await self._send_summary())
+        if workflow.patched("plan-documents-file-check"):
+            result["files_checked"] = int(await self._check_files())
         return result
+
+    async def _check_files(self) -> bool:
+        try:
+            return await workflow.execute_activity(
+                sweep_activities.check_shared_plan_document_files,
+                start_to_close_timeout=timedelta(minutes=15),
+                retry_policy=SEND_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("the file check failed; tomorrow's run tries")
+            return False
 
     async def _send_summary(self) -> bool:
         try:

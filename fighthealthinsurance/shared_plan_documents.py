@@ -217,6 +217,10 @@ _BUDGET_NAMES = (
     *SharedPlanDocumentsDay.DROPPED,
     SharedPlanDocumentsDay.STAFF_SUMMARY,
     SharedPlanDocumentsDay.STAFF_SUMMARY_TRIES,
+    SharedPlanDocumentsDay.FILE_CHECK,
+    *SharedPlanDocumentsDay.FILE_CHECK_COUNTS,
+    SharedPlanDocumentsDay.NO_BUCKET_SHARE_PAGE,
+    SharedPlanDocumentsDay.NO_BUCKET_OPT_IN,
 )
 
 
@@ -336,6 +340,68 @@ def link_fingerprint(link: str) -> str:
     return digest.hexdigest()
 
 
+class NoBucketCopy(Exception):
+    """A shared file was stored only on a pod's own disk, which empties on
+    restart, so the save does not count."""
+
+
+def _require_bucket_copy(doc: PolicyDocument) -> None:
+    # Only where it is on (SHARED_FILES_NEED_BUCKET_COPY): the other
+    # backends' copies are on pod disks, and a save that leaves only those
+    # would be lost on the next restart, quietly.
+    if not getattr(settings, "SHARED_FILES_NEED_BUCKET_COPY", False):
+        return
+    from fighthealthinsurance.storage_health import bucket_backends, has_bucket_copy
+
+    name = doc.document_enc.name
+    if not bucket_backends():
+        if _object_store_configured():
+            # Configured, but its client failed at startup: the file would
+            # be on pod disks only.
+            logger.error(
+                f"The object store is configured but not running; shared file "
+                f"{doc.pk} not saved"
+            )
+            raise NoBucketCopy()
+        # A setup with no object store at all would refuse every share on
+        # the site; it saves as before, and says so loudly.
+        logger.error(f"No object store is configured; shared file {doc.pk} kept anyway")
+        return
+    if not has_bucket_copy(name):
+        logger.error(f"Shared file {doc.pk} has no bucket copy; not saved")
+        _remove_bucket_copies(name)
+        raise NoBucketCopy()
+
+
+def _object_store_configured() -> bool:
+    # The settings Prod builds its object store from (EXTERNAL_STORAGE_B).
+    return all(
+        getattr(settings, key, None)
+        for key in (
+            "MINIO_STORAGE_ENDPOINT",
+            "MINIO_STORAGE_ACCESS_KEY",
+            "MINIO_STORAGE_SECRET_KEY",
+            "MINIO_STORAGE_MEDIA_BUCKET_NAME",
+        )
+    )
+
+
+def _remove_bucket_copies(name: str) -> None:
+    # The rollback's cleanup deletes only where a store says it has the file,
+    # and an object store says no when it can't answer, so a copy written
+    # before it stopped answering is removed outright here.
+    from stopit import ThreadingTimeout as Timeout
+
+    from fighthealthinsurance.storage_health import bucket_backends
+
+    for backend in bucket_backends():
+        try:
+            with Timeout(2.0):
+                backend.delete(name)
+        except Exception as e:
+            logger.warning(f"Could not remove a bucket copy: {type(e).__name__}")
+
+
 def save_shared_documents(
     files: Sequence[UploadedFile],
     *,
@@ -360,6 +426,12 @@ def save_shared_documents(
     insurance_plan_obj, each optional. Raises OverDailyBudget, storing
     nothing, when today's budget for everyone from ``source`` has no room
     for the files, or the links' budget has none for the links.
+
+    With SHARED_FILES_NEED_BUCKET_COPY (on in Prod), a file counts as saved
+    only once the object store holds it; otherwise the save raises
+    NoBucketCopy and stores nothing, as it would for any failed save. Each
+    file's size as uploaded is kept (stored_size) for the nightly file check
+    (shared_file_check).
 
     ``contact_email`` is kept, encrypted, only for a share from the share
     page itself, never for a copy shared from another page. A typed
@@ -414,8 +486,10 @@ def save_shared_documents(
                 uploaded.name = f"shared-{doc.id.hex}{ext}"
                 doc.document_enc = uploaded
                 doc.filename = uploaded.name
+                doc.stored_size = uploaded.size
                 saved.append(doc)
                 doc.save()
+                _require_bucket_copy(doc)
             for link in links:
                 doc = PolicyDocument(
                     **{
@@ -433,7 +507,17 @@ def save_shared_documents(
                 from fighthealthinsurance.plan_sponsors import link_typed_employer
 
                 link_typed_employer([doc.pk for doc in saved], typed_employer)
-    except Exception:
+    except Exception as e:
+        if isinstance(e, NoBucketCopy):
+            # Counted here, outside the rolled-back transaction.
+            note_count(
+                (
+                    SharedPlanDocumentsDay.NO_BUCKET_SHARE_PAGE
+                    if source == PolicyDocument.SOURCE_SHARED
+                    else SharedPlanDocumentsDay.NO_BUCKET_OPT_IN
+                ),
+                len(files),
+            )
         if day is not None:
             give_back(budget, len(files), day)
         if links_day is not None:
@@ -485,16 +569,22 @@ def note_dropped(reason: str, files: int) -> None:
     """Count ``files`` opted-in copies left out today for ``reason`` (one of
     SharedPlanDocumentsDay.DROPPED), for the staff summary. Counts only, no
     file or person. Never raises."""
+    note_count(reason, files)
+
+
+def note_count(name: str, files: int) -> None:
+    """Add ``files`` to today's ``name`` count (a SharedPlanDocumentsDay
+    name kept through the prune). Counts only. Never raises."""
     if files <= 0:
         return
     try:
         day = timezone.now().date()
-        SharedPlanDocumentsDay.objects.get_or_create(day=day, name=reason)
-        SharedPlanDocumentsDay.objects.filter(day=day, name=reason).update(
+        SharedPlanDocumentsDay.objects.get_or_create(day=day, name=name)
+        SharedPlanDocumentsDay.objects.filter(day=day, name=name).update(
             count=F("count") + files
         )
     except Exception:
-        logger.opt(exception=True).warning("Could not count dropped shared copies")
+        logger.opt(exception=True).warning("Could not count shared copies")
 
 
 def _new_copies(
@@ -789,6 +879,7 @@ REMOVED_VALUES: dict[str, Any] = {
     "read_attempts": 0,
     "read_attempted_at": None,
     "company_lookup_failures": 0,
+    "stored_size": None,
 }
 
 

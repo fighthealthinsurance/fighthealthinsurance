@@ -50,6 +50,42 @@ def _encryption_key() -> bytes:
     return _fernet_key[16:]
 
 
+def encrypted_shape_is_whole(length: int, tail: bytes) -> bool:
+    """Whether a stored encrypted copy of ``length`` bytes ending in ``tail``
+    (its last few bytes) has a whole token's length: base64 of 57 + 16k
+    bytes (Fernet's header, AES blocks and MAC), padded with "=" exactly
+    where that length calls for it. Needs no key and decrypts nothing. A
+    copy cut short at a random point passes about one time in 64 (a cut on
+    a 4-character boundary whose length fits 57 + 16k)."""
+    if length <= 0 or length % 4:
+        return False
+    padding = len(tail) - len(tail.rstrip(b"="))
+    if padding > 2:
+        return False
+    body = length * 3 // 4 - padding - _FERNET_HEADER_BYTES - _FERNET_MAC_BYTES
+    return body > 0 and body % 16 == 0
+
+
+def encrypted_copy_looks_whole(raw_bytes: bytes) -> bool:
+    """encrypted_shape_is_whole for a copy in hand, which must also decode."""
+    text = raw_bytes.strip()
+    if not encrypted_shape_is_whole(len(text), text[-4:]):
+        return False
+    try:
+        base64.urlsafe_b64decode(text)
+    except (binascii.Error, ValueError):
+        return False
+    return True
+
+
+def encrypted_size(plain_size: int) -> int:
+    """How many bytes a file of ``plain_size`` bytes takes once encrypted
+    by the file field: a Fernet token, base64 of its header, the padded AES
+    blocks and the MAC."""
+    token = _FERNET_HEADER_BYTES + 16 * (plain_size // 16 + 1) + _FERNET_MAC_BYTES
+    return 4 * -(-token // 3)
+
+
 def salvage_truncated(raw_bytes: bytes) -> bytes:
     """The start of a document whose encrypted copy was cut short, or b"".
 
@@ -60,20 +96,16 @@ def salvage_truncated(raw_bytes: bytes) -> bytes:
     says it is whole failed for another reason (another key, a damaged MAC),
     and decrypting it would turn the MAC into text, so that gives b"" too.
     """
+    # A cut copy has a whole token's shape about one time in 64; that one is
+    # left unsalvaged.
+    if encrypted_copy_looks_whole(raw_bytes):
+        logger.warning("A whole stored document failed to decrypt; not salvaged")
+        return b""
     text = raw_bytes.strip()
-    whole_text = len(text) % 4 == 0
     text = text[: len(text) - len(text) % 4]
     try:
         token = base64.urlsafe_b64decode(text)
     except (binascii.Error, ValueError):
-        return b""
-    # Whole tokens are base64 of 57 + 16k bytes, padded with "=" unless k is a
-    # multiple of 3. A cut one ends in "=" never, and has a whole token's
-    # length about one time in two hundred; that one is left unsalvaged.
-    overhead = _FERNET_HEADER_BYTES + _FERNET_MAC_BYTES
-    body_bytes = len(token) - overhead
-    if text.endswith(b"=") or (whole_text and body_bytes > 0 and body_bytes % 48 == 0):
-        logger.warning("A whole stored document failed to decrypt; not salvaged")
         return b""
     iv = token[9:_FERNET_HEADER_BYTES]
     body = token[_FERNET_HEADER_BYTES:]

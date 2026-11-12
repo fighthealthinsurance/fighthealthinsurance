@@ -608,6 +608,7 @@ class Command(BaseCommand):
                         sweep_activities.send_plan_documents_reminder,
                         sweep_activities.find_waiting_share_batches,
                         sweep_activities.send_plan_documents_staff_summary,
+                        sweep_activities.check_shared_plan_document_files,
                     ],
                     max_concurrent_activities=1,
                     # Covers a reading's five-minute start_to_close (OCR

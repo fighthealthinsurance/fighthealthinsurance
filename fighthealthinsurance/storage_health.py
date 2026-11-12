@@ -278,6 +278,74 @@ def _has_copy(backend: Storage, name: str) -> bool:
     return True
 
 
+def bucket_backends(storage: Optional[CombinedStorage] = None) -> List[Storage]:
+    """The object-store backends (placement OBJECT_STORE) the document file
+    fields write through: the copies that outlast every pod."""
+    storage = storage or stored_file_storage()
+    if storage is None:
+        return []
+    return [b for b in storage.backends if placement(b) == OBJECT_STORE]
+
+
+def has_bucket_copy(name: str, storage: Optional[CombinedStorage] = None) -> bool:
+    """Whether an object store holds ``name``. False when none is in the
+    write path, none holds it, or none can answer within EXISTS_TIMEOUT_S:
+    unsure counts as no."""
+    for backend in bucket_backends(storage):
+        try:
+            found, _ = _probe(
+                backend, EXISTS_TIMEOUT_S, functools.partial(_has_copy, backend, name)
+            )
+        except Exception as e:
+            logger.warning(
+                f"Could not check {file_tag(name)} on {backend}: {error_text(e)}"
+            )
+            continue
+        if found:
+            return True
+    return False
+
+
+def stored_length_and_tail(
+    backend: Storage, name: str, tail_bytes: int = 4
+) -> Optional[Tuple[int, bytes]]:
+    """The stored copy's length in bytes and its last ``tail_bytes``, as
+    stored (encrypted: nothing is decrypted), or None when the backend holds
+    no copy. An object store answers with its size and a ranged read of the
+    end, never the whole file. Raises when it cannot tell."""
+    store = _object_store(backend)
+    if store is None:
+        if not backend.exists(name):
+            return None
+        size = int(backend.size(name))
+        with backend.open(name, "rb") as stored:
+            stored.seek(max(0, size - tail_bytes))
+            return size, bytes(stored.read(tail_bytes))
+    client, bucket = store
+    sanitize = getattr(backend, "_sanitize_path", None)
+    key = sanitize(name) if callable(sanitize) else name
+    try:
+        stat = client.stat_object(bucket_name=bucket, object_name=key)
+    except Exception as e:
+        if getattr(e, "code", None) == "NoSuchKey":
+            return None
+        raise
+    size = int(stat.size or 0)
+    if not size:
+        return 0, b""
+    response = client.get_object(
+        bucket_name=bucket,
+        object_name=key,
+        offset=max(0, size - tail_bytes),
+        length=min(tail_bytes, size),
+    )
+    try:
+        return size, bytes(response.read())
+    finally:
+        response.close()
+        response.release_conn()
+
+
 def check_reachable(
     backend: Optional[Storage], timeout: float = REACH_TIMEOUT_S
 ) -> Dict[str, Any]:

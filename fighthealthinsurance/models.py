@@ -5515,6 +5515,10 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     # Company lookups that failed, not "names no company"; a lookup that
     # finishes clears it. Staff look again with link_plan_sponsors.
     company_lookup_failures = models.PositiveSmallIntegerField(db_default=0, default=0)
+    # Shared files only: the file's size in bytes as uploaded, before
+    # encryption, so the nightly file check can tell a whole stored copy
+    # from one cut short (shared_file_check). Empty for files shared before.
+    stored_size = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         indexes = [
@@ -5661,6 +5665,30 @@ class SharedPlanDocumentsDay(models.Model):
     # it goes once a day; and how many times the day has tried to send it.
     STAFF_SUMMARY = "staff_summary"
     STAFF_SUMMARY_TRIES = "staff_summary_tries"
+    # Shared files refused because the object store did not hold them
+    # (SHARED_FILES_NEED_BUCKET_COPY): from the share page, and copies from
+    # another page's tick. Counts only, for the staff summary.
+    NO_BUCKET_SHARE_PAGE = "no_bucket_share_page"
+    NO_BUCKET_OPT_IN = "no_bucket_opt_in"
+    # The nightly file check (shared_file_check): 1 once the day's check has
+    # run, and what it found in the bucket, file by file. Counts only.
+    FILE_CHECK = "file_check"
+    FILE_CHECK_WHOLE = "file_check_whole"
+    FILE_CHECK_NO_SIZE = "file_check_no_size"
+    FILE_CHECK_CUT_SHORT = "file_check_cut_short"
+    FILE_CHECK_WRONG_SIZE = "file_check_wrong_size"
+    FILE_CHECK_MISSING = "file_check_missing"
+    FILE_CHECK_UNKNOWN = "file_check_unknown"
+    FILE_CHECK_NOT_CHECKED = "file_check_not_checked"
+    FILE_CHECK_COUNTS = (
+        FILE_CHECK_WHOLE,
+        FILE_CHECK_NO_SIZE,
+        FILE_CHECK_CUT_SHORT,
+        FILE_CHECK_WRONG_SIZE,
+        FILE_CHECK_MISSING,
+        FILE_CHECK_UNKNOWN,
+        FILE_CHECK_NOT_CHECKED,
+    )
 
     day = models.DateField()
     name = models.CharField(max_length=64)
