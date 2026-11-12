@@ -5345,6 +5345,12 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     # Staff marked it as potential spam: kept, with its file, but never read
     # and left out of every count. "Not spam" in the admin undoes it.
     PROCESSING_SPAM = "potential_spam"
+    # The reading found a person's own papers (a bill, an EOB, a letter about
+    # them): the encrypted file is kept, no text, and it is never a plan
+    # (plan_document_kind).
+    PROCESSING_PERSONAL = "personal"
+    # Read, but no health plan words in it: text kept, never a plan.
+    PROCESSING_NOT_A_PLAN = "not_a_plan"
     PROCESSING_STATUS_CHOICES = [
         (PROCESSING_RECEIVED, "Received, not read yet"),
         (PROCESSING_READY, "Read and cleaned, ready for review"),
@@ -5352,6 +5358,8 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         (PROCESSING_REMOVED, "File and text deleted at the person's request"),
         (PROCESSING_LINK, "A link, never fetched: staff open it by hand"),
         (PROCESSING_SPAM, "Potential spam: kept, never read or counted"),
+        (PROCESSING_PERSONAL, "A person's own papers: file kept, no text"),
+        (PROCESSING_NOT_A_PLAN, "Read, but not a plan document"),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -5472,6 +5480,8 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     # write to them about the files they shared (consent.SHARING_TERMS).
     # Never kept for a copy shared from another page. A removal clears it.
     contact_email = EncryptedTextField(db_default="", blank=True, default="")
+    # Staff said it is a plan: its next reading skips the kind check.
+    staff_says_plan = models.BooleanField(db_default=False, default=False)
 
     class Meta:
         indexes = [

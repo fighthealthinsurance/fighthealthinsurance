@@ -784,6 +784,7 @@ REMOVED_VALUES: dict[str, Any] = {
     "contact_email": "",
     "plan_sponsor_evidence": "",
     "processing_status": PolicyDocument.PROCESSING_REMOVED,
+    "staff_says_plan": False,
 }
 
 

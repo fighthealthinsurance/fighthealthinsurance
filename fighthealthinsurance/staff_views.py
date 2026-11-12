@@ -495,6 +495,15 @@ class PolicyDocumentCleanedTextView(View):
             "No text could be read from this file. It may be scanned pages. "
             "Download the original."
         ),
+        PolicyDocument.PROCESSING_PERSONAL: (
+            "Read as a person's own papers (a bill, an EOB or a letter about "
+            "them), so no text is kept and it is not counted as a plan. The "
+            'file is kept. If it is a plan, use "It is a plan: read again".'
+        ),
+        PolicyDocument.PROCESSING_NOT_A_PLAN: (
+            "Read, but it has no health plan words, so it is not counted as a "
+            'plan. If it is one, use "It is a plan: read again".'
+        ),
     }
 
     def get(self, request, pk) -> HttpResponseBase:

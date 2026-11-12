@@ -253,6 +253,25 @@ def removal_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
+def personal_detail_kinds(text: str) -> frozenset[str]:
+    """Which kinds of a person's own details :func:`scrub` finds in ``text``:
+    "id" (a member, patient, claim or account number), "ssn", "birth_date"
+    and "name". Phone numbers, emails and addresses are left out, since
+    plans print their own."""
+    kept = _values(_KEPT_RULE, text)
+    found = {
+        "id": _values(_ID_RULE, text),
+        "ssn": _values(_SSN_RULE, text) + [m.span() for m in _BARE_SSN.finditer(text)],
+        "birth_date": _values(_DOB_RULE, text),
+        "name": _names(text),
+    }
+    return frozenset(
+        kind
+        for kind, spans in found.items()
+        if any(not _inside_kept(span, kept) for span in spans)
+    )
+
+
 def scrub(text: str) -> str:
     """``text`` with the personal details found replaced by ``[removed]``."""
     if not text:

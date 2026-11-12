@@ -2075,6 +2075,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "shared_link_fingerprint",
         "processing_status",
         "processed_at",
+        "staff_says_plan",
         "plan_sponsor_source",
         "plan_sponsor_evidence",
         "plan_sponsor_checked_at",
@@ -2083,6 +2084,8 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     )
     actions = (
         "read_again",
+        "mark_personal",
+        "read_again_as_a_plan",
         "mark_potential_spam",
         "not_spam",
         "confirm_company",
@@ -2151,6 +2154,60 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
             request,
             f"{updated} file(s) will be read again by the next hourly sweep; "
             f"{queryset.count() - updated} were not shared files marked unreadable.",
+        )
+
+    @admin.action(description="Personal papers: clear the text, keep the file")
+    def mark_personal(self, request, queryset):
+        # A shared file read as a plan, or as not a plan, that is a person's
+        # own papers: its text goes, the encrypted file stays, and it is
+        # never counted. Removed rows, spam and rows waiting are left alone.
+        updated = queryset.filter(
+            source__in=PolicyDocument.SHARED_FILE_SOURCES,
+            processing_status__in=(
+                PolicyDocument.PROCESSING_READY,
+                PolicyDocument.PROCESSING_NOT_A_PLAN,
+            ),
+        ).update(
+            processing_status=PolicyDocument.PROCESSING_PERSONAL,
+            cleaned_text="",
+            staff_says_plan=False,
+        )
+        logger.info(
+            f"Staff user {request.user.pk} marked {updated} policy document(s) "
+            "as personal papers"
+        )
+        self.message_user(
+            request,
+            f"{updated} marked as personal papers: text cleared, file kept; "
+            f"{queryset.count() - updated} were not shared files read as a plan "
+            "or as not a plan.",
+        )
+
+    @admin.action(description="It is a plan: read again")
+    def read_again_as_a_plan(self, request, queryset):
+        # Back to waiting, marked as a plan by staff, so the next reading
+        # stores its text as ready without the kind check.
+        updated = queryset.filter(
+            source__in=PolicyDocument.SHARED_FILE_SOURCES,
+            processing_status__in=(
+                PolicyDocument.PROCESSING_PERSONAL,
+                PolicyDocument.PROCESSING_NOT_A_PLAN,
+            ),
+        ).update(
+            processing_status=PolicyDocument.PROCESSING_RECEIVED,
+            processed_at=None,
+            cleaned_text="",
+            staff_says_plan=True,
+        )
+        logger.info(
+            f"Staff user {request.user.pk} marked {updated} policy document(s) "
+            "as plans to read again"
+        )
+        self.message_user(
+            request,
+            f"{updated} file(s) will be read again as plans by the next hourly "
+            f"sweep; {queryset.count() - updated} were not shared files read "
+            "as personal papers or as not a plan.",
         )
 
     @admin.action(description="Mark as potential spam")
