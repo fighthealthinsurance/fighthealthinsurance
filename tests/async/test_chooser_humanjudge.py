@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -261,6 +262,25 @@ async def test_pick_is_the_draft_with_the_best_pass_rate_beside_other_judges():
         task.scoring_json["humanjudge"]["scorer"],
         task.scoring_json["jev"]["candidate_id"],
     ) == (candidates[1].id, chooser_humanjudge.SCORER, candidates[2].id)
+
+
+@ON
+async def test_a_download_cut_short_before_the_picks_is_repaired_by_the_next():
+    task, candidates = await _task(count=2)
+    fake = FakeHumanJudge()
+    await _upload(fake, task)
+    ids = await _inference_ids(candidates)
+    fake.vote(ids[0], "pass")
+    fake.vote(ids[1], "flag")
+    with patch.object(
+        chooser_humanjudge, "update_picks", side_effect=RuntimeError("cut short")
+    ), pytest.raises(RuntimeError):
+        await _download(fake)
+
+    await _download(fake)
+
+    await task.arefresh_from_db()
+    assert task.scoring_json["humanjudge"]["candidate_id"] == candidates[0].id
 
 
 @ON

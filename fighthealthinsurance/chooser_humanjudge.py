@@ -237,9 +237,14 @@ class HumanJudgeClient:
             if len(records) < _PAGE_SIZE:
                 break
         else:
-            logger.warning(
-                f"HumanJudge: stopped reading votes after {_MAX_PAGES} pages; "
-                "download again for the rest"
+            # Each download starts again at the same date and offset, so
+            # votes past the cap in one window are not reached by
+            # downloading again; at the Arena's volume (a few drafts per
+            # case, volunteer reviewers) that is far off.
+            logger.error(
+                f"HumanJudge: stopped reading votes after {_MAX_PAGES} pages "
+                f"({_MAX_PAGES * _PAGE_SIZE} votes); later ones in this window "
+                "are not read. Raise _MAX_PAGES"
             )
         return out
 
@@ -410,6 +415,10 @@ class DownloadResult:
     new_verdicts: int = 0
     # The cases that got a new verdict.
     task_ids: set[int] = field(default_factory=set)
+    # Every case with a verdict in what was read, new or already stored:
+    # their picks are recomputed, so a download cut short after storing
+    # verdicts but before updating picks is repaired by the next one.
+    matched_task_ids: set[int] = field(default_factory=set)
     # Cases the new verdicts settled on a pick for.
     picks: int = 0
     # Votes on traces that are not Arena drafts we sent, or without a
@@ -457,6 +466,7 @@ async def fetch_verdicts(client: HumanJudgeClient) -> DownloadResult:
             if verdict is None:
                 skipped += 1
                 continue
+            result.matched_task_ids.add(submission.task_id)
             _, created = await HumanJudgeVerdict.objects.aget_or_create(
                 external_key=_external_key(record, inference_id),
                 defaults={
@@ -537,10 +547,12 @@ async def update_pick(task: ChooserTask) -> Optional[dict[str, Any]]:
     return pick
 
 
-async def update_picks(task_ids: Iterable[int]) -> int:
-    picked = 0
+async def update_picks(task_ids: Iterable[int]) -> set[int]:
+    """Update these cases' picks; returns the ids of those with a pick."""
+    picked: set[int] = set()
     async for task in ChooserTask.objects.filter(id__in=list(task_ids)):
-        picked += int(await update_pick(task) is not None)
+        if await update_pick(task) is not None:
+            picked.add(task.id)
     return picked
 
 
@@ -553,7 +565,8 @@ async def download_verdicts(
         raise HumanJudgeError("HumanJudge is not configured (HUMANJUDGE_API_KEY)")
     async with HumanJudgeClient(transport=transport) as client:
         result = await fetch_verdicts(client)
-    result.picks = await update_picks(result.task_ids)
+    picked = await update_picks(result.matched_task_ids)
+    result.picks = len(picked & result.task_ids)
     if result.new_verdicts:
         logger.info(f"HumanJudge download: {result}")
     return result
