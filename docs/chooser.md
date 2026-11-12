@@ -595,6 +595,23 @@ Staff run it from the admin; nothing goes out or comes back on a timer:
   `humanjudge`, in the same shape as Jev's and fhi-local's picks plus
   `passes` and `verdicts`, with scorer `humanjudge/pass-rate-1`. A tie for
   best records no pick.
+- **On the public rankings.** Each appeal-letter row carries the model's
+  HumanJudge pass rate (`humanjudge` in the JSON: reviews, passes,
+  pass rate, warming up) in its own "Outside reviewers passed" column, shown
+  as a rate from `PUBLIC_RANKINGS_MIN_SHOWN` reviews; the leader's card
+  repeats it. It never changes the order, which stays our voters' alone.
+  Only aggregate counts reach the public page, never reviewers' feedback.
+  HumanJudge reviews blind, so its verdicts are not held to the
+  blind-voting cut-off; the 30-day window counts them by when they were cast
+  (`humanjudge_reports.model_verdict_stats`).
+- **Staff breakdown.** **Breakdown by model** on the HumanJudge Verdict
+  list (`.../humanjudgeverdict/breakdown/`, `?format=json` for the data)
+  shows each model's uploads, verdicts, pass rate and flags by category
+  beside its Arena record, how often HumanJudge's pick is the same draft as
+  the Arena voters', Jev's and fhi-local's, and the latest written feedback.
+  It is an admin view: anyone not signed in as staff is sent to the admin
+  login, and staff without view permission on HumanJudge verdicts get a 403,
+  the JSON included (`humanjudge_reports.breakdown`).
 - **The account.** One HumanJudge model, standalone (not enrolled in a
   public benchmark), holds every Arena draft. With more than one model on
   the account, set `HUMANJUDGE_MODEL_ID` to it.

@@ -9,7 +9,13 @@ from django.core.exceptions import PermissionDenied
 from django.db import connection, transaction
 from django.db.models import Count, DateTimeField, IntegerField
 from django.db.models.expressions import RawSQL
-from django.http import HttpResponse, HttpResponseNotAllowed, HttpResponseRedirect
+from django.http import (
+    HttpResponse,
+    HttpResponseNotAllowed,
+    HttpResponseRedirect,
+    JsonResponse,
+)
+from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
@@ -1789,7 +1795,38 @@ class HumanJudgeVerdictAdmin(admin.ModelAdmin):
                 self.admin_site.admin_view(self.download_view),
                 name="fighthealthinsurance_humanjudgeverdict_download",
             ),
+            path(
+                "breakdown/",
+                self.admin_site.admin_view(self.breakdown_view),
+                name="fighthealthinsurance_humanjudgeverdict_breakdown",
+            ),
         ] + super().get_urls()
+
+    def breakdown_view(self, request):
+        """HumanJudge's verdicts by model beside the Arena's own record
+        (humanjudge_reports.breakdown); ``?format=json`` for the same data.
+        admin_view sends anyone not signed in as staff to the admin login,
+        and a staff member who may not view verdicts gets a 403, JSON
+        included: it carries reviewers' written feedback."""
+        if not self.has_view_permission(request):
+            raise PermissionDenied
+        from fighthealthinsurance.humanjudge_reports import breakdown
+
+        data = breakdown()
+        if request.GET.get("format") == "json":
+            response = JsonResponse(data)
+            response["Cache-Control"] = "private, no-store"
+            return response
+        return TemplateResponse(
+            request,
+            "admin/fighthealthinsurance/humanjudgeverdict/breakdown.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": "HumanJudge breakdown",
+                "opts": self.model._meta,
+                "data": data,
+            },
+        )
 
     def download_view(self, request):
         """POST only: fetch HumanJudge's new verdicts, then back to the list."""

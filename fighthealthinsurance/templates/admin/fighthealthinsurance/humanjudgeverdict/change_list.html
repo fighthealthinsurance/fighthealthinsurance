@@ -3,6 +3,7 @@
 verdicts on the Arena drafts uploaded from the Chooser Task list, then
 updates those cases' "humanjudge" picks (chooser_humanjudge). {% endcomment %}
 {% block object-tools-items %}
+<li><a href="{% url 'admin:fighthealthinsurance_humanjudgeverdict_breakdown' %}" id="humanjudge-breakdown">Breakdown by model</a></li>
 <li>
     <form id="humanjudge-download" method="post" action="{% url 'admin:fighthealthinsurance_humanjudgeverdict_download' %}">
         {% csrf_token %}
