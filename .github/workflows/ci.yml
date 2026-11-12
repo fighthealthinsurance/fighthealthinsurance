@@ -218,7 +218,7 @@ jobs:
       - name: Install system level packages
         run: |
           mkdir -p ~/apt-archives/partial
-          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive pkg-config python3-dev
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr tesseract-ocr-spa texlive pkg-config python3-dev
           # apt writes these as root; the cache step saves them as the runner
           sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
@@ -310,7 +310,7 @@ jobs:
       - name: Install system level packages
         run: |
           mkdir -p ~/apt-archives/partial
-          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive pkg-config python3-dev
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr tesseract-ocr-spa texlive pkg-config python3-dev
           # apt writes these as root; the cache step saves them as the runner
           sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
@@ -395,7 +395,7 @@ jobs:
       - name: Install system level packages
         run: |
           mkdir -p ~/apt-archives/partial
-          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive pkg-config python3-dev
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr tesseract-ocr-spa texlive pkg-config python3-dev
           # apt writes these as root; the cache step saves them as the runner
           sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
@@ -485,7 +485,7 @@ jobs:
       - name: Install system level packages
         run: |
           mkdir -p ~/apt-archives/partial
-          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive pkg-config python3-dev
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr tesseract-ocr-spa texlive pkg-config python3-dev
           # apt writes these as root; the cache step saves them as the runner
           sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
@@ -580,7 +580,7 @@ jobs:
       - name: Install system level packages
         run: |
           mkdir -p ~/apt-archives/partial
-          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive pkg-config python3-dev
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr tesseract-ocr-spa texlive pkg-config python3-dev
           # apt writes these as root; the cache step saves them as the runner
           sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
@@ -676,7 +676,7 @@ jobs:
       - name: Install system level packages
         run: |
           mkdir -p ~/apt-archives/partial
-          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr texlive pkg-config python3-dev
+          (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y -o Dir::Cache::Archives="$HOME/apt-archives" tesseract-ocr tesseract-ocr-spa texlive pkg-config python3-dev
           # apt writes these as root; the cache step saves them as the runner
           sudo chown -R "$(id -u):$(id -g)" ~/apt-archives
 
