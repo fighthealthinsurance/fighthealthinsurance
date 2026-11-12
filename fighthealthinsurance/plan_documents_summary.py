@@ -18,10 +18,12 @@ to be made again (shared_copy_retries.copies_waiting) and the last nightly
 file check (shared_file_check). Counts only: never a file name, its text, a
 company or an address.
 
-With nothing received, dropped or refused in those 7 days, no copies
-waiting and no file the last check found missing or damaged, it sends one
-line on Mondays ("no uploads") and nothing on other days, so a quiet week
-still shows the summary is running.
+With nothing received, dropped or refused in those 7 days and no copies
+waiting, it sends one line on Mondays ("no uploads") and nothing on other
+days, so a quiet week still shows the summary is running. A quiet week
+whose last file check found files cut short, wrong size or missing sends
+the whole summary on Monday instead: such a file stays that way every
+night, so it never makes a day's email on its own.
 """
 
 import datetime
@@ -46,9 +48,7 @@ from fighthealthinsurance.shared_plan_documents import (
 REASON_FIELDS = tuple(
     (f"unreadable_{reason}", f"Not readable: {label}")
     for reason, label in PolicyDocument.UNREADABLE_REASON_CHOICES
-) + (
-    ("unreadable_no_reason", "Not readable: no reason recorded (read before reasons)"),
-)
+) + (("unreadable_no_reason", "Not readable: no reason recorded"),)
 
 #: The fields each window reports, in the order the email shows them.
 FIELDS = (
@@ -248,17 +248,21 @@ def summary_text(today: datetime.date, counts: dict[str, Any]) -> str:
 def _quiet(counts: dict[str, Any]) -> bool:
     week = counts["week"]
     now = counts["now"]
-    check = now["file_check"]
-    return (
+    # The file check is left out: a file found missing stays missing every
+    # night, so it would send the summary every day. A quiet Monday shows it.
+    return bool(
         week["received"] == 0
         and week["dropped"] == 0
         and week["no_bucket_share_page"] == 0
         and week["no_bucket_opt_in"] == 0
         and now["copies_waiting"] == 0
-        and (
-            check is None
-            or not any(check["counts"][name] for name in FILE_CHECK_PROBLEMS)
-        )
+    )
+
+
+def _file_check_problems(counts: dict[str, Any]) -> bool:
+    check = counts["now"]["file_check"]
+    return check is not None and any(
+        check["counts"][name] for name in FILE_CHECK_PROBLEMS
     )
 
 
@@ -266,10 +270,13 @@ def message_for(
     today: datetime.date, counts: dict[str, Any]
 ) -> Optional[tuple[str, str]]:
     """The (subject, body) to send ``today``, or None for nothing: a quiet
-    week sends one line on Mondays only."""
+    week sends one line on Mondays only, or the whole summary on a Monday
+    when the last file check found files cut short, wrong size or missing."""
     if _quiet(counts):
         if today.weekday() != 0:
             return None
+        if _file_check_problems(counts):
+            return SUBJECT, summary_text(today, counts)
         return (
             QUIET_SUBJECT,
             "No shared plan documents were received or dropped in the last 7 days.",

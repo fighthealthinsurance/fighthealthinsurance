@@ -464,14 +464,22 @@ class StorageCountsShowTest(TestCase):
 
 @override_settings(PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS=STAFF)
 class AQuietWeekWithStorageTroubleStillSendsTest(TestCase):
-    def test_a_missing_file_in_the_last_check_sends_the_summary(self):
+    def test_a_missing_file_alone_waits_for_monday(self):
+        tuesday = MONDAY + datetime.timedelta(days=1)
+        dropped(MONDAY, SharedPlanDocumentsDay.FILE_CHECK_MISSING, 1)
+        self.assertFalse(summary.send_summary_if_due(tuesday))
+        self.assertEqual(mail.outbox, [])
+
+    def test_a_missing_file_makes_a_quiet_monday_the_whole_summary(self):
         dropped(
-            WEDNESDAY - datetime.timedelta(days=1),
+            MONDAY - datetime.timedelta(days=1),
             SharedPlanDocumentsDay.FILE_CHECK_MISSING,
             1,
         )
-        self.assertTrue(summary.send_summary_if_due(WEDNESDAY))
-        self.assertEqual(mail.outbox[0].subject, summary.SUBJECT)
+        self.assertTrue(summary.send_summary_if_due(MONDAY))
+        (message,) = mail.outbox
+        self.assertEqual(message.subject, summary.SUBJECT)
+        self.assertIn("Nightly file check of", message.body)
 
     def test_a_whole_check_leaves_the_week_quiet(self):
         dropped(
