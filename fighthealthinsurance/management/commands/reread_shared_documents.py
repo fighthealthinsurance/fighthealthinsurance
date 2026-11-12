@@ -92,5 +92,8 @@ class Command(BaseCommand):
                 processing_status=PolicyDocument.PROCESSING_RECEIVED,
                 processed_at=None,
                 cleaned_text="",
+                unreadable_reason="",
+                read_attempts=0,
+                read_attempted_at=None,
             )
         self.stdout.write(f"{updated} sent back; the hourly sweep reads them")

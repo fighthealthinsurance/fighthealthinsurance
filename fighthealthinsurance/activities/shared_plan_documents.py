@@ -69,7 +69,9 @@ async def process_shared_plan_document(document_id: str) -> str:
 
 @activity.defn
 async def mark_shared_plan_document_unreadable(document_id: str) -> str:
-    """For a row whose reading failed every attempt: unreadable, no text."""
+    """For a row whose reading failed every attempt: it waits for a later
+    sweep, and after plan_documents_processing.MAX_READ_ATTEMPTS such
+    readings it is unreadable, with no text and the last failure's reason."""
     doc_id = _checked_uuid(document_id, "document id")
     await _aclose_old_connections()
     try:

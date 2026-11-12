@@ -2041,6 +2041,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     list_filter = (
         "source",
         "processing_status",
+        "unreadable_reason",
         CompanyCheckFilter,
         "plan_sponsor_source",
         "document_type",
@@ -2075,6 +2076,10 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "shared_link_fingerprint",
         "processing_status",
         "processed_at",
+        "unreadable_reason",
+        "read_attempts",
+        "read_attempted_at",
+        "company_lookup_failures",
         "staff_says_plan",
         "plan_sponsor_source",
         "plan_sponsor_evidence",
@@ -2149,6 +2154,9 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
             processing_status=PolicyDocument.PROCESSING_RECEIVED,
             processed_at=None,
             cleaned_text="",
+            unreadable_reason="",
+            read_attempts=0,
+            read_attempted_at=None,
         )
         self.message_user(
             request,
@@ -2198,6 +2206,9 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
             processing_status=PolicyDocument.PROCESSING_RECEIVED,
             processed_at=None,
             cleaned_text="",
+            unreadable_reason="",
+            read_attempts=0,
+            read_attempted_at=None,
             staff_says_plan=True,
         )
         logger.info(
@@ -2246,6 +2257,9 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
                 processing_status=PolicyDocument.PROCESSING_RECEIVED,
                 processed_at=None,
                 cleaned_text="",
+                unreadable_reason="",
+                read_attempts=0,
+                read_attempted_at=None,
             )
             links = spam.filter(source=PolicyDocument.SOURCE_SHARED_LINK).update(
                 processing_status=PolicyDocument.PROCESSING_LINK

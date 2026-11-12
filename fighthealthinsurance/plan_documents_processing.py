@@ -35,9 +35,10 @@ import asyncio
 import datetime
 import shutil
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from typing import Any, Optional
 
 from channels.db import database_sync_to_async
+from django.db.models import F, Q
 from django.utils import timezone
 from loguru import logger
 
@@ -65,6 +66,16 @@ READ_SECONDS = 60
 MAX_STORED_BYTES = MAX_STORED_POLICY_DOCUMENT_BYTES
 # More rows than one share can hold (ten files on the share page).
 MAX_ROWS_PER_BATCH = 50
+#: A reading that fails every try (the file can't be fetched, or it times
+#: out) leaves the row waiting; the sweep reads it again READ_RETRY_AFTER
+#: later, and after MAX_READ_ATTEMPTS such readings, about two days, it is
+#: unreadable for good with the reason of the last one.
+READ_RETRY_AFTER = datetime.timedelta(hours=6)
+MAX_READ_ATTEMPTS = 8
+#: A second report of the same failed reading (its bookkeeping activity
+#: retried) within this is not counted again. Shorter than READ_RETRY_AFTER,
+#: so a real next reading always counts.
+SAME_READING = datetime.timedelta(hours=1)
 # OCR for pages with no text or garbled text: the first OCR_MAX_PAGES such
 # pages, in OCR_SECONDS in all, each drawn at OCR_DPI within the server OCR's
 # pixel cap and time per image. Pages past either bound are left out, and the
@@ -94,14 +105,20 @@ def _shared_rows():
     return PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_FILE_SOURCES)
 
 
+def _due_rows():
+    # Waiting rows, less those whose last reading failed too recently.
+    return _shared_rows().filter(
+        Q(read_attempted_at__isnull=True)
+        | Q(read_attempted_at__lte=timezone.now() - READ_RETRY_AFTER),
+        processing_status=PolicyDocument.PROCESSING_RECEIVED,
+    )
+
+
 async def abatch_document_ids(share_batch: str) -> list[str]:
-    """The ids of the batch's rows still waiting to be read, oldest first."""
+    """The ids of the batch's rows waiting to be read and due, oldest first."""
     rows = (
-        _shared_rows()
-        .filter(
-            share_batch=share_batch,
-            processing_status=PolicyDocument.PROCESSING_RECEIVED,
-        )
+        _due_rows()
+        .filter(share_batch=share_batch)
         .order_by("shared_at", "id")
         .values_list("pk", flat=True)[:MAX_ROWS_PER_BATCH]
     )
@@ -113,9 +130,8 @@ async def awaiting_batches(received_minutes: int, limit: int) -> list[str]:
     more than ``received_minutes`` ago that is still waiting to be read."""
     cutoff = timezone.now() - datetime.timedelta(minutes=received_minutes)
     rows = (
-        _shared_rows()
+        _due_rows()
         .filter(
-            processing_status=PolicyDocument.PROCESSING_RECEIVED,
             shared_at__lte=cutoff,
             share_batch__isnull=False,
         )
@@ -196,7 +212,20 @@ async def _aocr(
     return read, None
 
 
-async def _apdf_text(content: bytes) -> str:
+#: Reasons a reading returns that are worth reading again later.
+_READ_AGAIN_LATER = (
+    PolicyDocument.UNREADABLE_OCR_UNAVAILABLE,
+    PolicyDocument.UNREADABLE_DID_NOT_FINISH,
+)
+# Why OCR left pages unread, as a reason for a file with nothing kept.
+_OCR_REASONS = {
+    "OCR could not run": PolicyDocument.UNREADABLE_OCR_UNAVAILABLE,
+    "OCR could not open the file": PolicyDocument.UNREADABLE_CANNOT_OPEN,
+    "OCR did not finish": PolicyDocument.UNREADABLE_DID_NOT_FINISH,
+}
+
+
+async def _apdf_text(content: bytes) -> tuple[str, str]:
     from fighthealthinsurance.pdf_text import aextract_pdf_page_texts
 
     try:
@@ -205,7 +234,9 @@ async def _apdf_text(content: bytes) -> str:
         )
     except ValueError:
         # The child's own report: locked, broken or too big to read.
-        return ""
+        return "", PolicyDocument.UNREADABLE_CANNOT_OPEN
+    if not pages:
+        return "", PolicyDocument.UNREADABLE_CANNOT_OPEN
     # Pages too short to judge alone are judged together: shifted letters
     # spread over many short pages are garbage only as a group.
     garbled = {n for n, page in enumerate(pages) if is_garbled(page)}
@@ -249,7 +280,15 @@ async def _apdf_text(content: bytes) -> str:
     texts = [text_of(number, page) for number, page in enumerate(pages)]
     kept = [number for number, text in enumerate(texts) if not is_garbled(text)]
     if not kept or is_garbled("\n".join(texts[number] for number in kept)):
-        return ""
+        if not retry:
+            return "", PolicyDocument.UNREADABLE_GARBLED
+        if why in _OCR_REASONS:
+            return "", _OCR_REASONS[why]
+        if not any(isinstance(read.get(number), str) for number in retry):
+            # OCR read no page at all (each failed or was not reached): a
+            # failure to read again later, not a scan with nothing on it.
+            return "", PolicyDocument.UNREADABLE_DID_NOT_FINISH
+        return "", PolicyDocument.UNREADABLE_NOTHING_AFTER_OCR
     parts = [f"[Page {number + 1}]\n{texts[number]}" for number in kept]
     # A blank page (no text, and nothing for OCR to read) is left out quietly.
     # A page left out with text on it, or one OCR failed on or did not reach,
@@ -271,12 +310,12 @@ async def _apdf_text(content: bytes) -> str:
     if unread:
         note = f"[{len(unread)} of {len(pages)} pages could not be read"
         parts.append(note + (f": {why}" if why else "") + ".]")
-    return "\n\n".join(parts)
+    return "\n\n".join(parts), ""
 
 
-async def aread_text(ext: str, content: bytes) -> str:
-    """The text of a stored file with extension ``ext``, or "" when none
-    can be read."""
+async def aread_text(ext: str, content: bytes) -> tuple[str, str]:
+    """(The text of a stored file with extension ``ext``, ""), or ("", why
+    none could be read: a PolicyDocument.UNREADABLE_* reason)."""
     loop = asyncio.get_running_loop()
     if ext == ".pdf":
         return await _apdf_text(content)
@@ -294,10 +333,12 @@ async def aread_text(ext: str, content: bytes) -> str:
             READ_SECONDS,
             MAX_DOCX_UNPACKED_BYTES,
         )
-        return "" if status == word_text.UNREADABLE else text
+        if status == word_text.UNREADABLE:
+            return "", PolicyDocument.UNREADABLE_CANNOT_OPEN
+        return text, ""
     if ext == ".txt":
-        return content[: MAX_CHARS * 4].decode("utf-8", "replace")[:MAX_CHARS]
-    return ""
+        return content[: MAX_CHARS * 4].decode("utf-8", "replace")[:MAX_CHARS], ""
+    return "", PolicyDocument.UNREADABLE_CANNOT_OPEN
 
 
 def clean(text: str) -> str:
@@ -308,7 +349,7 @@ def clean(text: str) -> str:
 
 
 async def _astore(
-    document_id: str, status: str, cleaned_text: str, **cleared: str
+    document_id: str, status: str, cleaned_text: str, **cleared: Any
 ) -> str:
     """Store a reading on a row still waiting; report the row's status."""
     stored = await (
@@ -337,19 +378,32 @@ async def aprocess_document(document_id: str) -> str:
     from fighthealthinsurance.chat_forms import policy_document_extension
 
     loop = asyncio.get_running_loop()
-    content = await loop.run_in_executor(_READERS, _read_stored, doc)
-    if not content:
-        raise FileNotRead()
+    try:
+        content = await loop.run_in_executor(_READERS, _read_stored, doc)
+        if not content:
+            raise FileNotRead()
+    except Exception:
+        await _anote_failure(document_id, PolicyDocument.UNREADABLE_FILE_NOT_READ)
+        raise
     ext = policy_document_extension(doc.filename or doc.document_enc.name or "")
-    text = await aread_text(ext, content)
+    try:
+        text, reason = await aread_text(ext, content)
+    except Exception:
+        await _anote_failure(document_id, PolicyDocument.UNREADABLE_DID_NOT_FINISH)
+        raise
     del content
+    if not text and reason in _READ_AGAIN_LATER:
+        # Ours to fix, not the file's (a missing tesseract, OCR that read no
+        # page): it waits to be read again like a reading that raised.
+        await _anote_failure(document_id, reason)
+        return await amark_unreadable(document_id)
     if text and is_garbled(text):
-        text = ""
+        text, reason = "", PolicyDocument.UNREADABLE_GARBLED
     kind = PLAN
     if text and not doc.staff_says_plan:
         kind = await loop.run_in_executor(_READERS, document_kind, text)
         logger.info(f"Shared plan document {document_id} reads as {kind}")
-    cleared: dict[str, str] = {}
+    cleared: dict[str, Any] = {"unreadable_reason": ""}
     if kind == PERSONAL:
         # A person's own papers: the file stays, encrypted; no text is kept,
         # nor a line an earlier reading quoted for its company.
@@ -359,6 +413,11 @@ async def aprocess_document(document_id: str) -> str:
         cleaned = await loop.run_in_executor(_READERS, clean, text) if text else ""
         if not cleaned:
             status = PolicyDocument.PROCESSING_UNREADABLE
+            cleared["unreadable_reason"] = reason or PolicyDocument.UNREADABLE_GARBLED
+            logger.info(
+                f"Shared plan document {document_id} is unreadable: "
+                f"{cleared['unreadable_reason']}"
+            )
         elif kind == OTHER:
             status = PolicyDocument.PROCESSING_NOT_A_PLAN
         else:
@@ -395,12 +454,66 @@ async def alink_company(document_id: str, text: str) -> None:
         sponsor = await afind_company(text)
         if sponsor is not None:
             await database_sync_to_async(link_sponsor)(document_id, sponsor)
-    except Exception:
-        logger.opt(exception=True).warning(
-            f"Could not link policy document {document_id} to a company"
+    except Exception as e:
+        # The class only: an error's message can quote the document.
+        logger.warning(
+            f"Could not link policy document {document_id} to a company: "
+            f"{type(e).__name__}"
         )
+        # Counted apart from "names no company", so staff can look again.
+        await ready_row(document_id).aupdate(
+            company_lookup_failures=F("company_lookup_failures") + 1
+        )
+        return
+    await ready_row(document_id).filter(company_lookup_failures__gt=0).aupdate(
+        company_lookup_failures=0
+    )
+
+
+def ready_row(document_id: Any):
+    """The shared row, only while it is read as ready: one removed or marked
+    spam meanwhile is left as it is."""
+    return _shared_rows().filter(
+        pk=document_id, processing_status=PolicyDocument.PROCESSING_READY
+    )
+
+
+async def _anote_failure(document_id: str, reason: str) -> None:
+    # Why the reading failed, on a row still waiting, for when it gives up.
+    await _shared_rows().filter(
+        pk=document_id, processing_status=PolicyDocument.PROCESSING_RECEIVED
+    ).aupdate(unreadable_reason=reason)
 
 
 async def amark_unreadable(document_id: str) -> str:
-    """Mark a row still waiting as unreadable, with no text."""
-    return await _astore(document_id, PolicyDocument.PROCESSING_UNREADABLE, "")
+    """For a row whose reading failed every try: it waits READ_RETRY_AFTER
+    for the sweep to read it again, and after MAX_READ_ATTEMPTS such
+    readings it is unreadable for good, with no text and the reason of the
+    last failure."""
+    now = timezone.now()
+    # Not a reading already counted: a retried activity reports it once.
+    waiting = _shared_rows().filter(
+        Q(read_attempted_at__isnull=True)
+        | Q(read_attempted_at__lte=now - SAME_READING),
+        pk=document_id,
+        processing_status=PolicyDocument.PROCESSING_RECEIVED,
+    )
+    retried = await waiting.filter(read_attempts__lt=MAX_READ_ATTEMPTS - 1).aupdate(
+        read_attempts=F("read_attempts") + 1, read_attempted_at=now
+    )
+    if retried:
+        return PolicyDocument.PROCESSING_RECEIVED
+    doc = await waiting.only("unreadable_reason").afirst()
+    if doc is None:
+        # Counted already, removed, or read meanwhile.
+        return await _status_now(document_id)
+    reason = doc.unreadable_reason or PolicyDocument.UNREADABLE_DID_NOT_FINISH
+    logger.info(f"Shared plan document {document_id} is unreadable: {reason}")
+    return await _astore(
+        document_id,
+        PolicyDocument.PROCESSING_UNREADABLE,
+        "",
+        unreadable_reason=reason,
+        read_attempts=F("read_attempts") + 1,
+        read_attempted_at=now,
+    )

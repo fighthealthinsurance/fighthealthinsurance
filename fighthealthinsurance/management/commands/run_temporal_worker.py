@@ -387,7 +387,8 @@ class Command(BaseCommand):
                 # Said once at startup: each reading then logs it again.
                 logger.error(
                     "tesseract is not installed, so scanned shared plan documents "
-                    "can't be read with OCR and will be marked unreadable"
+                    "can't be read with OCR: they wait to be read again, and are "
+                    "unreadable only after several tries"
                 )
 
         # The connect is raced against stop: a SIGTERM that lands while the
