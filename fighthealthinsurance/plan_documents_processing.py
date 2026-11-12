@@ -383,6 +383,11 @@ async def aprocess_document(document_id: str) -> str:
         await _anote_failure(document_id, PolicyDocument.UNREADABLE_DID_NOT_FINISH)
         raise
     del content
+    if not text and reason == PolicyDocument.UNREADABLE_OCR_UNAVAILABLE:
+        # A missing tesseract is ours to fix, not the file's: it waits to be
+        # read again like a reading that did not finish.
+        await _anote_failure(document_id, reason)
+        return await amark_unreadable(document_id)
     if text and is_garbled(text):
         text, reason = "", PolicyDocument.UNREADABLE_GARBLED
     kind = PLAN

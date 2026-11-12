@@ -75,15 +75,31 @@ class EachUnreadableFileSaysWhyTest(_ReadingTest):
             reason = self.reason("scan.pdf", make_pdf_bytes(["", ""]))
         self.assertEqual(reason, PolicyDocument.UNREADABLE_NOTHING_AFTER_OCR)
 
-    def test_a_scan_without_tesseract_says_ocr_could_not_run(self):
+    def no_tesseract(self):
         from fighthealthinsurance.pdf_text import TESSERACT_MISSING
 
-        with patch(
+        return patch(
             "fighthealthinsurance.pdf_text.aocr_pdf_pages",
             new=AsyncMock(side_effect=ValueError(TESSERACT_MISSING)),
-        ), patch.object(processing.logger, "error"):
-            reason = self.reason("scan.pdf", make_pdf_bytes(["", ""]))
-        self.assertEqual(reason, PolicyDocument.UNREADABLE_OCR_UNAVAILABLE)
+        )
+
+    def test_a_scan_without_tesseract_waits_to_be_read_again(self):
+        with self.no_tesseract(), patch.object(processing.logger, "error"):
+            status, doc = self.read("scan.pdf", make_pdf_bytes(["", ""]))
+        self.assertEqual(
+            (status, doc.read_attempts, doc.unreadable_reason),
+            (RECEIVED, 1, PolicyDocument.UNREADABLE_OCR_UNAVAILABLE),
+        )
+
+    def test_at_the_cap_a_scan_without_tesseract_says_ocr_could_not_run(self):
+        (doc,) = share(upload("scan.pdf", make_pdf_bytes(["", ""])))
+        PolicyDocument.objects.filter(pk=doc.pk).update(
+            read_attempts=processing.MAX_READ_ATTEMPTS - 1
+        )
+        with self.no_tesseract(), patch.object(processing.logger, "error"):
+            self.assertEqual(self.process(doc), UNREADABLE)
+        doc.refresh_from_db()
+        self.assertEqual(doc.unreadable_reason, PolicyDocument.UNREADABLE_OCR_UNAVAILABLE)
 
     def test_the_log_line_names_the_row_and_the_reason_only(self):
         (doc,) = share(upload("plan.txt", dots_and_symbols().encode()))
@@ -137,6 +153,11 @@ class AReadingThatFailsEveryTryWaitsTest(_ReadingTest):
         self.fail_once(doc, TimeoutError("PDF OCR did not finish"))
         doc.refresh_from_db()
         self.assertEqual(doc.unreadable_reason, PolicyDocument.UNREADABLE_DID_NOT_FINISH)
+
+    def test_a_share_with_nothing_due_is_not_started(self):
+        (doc,) = share(upload("plan.txt", PLAN_TEXT.encode()))
+        self.fail_once(doc)
+        self.assertEqual(self.waiting_batches(), [])
 
     def test_the_sweep_leaves_it_until_its_wait_is_over(self):
         (doc,) = share(upload("plan.txt", PLAN_TEXT.encode()))
