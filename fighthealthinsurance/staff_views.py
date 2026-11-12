@@ -511,7 +511,13 @@ class PolicyDocumentCleanedTextView(View):
             PolicyDocument.objects.filter(
                 pk=pk, source__in=PolicyDocument.SHARED_SOURCES
             )
-            .only("pk", "processing_status", "processed_at", "cleaned_text")
+            .only(
+                "pk",
+                "processing_status",
+                "processed_at",
+                "cleaned_text",
+                "unreadable_reason",
+            )
             .first()
         )
         if doc is None:
@@ -526,6 +532,8 @@ class PolicyDocumentCleanedTextView(View):
         note = self.NOTES.get(doc.processing_status, "")
         if note:
             header += f"{note}\n"
+        if doc.unreadable_reason:
+            header += f"Why: {doc.get_unreadable_reason_display()}\n"
         return _plain_text(header + "\n" + doc.cleaned_text)
 
 

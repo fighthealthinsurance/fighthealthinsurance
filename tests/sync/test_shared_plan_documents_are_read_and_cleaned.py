@@ -185,7 +185,7 @@ class SharedRowsAreReadAndCleanedTest(_ReadingTest):
         doc.refresh_from_db()
         self.assertEqual((doc.processed_at, doc.cleaned_text), first)
 
-    def test_a_file_that_cannot_be_read_back_fails_then_is_marked_unreadable(self):
+    def test_a_file_that_cannot_be_read_back_fails_then_waits_to_be_read_again(self):
         (doc,) = share(upload("plan.txt", SUMMARY.encode()))
         # What read_and_decrypt_file returns when storage can't give it back.
         with patch.object(processing, "_read_stored", return_value=None):
@@ -198,12 +198,16 @@ class SharedRowsAreReadAndCleanedTest(_ReadingTest):
         doc.refresh_from_db()
         self.assertEqual(doc.processing_status, RECEIVED)
 
+        # Every try failed: it waits for a later sweep (reading_outcomes tests).
         status = async_to_sync(activities.mark_shared_plan_document_unreadable)(
             str(doc.pk)
         )
-        self.assertEqual(status, UNREADABLE)
+        self.assertEqual(status, RECEIVED)
         doc.refresh_from_db()
-        self.assertEqual((doc.processing_status, doc.cleaned_text), (UNREADABLE, ""))
+        self.assertEqual(
+            (doc.processing_status, doc.read_attempts, doc.unreadable_reason),
+            (RECEIVED, 1, PolicyDocument.UNREADABLE_FILE_NOT_READ),
+        )
 
     def test_an_error_names_only_its_class_and_the_row(self):
         (doc,) = share(upload("plan.txt", SUMMARY.encode()))

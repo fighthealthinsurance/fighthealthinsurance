@@ -39,7 +39,8 @@ BOOKKEEPING_RETRY = RetryPolicy(
     maximum_interval=timedelta(minutes=1),
 )
 # A reading gets three tries, so a short storage outage passes; after that
-# the row is marked unreadable rather than read again every hour.
+# the row waits hours for a later sweep, and is unreadable only after
+# several such readings (plan_documents_processing.MAX_READ_ATTEMPTS).
 READ_RETRY = RetryPolicy(
     maximum_attempts=3,
     initial_interval=timedelta(seconds=30),

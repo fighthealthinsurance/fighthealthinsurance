@@ -10,7 +10,9 @@ read before that, from their cleaned text. Lists what it would link unless
     python manage.py link_plan_sponsors --apply
 
 Only rows read and ready for review with no company yet are looked at, so a
-company staff set is never changed. Prints counts and company names only.
+company staff set is never changed. Rows whose lookup failed during their
+reading (company_lookup_failures) are among them, and counted. Prints
+counts and company names only.
 """
 
 from collections import Counter
@@ -48,6 +50,7 @@ class Command(BaseCommand):
         names: dict[tuple[str, str], str] = {}
         sources: Counter[str] = Counter()
         looked = 0
+        failed_before = rows.filter(company_lookup_failures__gt=0).count()
         # The ids first, then each text on its own: the model's reading
         # takes seconds a document, longer than a database cursor should
         # stay open, and the texts together can be large.
@@ -57,6 +60,11 @@ class Command(BaseCommand):
                 continue
             looked += 1
             sponsor = async_to_sync(afind_company)(text)
+            if options["apply"]:
+                # This lookup finished, so earlier failures no longer stand.
+                PolicyDocument.objects.filter(
+                    pk=pk, company_lookup_failures__gt=0
+                ).update(company_lookup_failures=0)
             if sponsor is None:
                 continue
             if options["apply"]:
@@ -78,6 +86,10 @@ class Command(BaseCommand):
         self.stdout.write(
             f"{looked} document(s) looked at, {sum(found.values())} {verb} "
             f"to {len(found)} compan{'y' if len(found) == 1 else 'ies'}"
+        )
+        self.stdout.write(
+            f"  {failed_before} of them had a company lookup fail during "
+            "their reading"
         )
         if sources:
             self.stdout.write(

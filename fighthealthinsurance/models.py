@@ -5351,6 +5351,25 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     PROCESSING_PERSONAL = "personal"
     # Read, but no health plan words in it: text kept, never a plan.
     PROCESSING_NOT_A_PLAN = "not_a_plan"
+    # Why a shared file's reading kept no text (plan_documents_processing);
+    # for a row still waiting, why its last reading failed. Staff only.
+    UNREADABLE_CANNOT_OPEN = "cannot_open"
+    UNREADABLE_GARBLED = "garbled_text"
+    UNREADABLE_NOTHING_AFTER_OCR = "nothing_after_ocr"
+    UNREADABLE_OCR_UNAVAILABLE = "ocr_unavailable"
+    UNREADABLE_DID_NOT_FINISH = "did_not_finish"
+    UNREADABLE_FILE_NOT_READ = "file_not_read"
+    UNREADABLE_REASON_CHOICES = [
+        (
+            UNREADABLE_CANNOT_OPEN,
+            "The file would not open (locked, broken or cut short)",
+        ),
+        (UNREADABLE_GARBLED, "Its text was garbage"),
+        (UNREADABLE_NOTHING_AFTER_OCR, "Scanned pages OCR found nothing on"),
+        (UNREADABLE_OCR_UNAVAILABLE, "OCR could not run"),
+        (UNREADABLE_DID_NOT_FINISH, "The reading timed out or failed every try"),
+        (UNREADABLE_FILE_NOT_READ, "The stored file could not be fetched"),
+    ]
     PROCESSING_STATUS_CHOICES = [
         (PROCESSING_RECEIVED, "Received, not read yet"),
         (PROCESSING_READY, "Read and cleaned, ready for review"),
@@ -5482,6 +5501,20 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     contact_email = EncryptedTextField(db_default="", blank=True, default="")
     # Staff said it is a plan: its next reading skips the kind check.
     staff_says_plan = models.BooleanField(db_default=False, default=False)
+    unreadable_reason = models.CharField(
+        db_default="",
+        max_length=20,
+        choices=UNREADABLE_REASON_CHOICES,
+        blank=True,
+        default="",
+    )
+    # Readings that failed every try, and when the last one ended: the sweep
+    # tries again later, up to plan_documents_processing.MAX_READ_ATTEMPTS.
+    read_attempts = models.PositiveSmallIntegerField(db_default=0, default=0)
+    read_attempted_at = models.DateTimeField(null=True, blank=True)
+    # Company lookups that failed (not "names no company"): the sweep tries
+    # again, up to plan_documents_processing.MAX_COMPANY_LOOKUPS.
+    company_lookup_failures = models.PositiveSmallIntegerField(db_default=0, default=0)
 
     class Meta:
         indexes = [
