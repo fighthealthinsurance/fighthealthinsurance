@@ -212,6 +212,11 @@ async def _aocr(
     return read, None
 
 
+#: Reasons a reading returns that are worth reading again later.
+_READ_AGAIN_LATER = (
+    PolicyDocument.UNREADABLE_OCR_UNAVAILABLE,
+    PolicyDocument.UNREADABLE_DID_NOT_FINISH,
+)
 # Why OCR left pages unread, as a reason for a file with nothing kept.
 _OCR_REASONS = {
     "OCR could not run": PolicyDocument.UNREADABLE_OCR_UNAVAILABLE,
@@ -277,9 +282,13 @@ async def _apdf_text(content: bytes) -> tuple[str, str]:
     if not kept or is_garbled("\n".join(texts[number] for number in kept)):
         if not retry:
             return "", PolicyDocument.UNREADABLE_GARBLED
-        return "", _OCR_REASONS.get(
-            why or "", PolicyDocument.UNREADABLE_NOTHING_AFTER_OCR
-        )
+        if why in _OCR_REASONS:
+            return "", _OCR_REASONS[why]
+        if not any(isinstance(read.get(number), str) for number in retry):
+            # OCR read no page at all (each failed or was not reached): a
+            # failure to read again later, not a scan with nothing on it.
+            return "", PolicyDocument.UNREADABLE_DID_NOT_FINISH
+        return "", PolicyDocument.UNREADABLE_NOTHING_AFTER_OCR
     parts = [f"[Page {number + 1}]\n{texts[number]}" for number in kept]
     # A blank page (no text, and nothing for OCR to read) is left out quietly.
     # A page left out with text on it, or one OCR failed on or did not reach,
@@ -383,9 +392,9 @@ async def aprocess_document(document_id: str) -> str:
         await _anote_failure(document_id, PolicyDocument.UNREADABLE_DID_NOT_FINISH)
         raise
     del content
-    if not text and reason == PolicyDocument.UNREADABLE_OCR_UNAVAILABLE:
-        # A missing tesseract is ours to fix, not the file's: it waits to be
-        # read again like a reading that did not finish.
+    if not text and reason in _READ_AGAIN_LATER:
+        # Ours to fix, not the file's (a missing tesseract, OCR that read no
+        # page): it waits to be read again like a reading that raised.
         await _anote_failure(document_id, reason)
         return await amark_unreadable(document_id)
     if text and is_garbled(text):

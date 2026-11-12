@@ -63,6 +63,11 @@ class Command(BaseCommand):
             looked += 1
             try:
                 sponsor = async_to_sync(afind_company)(text)
+                linked = (
+                    link_sponsor(pk, sponsor)
+                    if options["apply"] and sponsor is not None
+                    else None
+                )
             except Exception as e:
                 # Counted like a failure in a reading; the next row goes on.
                 failed_now += 1
@@ -79,8 +84,7 @@ class Command(BaseCommand):
                 )
             if sponsor is None:
                 continue
-            if options["apply"]:
-                linked = link_sponsor(pk, sponsor)
+            if linked is not None:
                 key, name = ("on the list", str(linked.pk)), linked.name
             else:
                 company = match_sponsor(sponsor)

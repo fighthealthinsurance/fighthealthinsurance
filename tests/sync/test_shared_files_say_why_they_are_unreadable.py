@@ -70,6 +70,14 @@ class EachUnreadableFileSaysWhyTest(_ReadingTest):
             PolicyDocument.UNREADABLE_GARBLED,
         )
 
+    def test_a_scan_ocr_fails_on_every_page_waits_to_be_read_again(self):
+        with ocr_reads({0: None, 1: None}):
+            status, doc = self.read("scan.pdf", make_pdf_bytes(["", ""]))
+        self.assertEqual(
+            (status, doc.read_attempts, doc.unreadable_reason),
+            (RECEIVED, 1, PolicyDocument.UNREADABLE_DID_NOT_FINISH),
+        )
+
     def test_a_scan_ocr_finds_nothing_on(self):
         with ocr_reads({0: "", 1: ""}):
             reason = self.reason("scan.pdf", make_pdf_bytes(["", ""]))
@@ -292,6 +300,23 @@ class CompanyLookupsThatFailAreCountedTest(_ReadingTest):
         self.assertEqual(
             PolicyDocument.objects.get().company_lookup_failures, 1
         )
+
+    def test_link_plan_sponsors_keeps_the_count_when_linking_fails(self):
+        with patch.object(
+            processing, "afind_company", new=AsyncMock(side_effect=RuntimeError)
+        ), patch.object(processing.logger, "warning"):
+            self.read("plan.txt", PLAN_TEXT.encode())
+        out, err = StringIO(), StringIO()
+        with patch(
+            "fighthealthinsurance.management.commands.link_plan_sponsors.afind_company",
+            new=AsyncMock(return_value=object()),
+        ), patch(
+            "fighthealthinsurance.management.commands.link_plan_sponsors.link_sponsor",
+            side_effect=RuntimeError("Rebecca Lee Crumpler"),
+        ):
+            call_command("link_plan_sponsors", "--apply", stdout=out, stderr=err)
+        self.assertIn("1 failed this time", out.getvalue())
+        self.assertEqual(PolicyDocument.objects.get().company_lookup_failures, 2)
 
     def test_link_plan_sponsors_counts_rows_whose_lookup_failed(self):
         with patch.object(
