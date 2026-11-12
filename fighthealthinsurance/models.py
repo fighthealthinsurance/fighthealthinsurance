@@ -5408,6 +5408,34 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     state = models.CharField(db_default="", max_length=2, blank=True)
     insurer_name = models.CharField(db_default="", max_length=200, blank=True)
     employer_name = models.CharField(db_default="", max_length=200, blank=True)
+    # Who gave the insurer, plan year and plan type: our model, reading a
+    # shared file ("model"), or staff ("staff"); blank when the person gave
+    # it or nobody has. A reading fills only an empty fact, never staff's.
+    PLAN_FACT_SOURCE_CHOICES = (("model", "Our model"), ("staff", "Staff"))
+    insurer_name_source = models.CharField(
+        max_length=10,
+        blank=True,
+        default="",
+        db_default="",
+        choices=PLAN_FACT_SOURCE_CHOICES,
+        verbose_name="insurer found by",
+    )
+    plan_year_source = models.CharField(
+        max_length=10,
+        blank=True,
+        default="",
+        db_default="",
+        choices=PLAN_FACT_SOURCE_CHOICES,
+        verbose_name="plan year found by",
+    )
+    plan_category_source = models.CharField(
+        max_length=10,
+        blank=True,
+        default="",
+        db_default="",
+        choices=PLAN_FACT_SOURCE_CHOICES,
+        verbose_name="plan type found by",
+    )
     # Shared uploads only: the premium, if the person told us, and who it covers.
     premium_amount = models.DecimalField(
         max_digits=8, decimal_places=2, null=True, blank=True

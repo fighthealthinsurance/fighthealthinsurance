@@ -887,6 +887,10 @@ PLAN_FACT_FIELDS = (
     "plan_sponsor_source",
     "plan_sponsor_checked_at",
     "plan_sponsor_checked_by",
+    # Who gave the insurer, plan year and plan type: about the kept facts.
+    "insurer_name_source",
+    "plan_year_source",
+    "plan_category_source",
 )
 #: The record of the share itself, kept with the plan facts.
 SHARE_RECORD_FIELDS = (

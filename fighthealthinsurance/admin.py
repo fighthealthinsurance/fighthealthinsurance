@@ -2085,6 +2085,9 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "plan_sponsor_evidence",
         "plan_sponsor_checked_at",
         "plan_sponsor_checked_by",
+        "insurer_name_source",
+        "plan_year_source",
+        "plan_category_source",
         "contact_email_shown",
     )
     actions = (
@@ -2123,6 +2126,12 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
                 "plan_sponsor_checked_at",
                 "plan_sponsor_checked_by",
             ]
+        # A fact staff set, changed or cleared is theirs: a reading never
+        # fills it again (plan_documents_processing.EMPTY_PLAN_FACTS).
+        for fact in ("insurer_name", "plan_year", "plan_category"):
+            if fact in form.changed_data:
+                setattr(obj, f"{fact}_source", "staff")
+                fields.append(f"{fact}_source")
         # Only what the form changed: the encrypted fields it excludes are
         # never written back from what this request read.
         if change:

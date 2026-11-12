@@ -26,7 +26,7 @@ from fighthealthinsurance.models import InsuranceCompany, PlanSponsor, PolicyDoc
 from fighthealthinsurance.plan_documents_processing import afind_company, alink_company
 from fighthealthinsurance.plan_sponsor_reader import (
     MAX_EXCERPT_CHARS,
-    aread_sponsor,
+    aread_plan,
     excerpt,
 )
 from fighthealthinsurance.plan_sponsors import identify_sponsor
@@ -62,7 +62,8 @@ def model_answers(*answers):
 
 
 def read(text):
-    return async_to_sync(aread_sponsor)(text)
+    reading = async_to_sync(aread_plan)(text)
+    return reading.sponsor, reading.answered
 
 
 class TheModelsAnswerIsCheckedTest(TestCase):
@@ -176,7 +177,7 @@ class AModelThatTakesTooLongTest(TestCase):
         with patch(
             "fighthealthinsurance.ml.ml_inference.infer_with_fallback", slow
         ), patch("fighthealthinsurance.plan_sponsor_reader.TOTAL_TIMEOUT_SECONDS", 0.1):
-            sponsor = async_to_sync(afind_company)(text)
+            sponsor = async_to_sync(afind_company)(text).sponsor
         self.assertEqual(sponsor.source, "rules")
 
 
@@ -235,7 +236,7 @@ class TheReadingUsesTheModelFirstTest(TestCase):
             + ("Covered. " * 30)
         )
         with model_answers():
-            sponsor = async_to_sync(afind_company)(text)
+            sponsor = async_to_sync(afind_company)(text).sponsor
         self.assertEqual(
             (sponsor.name, sponsor.source), ("Crumpler Cooperative, LLC", "rules")
         )
@@ -248,7 +249,7 @@ class TheReadingUsesTheModelFirstTest(TestCase):
         with model_answers(
             json.dumps({"sponsor": None, "ein": None, "evidence": None})
         ):
-            self.assertIsNone(async_to_sync(afind_company)(text))
+            self.assertIsNone(async_to_sync(afind_company)(text).sponsor)
 
 
 class StaffCanCheckWithoutHoldingItUpTest(TestCase):

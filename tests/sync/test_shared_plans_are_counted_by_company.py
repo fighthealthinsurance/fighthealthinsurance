@@ -22,6 +22,7 @@ from django.test import TestCase
 
 from fighthealthinsurance.models import InsuranceCompany, PlanSponsor, PolicyDocument
 from fighthealthinsurance.plan_documents_processing import aprocess_document
+from fighthealthinsurance.plan_sponsor_reader import PlanReading
 from fighthealthinsurance.plan_sponsors import (
     Sponsor,
     identify_sponsor,
@@ -226,8 +227,8 @@ class TheReadingLinksTheCompanyTest(TestCase):
         # No model is asked, whatever backend the environment configures:
         # the fixed patterns read the sponsor.
         reader = patch(
-            "fighthealthinsurance.plan_sponsor_reader.aread_sponsor",
-            new=AsyncMock(return_value=(None, False)),
+            "fighthealthinsurance.plan_sponsor_reader.aread_plan",
+            new=AsyncMock(return_value=PlanReading(None, False)),
         )
         reader.start()
         self.addCleanup(reader.stop)
@@ -254,8 +255,8 @@ class LinkingDocumentsReadBeforeTest(TestCase):
         # No model is asked, whatever backend the environment configures:
         # the fixed patterns read the sponsor.
         reader = patch(
-            "fighthealthinsurance.plan_sponsor_reader.aread_sponsor",
-            new=AsyncMock(return_value=(None, False)),
+            "fighthealthinsurance.plan_sponsor_reader.aread_plan",
+            new=AsyncMock(return_value=PlanReading(None, False)),
         )
         reader.start()
         self.addCleanup(reader.stop)

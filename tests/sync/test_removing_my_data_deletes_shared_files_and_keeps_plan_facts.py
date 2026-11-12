@@ -165,6 +165,30 @@ class FactsAboutThePlanAreKeptTest(_RemovalTestCase):
             with self.subTest(field=name):
                 self.assertEqual(getattr(kept, name), before[name])
 
+    def test_facts_our_model_read_stay_with_who_gave_them(self):
+        doc = self.share({})
+        PolicyDocument.objects.filter(pk=doc.pk).update(
+            insurer_name="Crumpler Health Mutual",
+            insurer_name_source="model",
+            plan_year=2026,
+            plan_year_source="model",
+            plan_category="employer_erisa",
+            plan_category_source="model",
+        )
+        self.remove()
+        kept = self.after(doc)
+        self.assertEqual(
+            (
+                kept.insurer_name,
+                kept.insurer_name_source,
+                kept.plan_year,
+                kept.plan_year_source,
+                kept.plan_category,
+                kept.plan_category_source,
+            ),
+            ("Crumpler Health Mutual", "model", 2026, "model", "employer_erisa", "model"),
+        )
+
     def test_the_kind_of_plan_alone_keeps_the_row(self):
         doc = self.share({"plan_category": "medicaid_chip"})
         self.remove()

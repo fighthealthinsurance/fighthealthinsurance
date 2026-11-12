@@ -14,6 +14,10 @@ text with no health plan words is kept but marked not a plan. Neither is
 looked up for a company. Staff can say a file is a plan, and its next
 reading then skips this check.
 
+A plan's text is read for its company (alink_company), and in the same
+model reading for its insurer, plan year and plan type, which fill only
+the ones the row has empty (afill_plan_facts).
+
 A PDF page with no text, or with text that reads as garbage
 (text_quality.is_garbled: a font with its own encoding gives dots or shifted
 letters), is read again with OCR, up to OCR_MAX_PAGES pages and OCR_SECONDS
@@ -35,7 +39,7 @@ import asyncio
 import datetime
 import shutil
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from channels.db import database_sync_to_async
 from django.db.models import F, Q
@@ -44,6 +48,7 @@ from loguru import logger
 
 from fighthealthinsurance.models import PolicyDocument
 from fighthealthinsurance.plan_document_kind import OTHER, PERSONAL, PLAN, document_kind
+from fighthealthinsurance.plan_sponsors import SOURCE_MODEL, SOURCE_STAFF
 from fighthealthinsurance.text_quality import (
     is_clearly_text,
     is_garbled,
@@ -54,6 +59,9 @@ from fighthealthinsurance.upload_limits import (
     MAX_STORED_POLICY_DOCUMENT_BYTES,
     OCR_SECONDS_PER_IMAGE,
 )
+
+if TYPE_CHECKING:
+    from fighthealthinsurance.plan_sponsor_reader import PlanFacts, PlanReading
 
 #: What a reading reports for a row that is no longer there.
 GONE = "gone"
@@ -430,30 +438,59 @@ async def aprocess_document(document_id: str) -> str:
     return stored
 
 
-async def afind_company(text: str):
-    """The company ``text`` names as plan sponsor: our model's reading,
-    checked against the text (plan_sponsor_reader), or, when no model gave
-    a usable answer, the fixed patterns' (plan_sponsors.identify_sponsor).
-    None when the document names none."""
-    from fighthealthinsurance.plan_sponsor_reader import aread_sponsor
+async def afind_company(text: str) -> "PlanReading":
+    """What ``text`` says about its plan. Its sponsor, the company it names
+    (None when it names none): our model's reading, checked against the
+    text (plan_sponsor_reader), or, when no model gave a usable answer, the
+    fixed patterns' (plan_sponsors.identify_sponsor). Its insurer, plan year
+    and plan type: our model's reading only, each checked."""
+    from fighthealthinsurance.plan_sponsor_reader import aread_plan
     from fighthealthinsurance.plan_sponsors import identify_sponsor
 
-    sponsor, answered = await aread_sponsor(text)
-    if answered:
-        return sponsor
-    return await database_sync_to_async(identify_sponsor)(text)
+    reading = await aread_plan(text)
+    if reading.answered:
+        return reading
+    sponsor = await database_sync_to_async(identify_sponsor)(text)
+    return reading._replace(sponsor=sponsor)
+
+
+#: The plan facts a reading may fill, each only while it is empty: never
+#: one the person gave, or one staff set or cleared.
+EMPTY_PLAN_FACTS = {
+    "insurer_name": Q(insurer_name="") & ~Q(insurer_name_source=SOURCE_STAFF),
+    "plan_year": Q(plan_year__isnull=True) & ~Q(plan_year_source=SOURCE_STAFF),
+    "plan_category": Q(plan_category__in=("", "unknown"))
+    & ~Q(plan_category_source=SOURCE_STAFF),
+}
+
+
+async def afill_plan_facts(document_id: Any, facts: "PlanFacts") -> list[str]:
+    """Fill each fact in ``facts`` that the shared row has empty
+    (EMPTY_PLAN_FACTS), marked as our model's, while the row is read as
+    ready. Returns the fields filled."""
+    filled = []
+    for field, empty in EMPTY_PLAN_FACTS.items():
+        value = getattr(facts, field)
+        if value and await ready_row(document_id).filter(empty).aupdate(
+            **{field: value, f"{field}_source": SOURCE_MODEL}
+        ):
+            filled.append(field)
+    return filled
 
 
 async def alink_company(document_id: str, text: str) -> None:
     """Link the shared row to the company its text names as plan sponsor,
-    adding the company to the list if it's new. A failure is logged and
-    leaves the row unlinked: the reading itself stands."""
+    adding the company to the list if it's new, and fill the insurer, plan
+    year and plan type our model found where the row has none
+    (afill_plan_facts). A failure is logged and leaves the rest undone: the
+    reading itself stands."""
     from fighthealthinsurance.plan_sponsors import link_sponsor
 
     try:
-        sponsor = await afind_company(text)
-        if sponsor is not None:
-            await database_sync_to_async(link_sponsor)(document_id, sponsor)
+        found = await afind_company(text)
+        if found.sponsor is not None:
+            await database_sync_to_async(link_sponsor)(document_id, found.sponsor)
+        await afill_plan_facts(document_id, found.facts)
     except Exception as e:
         # The class only: an error's message can quote the document.
         logger.warning(
