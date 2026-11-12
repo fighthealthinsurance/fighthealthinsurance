@@ -281,15 +281,20 @@ class InsuranceQuestionsFooterTest(TestCase):
         self.assertEqual(self._footer(), [""])
 
     def test_non_urgent_pre_service_footer_names_thirty_days(self):
-        self.assertIn("30 days", self._footer(pre_service="on")[1])
+        self.assertIn("30 days", self._footer(pre_service="yes", urgent="no")[1])
+
+    def test_pre_service_with_urgency_not_sure_claims_no_deadline(self):
+        """Not knowing whether it is urgent is not saying it isn't: the
+        letter must not concede a month the person may not have."""
+        self.assertEqual(self._footer(pre_service="yes", urgent="not_sure"), [""])
 
     def test_urgent_pre_service_footer_is_the_same_for_a_professional(self):
-        footer = self._footer(urgent="on", pre_service="on")
+        footer = self._footer(urgent="yes", pre_service="yes")
 
         self.assertIn("four days", footer[1])
         self.assertIn("concurrent request of external review", footer[1])
         self.assertEqual(
-            footer, self._footer(prof_pov=True, urgent="on", pre_service="on")
+            footer, self._footer(prof_pov=True, urgent="yes", pre_service="yes")
         )
 
 

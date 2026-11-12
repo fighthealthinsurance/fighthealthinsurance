@@ -149,7 +149,13 @@ class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
                     "request of external review."
                 ),
             ]
-        if self.cleaned_data.get("pre_service"):
+        # Non-urgent only on an explicit "No": "Not sure" (None) says
+        # nothing about urgency, and an urgent pre-service claim has days,
+        # not a month.
+        if (
+            self.cleaned_data.get("pre_service")
+            and self.cleaned_data.get("urgent") is False
+        ):
             return [
                 "",
                 "As this is a non-urgent pre-service claim, I understand you have approximately 30 days to respond.",
