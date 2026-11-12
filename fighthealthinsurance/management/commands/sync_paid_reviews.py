@@ -1,6 +1,7 @@
 """Answer the RentAHuman submissions waiting on review for every posted paid
 Arena bounty: the poll that backs up the webhook (paid_reviews.sync_bounty)."""
 
+import requests
 from django.core.management.base import BaseCommand, CommandError
 
 from fighthealthinsurance import paid_reviews
@@ -23,7 +24,7 @@ class Command(BaseCommand):
         for bounty in bounties:
             try:
                 outcomes = paid_reviews.sync_bounty(bounty, client)
-            except paid_reviews.RentAHumanError as e:
+            except (paid_reviews.RentAHumanError, requests.RequestException) as e:
                 self.stderr.write(f"Bounty {bounty.id}: {e}")
                 continue
             self.stdout.write(f"Bounty {bounty.id}: {outcomes or 'nothing pending'}")

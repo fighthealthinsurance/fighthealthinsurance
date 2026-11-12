@@ -957,6 +957,7 @@ class PaidReviewProgressSerializer(serializers.Serializer):
     counted = serializers.IntegerField(min_value=0)
     required = serializers.IntegerField(min_value=0)
     completion_code = serializers.CharField(allow_blank=True)
+    min_seconds = serializers.IntegerField(required=False, min_value=0)
     last_vote_counted = serializers.BooleanField(required=False)
     note = serializers.CharField(required=False, allow_blank=True)
 

@@ -117,6 +117,7 @@ interface PaidReview {
   counted: number;
   required: number;
   completion_code: string;
+  min_seconds?: number;
   last_vote_counted?: boolean;
   note?: string;
 }
@@ -163,9 +164,9 @@ const PaidReviewBanner: React.FC<{ paid: PaidReview | null }> = ({ paid }) => {
   return (
     <Alert color="blue" variant="light" radius="md" data-testid="paid-review">
       <Text size="sm">
-        Paid task: {paid.counted} of {paid.required} reviews counted. A review
-        counts when you take your time and write a one-sentence reason in the
-        &ldquo;Why&rdquo; box.
+        Paid task: {paid.counted} of {paid.required} appeal reviews counted. A
+        review counts when you spend at least {paid.min_seconds ?? 60} seconds
+        on it and write a one-sentence reason in the &ldquo;Why&rdquo; box.
         {paid.last_vote_counted === false && paid.note ? ` ${paid.note}` : ""}
       </Text>
     </Alert>
@@ -2661,7 +2662,11 @@ const ChooserInterface: React.FC<{
 
           <Paper shadow="xs" p="md" radius="md" withBorder>
             <Textarea
-              label="Why? (optional)"
+              label={
+                paidReview && !paidReview.completion_code
+                  ? "Why? (required for your paid task)"
+                  : "Why? (optional)"
+              }
               description="One sentence helps us understand your call. Please do not include personal information."
               placeholder={
                 state.allBad
@@ -2792,6 +2797,7 @@ const initialPaidReview: PaidReview | null =
         counted: Number(container.dataset.paidCounted ?? 0),
         required: Number(container.dataset.paidRequired),
         completion_code: container.dataset.paidCode ?? "",
+        min_seconds: Number(container.dataset.paidMinSeconds ?? 60),
       };
 if (container) {
   const root = createRoot(container);

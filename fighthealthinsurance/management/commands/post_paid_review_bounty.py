@@ -7,6 +7,8 @@ is saved, posted, and opened. See docs/chooser.md, "Paid reviewers".
 
 from decimal import Decimal
 
+import requests
+
 from django.core.management.base import BaseCommand, CommandError
 
 from fighthealthinsurance import paid_reviews
@@ -34,8 +36,27 @@ class Command(BaseCommand):
         parser.add_argument(
             "--close", type=int, metavar="BOUNTY_ID", help="Close a bounty's join link"
         )
+        parser.add_argument(
+            "--retry",
+            type=int,
+            metavar="BOUNTY_ID",
+            help="Post a bounty left as a draft again, with the same idempotency "
+            "key, so a post that reached RentAHuman is not made twice",
+        )
 
     def handle(self, *args, **options):
+        if options["retry"]:
+            bounty = PaidReviewBounty.objects.filter(
+                id=options["retry"], status="draft"
+            ).first()
+            if bounty is None:
+                raise CommandError(f"No draft bounty {options['retry']}")
+            try:
+                client = paid_reviews.RentAHumanClient()
+            except paid_reviews.RentAHumanError as e:
+                raise CommandError(str(e))
+            self._post(client, bounty)
+            return
         if options["close"]:
             closed = PaidReviewBounty.objects.filter(id=options["close"]).update(
                 status="closed"
@@ -50,8 +71,8 @@ class Command(BaseCommand):
             return
 
         spots, price, reviews = options["spots"], options["price"], options["reviews"]
-        if spots < 1 or reviews < 1:
-            raise CommandError("--spots and --reviews must be at least 1")
+        if spots < 1 or reviews < 2:
+            raise CommandError("--spots must be at least 1 and --reviews at least 2")
         if price < 5:
             raise CommandError("RentAHuman's minimum is $5 per worker")
         bounty = PaidReviewBounty(
@@ -89,24 +110,36 @@ class Command(BaseCommand):
 
         bounty.status = "draft"
         bounty.save()
+        self._post(client, bounty)
+
+    def _post(self, client, bounty):
+        """Post a saved draft. Its idempotency key comes from its join token,
+        so --retry on a post whose answer was lost gets the same bounty back
+        rather than a second one. The join link opens only once RentAHuman's
+        id for it is known, since submissions are matched by that id."""
         try:
             posted = client.create_bounty(
                 paid_reviews.bounty_payload(bounty, dry_run=False)
             )
-        except paid_reviews.RentAHumanError as e:
-            raise CommandError(f"Posting failed; bounty {bounty.id} left as draft: {e}")
+        except (paid_reviews.RentAHumanError, requests.RequestException) as e:
+            raise CommandError(
+                f"Posting failed; bounty {bounty.id} left as a draft. Run "
+                f"--retry {bounty.id} to try again with the same key: {e}"
+            )
         bounty.rah_bounty_id = paid_reviews.find_id(posted, "bountyId", "id", "_id")
+        if not bounty.rah_bounty_id:
+            bounty.save()
+            raise CommandError(
+                f"Could not read RentAHuman's bounty id from {posted}; bounty "
+                f"{bounty.id} stays a draft with its join link closed. Set "
+                "rah_bounty_id and status=open in the admin once the id is known."
+            )
         bounty.status = "open"
         bounty.save()
         self.stdout.write(
-            f"Posted bounty {bounty.id} (RentAHuman {bounty.rah_bounty_id or '?'}). "
+            f"Posted bounty {bounty.id} (RentAHuman {bounty.rah_bounty_id}). "
             f"Join link: {paid_reviews.join_url(bounty)}"
         )
-        if not bounty.rah_bounty_id:
-            self.stdout.write(
-                f"Could not read RentAHuman's bounty id from {posted}; set "
-                "rah_bounty_id in the admin so submissions can be matched."
-            )
         if "pending_deposit" in str(posted):
             self.stdout.write(
                 "The bounty is waiting on a deposit: top up the RentAHuman wallet "

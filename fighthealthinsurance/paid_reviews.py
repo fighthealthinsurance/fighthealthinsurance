@@ -124,6 +124,11 @@ def vote_counts(vote: ChooserVote) -> typing.Tuple[bool, str]:
     """Whether a paid vote counts toward the run, and if not, why (shown to
     the worker). The floor stops click-through, not honest disagreement:
     any outcome counts, as long as the case was read and the pick explained."""
+    if vote.task.task_type != "appeal":
+        return (
+            False,
+            "Chat rounds do not count toward the paid task: judge appeal letters.",
+        )
     seconds = vote.seconds_to_vote
     if seconds is None or seconds < settings.PAID_REVIEW_MIN_SECONDS:
         return (
@@ -142,7 +147,8 @@ def vote_counts(vote: ChooserVote) -> typing.Tuple[bool, str]:
 
 
 def counted_votes(run: PaidReviewSession) -> int:
-    return sum(1 for vote in run.votes.all() if vote_counts(vote)[0])
+    votes = run.votes.select_related("task")
+    return sum(1 for vote in votes if vote_counts(vote)[0])
 
 
 def progress(
@@ -159,6 +165,7 @@ def progress(
         "counted": min(counted, required),
         "required": required,
         "completion_code": run.completion_code or "",
+        "min_seconds": settings.PAID_REVIEW_MIN_SECONDS,
     }
     if last_vote is not None:
         ok, note = vote_counts(last_vote)
@@ -390,7 +397,8 @@ def bounty_payload(bounty: PaidReviewBounty, dry_run: bool) -> dict:
         "evidenceTypes": ["text"],
         "price": float(bounty.price_dollars),
         "priceType": "fixed",
-        "estimatedHours": round(minutes / 60, 2),
+        # RentAHuman's floor is 0.083 hours (five minutes).
+        "estimatedHours": max(round(minutes / 60, 2), 0.1),
         "category": "computer-gigs",
         "location": {"isRemoteAllowed": True},
         "spotsAvailable": bounty.spots,
@@ -528,7 +536,7 @@ def sync_bounty(bounty: PaidReviewBounty, client: RentAHumanClient) -> dict:
     for submission in client.list_submissions(bounty.rah_bounty_id):
         try:
             outcome = process_submission(bounty, submission, client)
-        except RentAHumanError as e:
+        except (RentAHumanError, requests.RequestException) as e:
             logger.warning(f"Paid review bounty {bounty.id}: {e}")
             outcome = "error"
         outcomes[outcome] = outcomes.get(outcome, 0) + 1

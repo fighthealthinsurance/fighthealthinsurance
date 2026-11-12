@@ -512,3 +512,67 @@ class ReviewFollowUpTest(TestCase):
             "data": {"bountyId": "bounty-1", "submissionId": "sub-1"},
         }
         self.assertEqual(paid_reviews.handle_event(event), "ignored: no API key")
+
+
+class CodeRabbitFollowUpTest(TestCase):
+    """Fixes from CodeRabbit's review."""
+
+    def setUp(self):
+        self.bounty = make_bounty()
+        self.run = PaidReviewSession.objects.create(bounty=self.bounty, session_key="s1")
+
+    def test_chat_vote_does_not_count_toward_an_appeal_bounty(self):
+        vote = make_vote(self.run)
+        vote.task.task_type = "chat"
+        self.assertFalse(paid_reviews.vote_counts(vote)[0])
+
+    def test_one_review_bounty_meets_the_minimum_estimate(self):
+        bounty = make_bounty(reviews_required=1, rah_bounty_id="bounty-short")
+        payload = paid_reviews.bounty_payload(bounty, dry_run=True)
+        self.assertGreaterEqual(payload["estimatedHours"], 0.083)
+
+    def test_post_without_a_readable_id_stays_a_draft(self):
+        from django.core.management import CommandError, call_command
+
+        with mock.patch.object(
+            paid_reviews.RentAHumanClient, "__init__", return_value=None
+        ), mock.patch.object(
+            paid_reviews.RentAHumanClient, "create_bounty", return_value={"ok": 1}
+        ):
+            with self.assertRaises(CommandError):
+                call_command("post_paid_review_bounty", "--spots", "1", "--post")
+        self.assertEqual(
+            PaidReviewBounty.objects.exclude(id=self.bounty.id).get().status, "draft"
+        )
+
+    def test_retry_reuses_the_drafts_idempotency_key(self):
+        from django.core.management import call_command
+
+        draft = make_bounty(status="draft", rah_bounty_id="")
+        with mock.patch.object(
+            paid_reviews.RentAHumanClient, "__init__", return_value=None
+        ), mock.patch.object(
+            paid_reviews.RentAHumanClient,
+            "create_bounty",
+            return_value={"bounty": {"id": "rah-9"}},
+        ) as create:
+            call_command("post_paid_review_bounty", "--retry", str(draft.id))
+        self.assertEqual(
+            create.call_args.args[0]["idempotencyKey"],
+            paid_reviews.bounty_payload(draft, dry_run=False)["idempotencyKey"],
+        )
+
+    def test_retry_opens_the_draft_once_the_id_is_known(self):
+        from django.core.management import call_command
+
+        draft = make_bounty(status="draft", rah_bounty_id="")
+        with mock.patch.object(
+            paid_reviews.RentAHumanClient, "__init__", return_value=None
+        ), mock.patch.object(
+            paid_reviews.RentAHumanClient,
+            "create_bounty",
+            return_value={"bounty": {"id": "rah-9"}},
+        ):
+            call_command("post_paid_review_bounty", "--retry", str(draft.id))
+        draft.refresh_from_db()
+        self.assertEqual((draft.status, draft.rah_bounty_id), ("open", "rah-9"))
