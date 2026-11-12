@@ -667,24 +667,17 @@ def send_fallback_email(
         pass
 
 
-def notify_professional_signup(
+def notify_staff(
     subject: str,
     body: str,
     html_body: Optional[str] = None,
     headers: Optional[Dict[str, str]] = None,
-) -> None:
-    """Send a best-effort team notification about a new professional signup.
-
-    Shared by the web /pro_version interest form and the Fight Paperwork REST
-    professional sign-up endpoint, and by the staff-action replies to it (see
-    pro_signup_actions.py). Recipients default to
+) -> bool:
+    """Send a best-effort email to the staff list. Recipients default to
     support42@fighthealthinsurance.com and professional@fighthealthinsurance.com
-    and can be extended via settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS.
-    ``html_body``, when given, is attached as an HTML alternative (used for the
-    one-press staff-action buttons). ``headers`` carries the threading headers
-    (Message-ID on the first notification, In-Reply-To/References on replies).
-    A mail failure is logged and swallowed so it never breaks the signup it is
-    reporting on.
+    and can be set with settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS.
+    ``html_body``, when given, is attached as an HTML alternative. A mail
+    failure is logged and swallowed, never raised. True when it was sent.
     """
     recipients = list(
         getattr(
@@ -697,7 +690,7 @@ def notify_professional_signup(
         )
     )
     if not recipients:
-        return
+        return False
     try:
         message = EmailMultiAlternatives(
             subject,
@@ -709,14 +702,36 @@ def notify_professional_signup(
         if html_body:
             message.attach_alternative(html_body, "text/html")
         message.send()
+        return True
     except Exception:
         # Don't interpolate `subject`/`body`: for REST signups the subject
         # embeds the professional's email and the body is full of PII. The
         # recipients are configured internal inboxes, so they're safe to log,
         # and logger.opt(exception=True) attaches the SMTP traceback.
         logger.opt(exception=True).error(
-            f"Error sending professional signup notification email to {recipients}"
+            f"Error sending staff notification email to {recipients}"
         )
+        return False
+
+
+def notify_professional_signup(
+    subject: str,
+    body: str,
+    html_body: Optional[str] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> None:
+    """Send a best-effort team notification about a new professional signup.
+
+    Shared by the web /pro_version interest form and the Fight Paperwork REST
+    professional sign-up endpoint, and by the staff-action replies to it (see
+    pro_signup_actions.py). Sent to the staff list (notify_staff).
+    ``html_body``, when given, is attached as an HTML alternative (used for the
+    one-press staff-action buttons). ``headers`` carries the threading headers
+    (Message-ID on the first notification, In-Reply-To/References on replies).
+    A mail failure is logged and swallowed so it never breaks the signup it is
+    reporting on.
+    """
+    notify_staff(subject, body, html_body=html_body, headers=headers)
 
 
 RETURNING_LEAD_NOTIFY_COOLDOWN_SECONDS = 15 * 60

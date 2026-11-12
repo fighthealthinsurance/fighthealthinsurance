@@ -91,3 +91,24 @@ async def test_lookups_retry_database_hiccups_but_not_schema_errors(error, retri
             await _run(activities.find_due_plan_documents_reminders, 50)
     assert raised.value.non_retryable is (not retried)
     assert SECRET not in raised.value.message
+
+
+@pytest.mark.asyncio
+@patch.object(activities.summary, "send_summary_if_due", return_value=True)
+async def test_the_staff_summary_says_whether_it_went(mock_send):
+    assert await _run(activities.send_plan_documents_staff_summary) is True
+    mock_send.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+@patch.object(
+    activities.summary, "send_summary_if_due", side_effect=OperationalError("db down")
+)
+async def test_a_failed_staff_summary_is_never_retried_and_names_only_the_error(_):
+    with patch.object(activities.logger, "error") as logged:
+        with pytest.raises(ApplicationError) as raised:
+            await _run(activities.send_plan_documents_staff_summary)
+    assert raised.value.non_retryable
+    assert "db down" not in str(raised.value)
+    logged.assert_called_once()
+    assert "db down" not in logged.call_args.args[0]

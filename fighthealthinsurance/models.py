@@ -5600,6 +5600,17 @@ class SharedPlanDocumentsDay(models.Model):
     LINKS = "links"
     OPT_IN_FILES = "opt_in_files"
     REMINDERS = "reminders"
+    # Copies shared by ticking the box that were left out, by why: failed
+    # the closer look, over a budget, or not saved. Counts only, for the
+    # staff summary (plan_documents_summary).
+    DROPPED_REFUSED = "dropped_refused"
+    DROPPED_OVER_BUDGET = "dropped_over_budget"
+    DROPPED_NOT_SAVED = "dropped_not_saved"
+    DROPPED = (DROPPED_REFUSED, DROPPED_OVER_BUDGET, DROPPED_NOT_SAVED)
+    # 1 while the day's staff summary is being sent or once it has gone, so
+    # it goes once a day; and how many times the day has tried to send it.
+    STAFF_SUMMARY = "staff_summary"
+    STAFF_SUMMARY_TRIES = "staff_summary_tries"
 
     day = models.DateField()
     name = models.CharField(max_length=64)

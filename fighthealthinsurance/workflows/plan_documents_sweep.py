@@ -2,7 +2,7 @@
 
 The ``plan-documents-sweep`` Temporal Schedule (see
 ``temporal_client.ensure_plan_documents_schedule``) starts one run an hour.
-A run does two things, and a failure in the first never stops the second:
+A run does three things, and a failure in one never stops the next:
 
 1. Sends the share page's reminders that are due, one activity per
    reminder, each run once and never retried. The activity claims the
@@ -14,9 +14,12 @@ A run does two things, and a failure in the first never stops the second:
    are children the sweep does not wait for (parent close policy ABANDON).
    A share whose reading is already running is left to it; one whose
    earlier reading has closed gets a new run under the same id.
+3. Asks for the daily staff summary of shared plan documents
+   (plan_documents_summary): the first run of each UTC day sends it, and
+   the rest find it sent. Run once, never retried.
 
 History holds the run's numbers, the reminders' row ids, true or false for
-each, the shares' uuids and two counts.
+each, the shares' uuids, the counts and whether the summary went.
 """
 
 from datetime import timedelta
@@ -59,7 +62,21 @@ class PlanDocumentsSweepWorkflow:
         started = await self._start_readings(
             request.received_minutes, request.max_batches
         )
-        return {"reminders_sent": sent, "readings_started": started}
+        result = {"reminders_sent": sent, "readings_started": started}
+        if workflow.patched("plan-documents-staff-summary"):
+            result["summary_sent"] = int(await self._send_summary())
+        return result
+
+    async def _send_summary(self) -> bool:
+        try:
+            return await workflow.execute_activity(
+                sweep_activities.send_plan_documents_staff_summary,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=SEND_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("the staff summary failed; tomorrow's run tries")
+            return False
 
     async def _send_reminders(self, limit: int) -> int:
         try:
@@ -90,12 +107,16 @@ class PlanDocumentsSweepWorkflow:
         return sent
 
     async def _start_readings(self, received_minutes: int, limit: int) -> int:
-        batches = await workflow.execute_activity(
-            sweep_activities.find_waiting_share_batches,
-            args=[received_minutes, limit],
-            start_to_close_timeout=timedelta(minutes=1),
-            retry_policy=LOOKUP_RETRY,
-        )
+        try:
+            batches = await workflow.execute_activity(
+                sweep_activities.find_waiting_share_batches,
+                args=[received_minutes, limit],
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=LOOKUP_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("waiting shares not looked up; next run tries")
+            return 0
         started = 0
         for share_batch in batches:
             try:
