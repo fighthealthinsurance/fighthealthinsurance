@@ -32,7 +32,7 @@
    "id": "nemotron-3.5-super",
    "name": "Nemotron 3.5 Super",
    "maker": "NVIDIA, through DeepInfra",
-   "role": "Writes a backup draft. One of the first outside models we ask.",
+   "role": "Writes a second draft beside ours, so you can compare the two.",
    "runs_on": "Outside service, only if you allow outside models",
    "setup": "",
    "ours": false,
@@ -199,6 +199,11 @@
   {
    "date": "2026-11-01",
    "what": "Added NVIDIA's Nemotron 3.5 Super to the outside models we ask for a backup draft, near the top of the list.",
+   "detail": false
+  },
+  {
+   "date": "2026-11-11",
+   "what": "If you allow outside models, Nemotron 3.5 Super now writes a second draft beside ours, so you see two letters side by side.",
    "detail": false
   }
  ],

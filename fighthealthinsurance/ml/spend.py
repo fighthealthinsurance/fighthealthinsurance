@@ -901,6 +901,42 @@ def reserve_generation() -> Optional[Reservation]:
         return None
 
 
+#: US dollars a day the side-by-side outside model (ml_router.
+#: SIDE_BY_SIDE_OUTSIDE) may spend writing beside ours for people who allow
+#: outside models. Judged against today's DeepInfra spend for the letter's
+#: use, which also holds the rare outside backup and summary calls, so it
+#: errs early. Past it, a letter is written as before the side-by-side pass:
+#: ours first, outside models only as the backup.
+#: FHI_SPEND_SIDE_BY_SIDE_DAILY_USD overrides it; 0 or less removes it.
+SIDE_BY_SIDE_DAILY_USD = 2.0
+
+
+def side_by_side_budget_left() -> bool:
+    """Whether a letter may ask the side-by-side outside model today: the
+    provider not paused, and its spend today for this letter's use under
+    SIDE_BY_SIDE_DAILY_USD. From this process's copy of the ledger, like
+    allows; an unread copy says no, and the letter is written as before."""
+    try:
+        use = current_use()
+        if paused(DEEPINFRA, use) or paused(DEEPINFRA, "*"):
+            return False
+        if not allows(DEEPINFRA, use):
+            return False
+        daily_usd = _usd_setting(
+            "FHI_SPEND_SIDE_BY_SIDE_DAILY_USD", SIDE_BY_SIDE_DAILY_USD
+        )
+        if daily_usd <= 0:
+            return True
+        view = _ledger.snapshot()
+        if not view.loaded:
+            return False
+        spent = view.day_total(counter(DEEPINFRA, use), _today())
+        return spent < round(daily_usd * MICRO)
+    except Exception as e:
+        logger.warning(f"Side-by-side budget check failed: {type(e).__name__}")
+        return False
+
+
 def release_generation(reservation: Reservation) -> bool:
     """Give back a reservation whose generation never started or delivered
     nothing: once, and to the day it was taken from. False when it was
