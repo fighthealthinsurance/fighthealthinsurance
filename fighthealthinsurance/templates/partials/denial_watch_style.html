@@ -43,9 +43,11 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
     .dw-line { clip-path: none !important; }
     .dw-end { opacity: 1 !important; }
   }
-  /* Clear the sticky header, 143px tall below 992px wide, so a jump to any anchor lands below it. */
+  /* Clear the sticky header, 143px tall below 992px wide, so a jump to any anchor lands below it. From 992px it is
+     one row (99px) only once the web font has loaded and the window is wide enough; at 992px, or in the fallback
+     face (the font blocked or still loading), the menu wraps to two rows, 121px, which 112px left the target under. */
   .dw [id] { scroll-margin-top: calc(2 * var(--fhi-space-11)); }
-  @media (min-width: 992px) { .dw [id] { scroll-margin-top: calc(var(--fhi-space-11) + var(--fhi-space-7)); } }
+  @media (min-width: 992px) { .dw [id] { scroll-margin-top: calc(var(--fhi-space-11) + var(--fhi-space-9)); } }
   .dw-num { font-variant-numeric: tabular-nums; }
   .dw-kicker { font-size: var(--fhi-text-small); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fhi-green-ink); }
   .dw-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--fhi-space-4); }
