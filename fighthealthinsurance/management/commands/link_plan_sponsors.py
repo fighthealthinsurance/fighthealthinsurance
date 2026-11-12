@@ -15,9 +15,11 @@ unless ``--apply``::
 Only rows read and ready for review with no company yet, or with one of
 those facts empty, are looked at. A company staff set is never changed, and
 neither is a fact the person gave or staff set or cleared. Rows whose
-lookup failed during their reading (company_lookup_failures) are among
-them, and counted. Prints counts and company names only, never a
-document's text or the facts read from it.
+lookup did not finish (company_lookup_failures: an error, or no model
+answered and the fixed patterns found no company) are among them, and
+counted; the hourly sweep also looks again at those, a few at a time.
+Prints counts and company names only, never a document's text or the facts
+read from it.
 """
 
 import operator
@@ -34,6 +36,7 @@ from fighthealthinsurance.plan_documents_processing import (
     EMPTY_PLAN_FACTS,
     afill_plan_facts,
     afind_company,
+    lookup_finished,
     ready_row,
 )
 from fighthealthinsurance.plan_sponsors import (
@@ -109,9 +112,13 @@ class Command(BaseCommand):
                         and ready_row(pk).filter(empty).exists()
                     ]
             except Exception as e:
-                # Counted like a failure in a reading; the next row goes on.
+                failure = type(e).__name__
+            else:
+                failure = "" if lookup_finished(reading) else "no model answered"
+            if failure:
+                # Counted like one in a reading; the next row goes on.
                 failed_now += 1
-                self.stderr.write(f"  a lookup failed: {type(e).__name__}")
+                self.stderr.write(f"  a lookup did not finish: {failure}")
                 if apply:
                     ready_row(pk).update(
                         company_lookup_failures=F("company_lookup_failures") + 1

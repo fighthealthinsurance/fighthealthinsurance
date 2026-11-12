@@ -294,7 +294,12 @@ class CompanyLookupsThatFailAreCountedTest(_ReadingTest):
         self.assertTrue(any("to a company: RuntimeError" in line for line in lines))
 
     def test_link_plan_sponsors_counts_a_lookup_that_fails_now(self):
-        self.read("plan.txt", PLAN_TEXT.encode())
+        with patch.object(
+            processing,
+            "afind_company",
+            new=AsyncMock(return_value=PlanReading(None, True)),
+        ):
+            self.read("plan.txt", PLAN_TEXT.encode())
         out, err = StringIO(), StringIO()
         with patch(
             "fighthealthinsurance.management.commands.link_plan_sponsors.afind_company",
