@@ -273,6 +273,26 @@ class TheNightlyFileCheckTest(_BucketTest):
             (counts[Day.FILE_CHECK_WHOLE], counts[Day.FILE_CHECK_NOT_CHECKED]), (1, 1)
         )
 
+    def test_files_removed_during_the_check_never_make_the_count_negative(self):
+        self.share(
+            PLAN_TEXT.encode(), PLAN_TEXT.encode() + b" ", PLAN_TEXT.encode() + b"  "
+        )
+        verdict = shared_file_check._verdict
+
+        def check_then_remove(backends, name, stored_size, seconds):
+            outcome = verdict(backends, name, stored_size, seconds)
+            # Each file checked is removed while the check goes on.
+            PolicyDocument.objects.filter(document_enc=name).update(
+                processing_status=PolicyDocument.PROCESSING_REMOVED
+            )
+            return outcome
+
+        with patch.object(shared_file_check, "MAX_FILES", 2), patch.object(
+            shared_file_check, "_verdict", side_effect=check_then_remove
+        ):
+            counts = self.counts()
+        self.assertEqual(counts[Day.FILE_CHECK_NOT_CHECKED], 1)
+
     def test_removed_files_are_not_checked(self):
         self.share(PLAN_TEXT.encode())
         remove_shared_documents(Denial.get_hashed_email(EMAIL))

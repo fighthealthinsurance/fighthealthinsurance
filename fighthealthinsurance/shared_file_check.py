@@ -98,14 +98,17 @@ def check_shared_files() -> dict[str, int]:
     counts = {name: 0 for name in Day.FILE_CHECK_COUNTS}
     backends = bucket_backends()
     started = time.monotonic()
-    checked = 0
+    checked: list = []
     for pk, name, stored_size in _files_to_check().iterator(chunk_size=200):
         left = MAX_SECONDS - (time.monotonic() - started)
-        if checked >= MAX_FILES or left <= 0:
-            # The rest are counted once, not read row by row.
-            counts[Day.FILE_CHECK_NOT_CHECKED] = _files_to_check().count() - checked
+        if len(checked) >= MAX_FILES or left <= 0:
+            # The rest are counted once, not read row by row; a file removed
+            # meanwhile is not among them.
+            counts[Day.FILE_CHECK_NOT_CHECKED] = (
+                _files_to_check().exclude(pk__in=checked).count()
+            )
             break
-        checked += 1
+        checked.append(pk)
         if not backends:
             counts[Day.FILE_CHECK_UNKNOWN] += 1
             continue
