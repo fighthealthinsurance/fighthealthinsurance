@@ -10,6 +10,8 @@ from fighthealthinsurance.utils import get_env_variable
 
 # Consecutive failed ticks after which the actor stops reporting healthy.
 UNHEALTHY_AFTER_FAILURES = 3
+# A HumanJudge round sends at most a batch of drafts and reads a few pages.
+HUMANJUDGE_SYNC_TIMEOUT_SECONDS = 120
 
 name = "ChooserRefillActor"
 
@@ -71,6 +73,7 @@ class ChooserRefillActor:
                     )
 
                 await self._refresh_condition_rankings()
+                await self._sync_humanjudge()
 
                 # Sleep for 5 minutes between checks
                 await asyncio.sleep(300)
@@ -111,6 +114,24 @@ class ChooserRefillActor:
         except Exception:
             self._logger.opt(exception=True).warning(
                 "Condition rankings refresh failed; the chooser pool is unaffected"
+            )
+
+    async def _sync_humanjudge(self) -> None:
+        """Send new Arena drafts to HumanJudge and bring back its verdicts
+        (chooser_humanjudge.sync; a no-op unless HUMANJUDGE_API_KEY is set).
+        Never a failed tick: the pool was refilled either way."""
+        from fighthealthinsurance.chooser_humanjudge import sync
+
+        try:
+            await asyncio.wait_for(sync(), timeout=HUMANJUDGE_SYNC_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            self._logger.warning(
+                f"HumanJudge sync gave up after {HUMANJUDGE_SYNC_TIMEOUT_SECONDS}s; "
+                "what it saved stays saved"
+            )
+        except Exception:
+            self._logger.opt(exception=True).warning(
+                "HumanJudge sync failed; the chooser pool is unaffected"
             )
 
     def stop(self) -> None:

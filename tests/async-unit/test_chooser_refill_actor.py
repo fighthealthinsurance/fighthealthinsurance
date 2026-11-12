@@ -167,6 +167,32 @@ async def test_a_failing_rankings_refresh_is_not_a_failed_tick():
 
 
 @pytest.mark.asyncio
+async def test_a_failing_humanjudge_sync_is_not_a_failed_tick():
+    """HumanJudge being down (or refusing the key) must not get the actor
+    replaced: the pool was refilled either way."""
+    actor = _actor(failures=2)
+    sync = AsyncMock(side_effect=RuntimeError("humanjudge down"))
+
+    async def fake_sleep(seconds):
+        actor.running = False
+
+    with patch(
+        "fighthealthinsurance.chooser_tasks.check_and_refill_task_pool",
+        new=AsyncMock(return_value=True),
+    ), patch(
+        "fighthealthinsurance.condition_rankings.refresh_if_due",
+        new=AsyncMock(),
+    ), patch(
+        "fighthealthinsurance.chooser_humanjudge.sync", new=sync
+    ), patch(
+        "fighthealthinsurance.chooser_refill_actor.asyncio.sleep", fake_sleep
+    ):
+        await actor.run()
+
+    assert (sync.await_count, actor._consecutive_failures) == (1, 0)
+
+
+@pytest.mark.asyncio
 async def test_a_refill_that_produces_nothing_is_a_failed_tick():
     """The refill catches generation errors per task and marks the task
     DISABLED, so a tick where every model failed returned normally, reset the

@@ -38,6 +38,8 @@ from fighthealthinsurance.models import (
     DenialTypesRelation,
     Diagnosis,
     FaxesToSend,
+    HumanJudgeSubmission,
+    HumanJudgeVerdict,
     KnownNonFaxNumber,
     FollowUp,
     FollowUpDocuments,
@@ -1646,6 +1648,46 @@ class ChooserVoteAdmin(admin.ModelAdmin):
     list_filter = ("all_bad", "network_class", "created_at")
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at", "seconds_to_vote")
+
+
+@admin.register(HumanJudgeSubmission)
+class HumanJudgeSubmissionAdmin(admin.ModelAdmin):
+    """Arena drafts sent to HumanJudge (see chooser_humanjudge)."""
+
+    list_display = (
+        "id",
+        "task",
+        "candidate",
+        "status",
+        "attempts",
+        "last_error",
+        "sent_at",
+        "created_at",
+    )
+    search_fields = ("task__id", "inference_id")
+    list_filter = ("status", "created_at")
+    ordering = ("-created_at",)
+    readonly_fields = ("id", "inference_id", "created_at", "sent_at")
+
+
+@admin.register(HumanJudgeVerdict)
+class HumanJudgeVerdictAdmin(admin.ModelAdmin):
+    """HumanJudge's verdicts, kept apart from the Arena's own votes."""
+
+    list_display = (
+        "id",
+        "task",
+        "candidate",
+        "verdict",
+        "flag_category",
+        "evaluator_id",
+        "voted_at",
+        "fetched_at",
+    )
+    search_fields = ("task__id", "evaluator_id", "feedback")
+    list_filter = ("verdict", "flag_category", "voted_at")
+    ordering = ("-fetched_at",)
+    readonly_fields = ("id", "external_key", "raw", "fetched_at")
 
 
 @admin.register(AuditLog)

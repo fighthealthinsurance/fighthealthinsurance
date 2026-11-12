@@ -140,6 +140,9 @@ ML backends (at least one; either kind works on its own):
 - `ANTHROPIC_API_KEY`, `DEEPINFRA_API`, `OPENROUTER_API_KEY`, or the Azure settings - hosted models, used as the backup tier (see docs/ml-backends.md); `OPENROUTER_API_KEY` also turns on OpenRouter web search for extra, relevance-judged appeal citations
 - `HEALTH_BACKEND_HOST` / `HEALTH_BACKEND_PORT` - a self-hosted backend
 
+Appeal Arena:
+- `HUMANJUDGE_API_KEY` - sends synthetic Arena appeal drafts (never real ones) to HumanJudge's human reviewers; their verdicts live in `HumanJudgeVerdict`, apart from `ChooserVote` (see docs/chooser.md)
+
 Development:
 - `RECAPTCHA_TESTING=true` - Disable reCAPTCHA locally
 
