@@ -106,7 +106,13 @@ class Command(BaseCommand):
                 f"Could not read RentAHuman's bounty id from {posted}; set "
                 "rah_bounty_id in the admin so submissions can be matched."
             )
-        if str(posted).find("pending_deposit") >= 0:
+        if "pending_deposit" in str(posted):
             self.stdout.write(
-                "The bounty is waiting on a deposit: top up the RentAHuman wallet."
+                "The bounty is waiting on a deposit: top up the RentAHuman wallet "
+                "(rentahuman_setup --deposit)."
+            )
+        if "pending_review" in str(posted):
+            self.stdout.write(
+                "RentAHuman's AI content review is checking the bounty; it goes "
+                "live when that passes."
             )
