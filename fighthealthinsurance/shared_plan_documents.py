@@ -34,7 +34,7 @@ from django.core import signing
 from django.core.cache import cache
 from django.core.files.uploadedfile import UploadedFile
 from django.db import transaction
-from django.db.models import F, PositiveIntegerField
+from django.db.models import F, PositiveIntegerField, QuerySet
 from django.db.models.functions import Greatest
 from django.http import HttpRequest
 from django.utils import timezone
@@ -808,17 +808,41 @@ NOT_COUNTED = (PolicyDocument.PROCESSING_REMOVED, PolicyDocument.PROCESSING_SPAM
 MIN_DOCUMENT_CHARS = 200
 
 
-def is_document(status: str, cleaned_text: Optional[str], filename: str) -> bool:
+def is_document(status: str, cleaned_text: Optional[str]) -> bool:
     """Whether a shared file's reading found a document: read and cleaned,
-    with at least MIN_DOCUMENT_CHARS characters that are not spaces, or a PDF with no text to
-    read, as a scan is. A PDF passed the closer look on the way in
-    (validate_shared_document), so it is a real file staff can open."""
-    if status == PolicyDocument.PROCESSING_UNREADABLE:
-        return filename.lower().endswith(".pdf")
+    with at least MIN_DOCUMENT_CHARS characters that are not spaces. A file
+    with no text we could read, a scan among them, is not a plan until its
+    text is read (is_unreadable); staff see it counted on its own."""
     return (
         status == PolicyDocument.PROCESSING_READY
         and len("".join((cleaned_text or "").split())) >= MIN_DOCUMENT_CHARS
     )
+
+
+#: Where a shared file's reading ends when it found no text to use.
+UNREADABLE_STATUSES = (PolicyDocument.PROCESSING_UNREADABLE,)
+
+
+def is_unreadable(status: str, cleaned_text: Optional[str]) -> bool:
+    """Whether a shared file was received but its reading found no text to
+    use: counted for staff as "received but not readable", never as a plan.
+    The same rule as unreadable_files, for one row in hand."""
+    return status in UNREADABLE_STATUSES
+
+
+def unreadable_files() -> QuerySet[PolicyDocument]:
+    """The shared files, not removed or marked spam, that were received but
+    could not be read (is_unreadable), chosen by status alone so no stored
+    text is opened to count them."""
+    return PolicyDocument.objects.filter(
+        source__in=PolicyDocument.SHARED_FILE_SOURCES,
+        processing_status__in=UNREADABLE_STATUSES,
+    ).exclude(processing_status__in=NOT_COUNTED)
+
+
+def unreadable_file_count() -> int:
+    """How many shared files were received but could not be read."""
+    return unreadable_files().count()
 
 
 def plan_shares() -> list[Share]:
@@ -827,8 +851,8 @@ def plan_shares() -> list[Share]:
     # Each share is one plan unless every file and link in it came in an
     # earlier share. Removed rows count for nothing, and so does a file
     # until its reading finds a document (is_document): a file waiting to be
-    # read, a text or Word file with no text, and a line of test text are
-    # not plans; a scanned PDF is. Potential spam counts for nothing at all.
+    # read, a file with no text we could read (a scan among them), and a line
+    # of test text are not plans. Potential spam counts for nothing at all.
     rows = (
         PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_SOURCES)
         .exclude(processing_status__in=NOT_COUNTED)
@@ -846,7 +870,6 @@ def plan_shares() -> list[Share]:
             "premium_amount",
             "processing_status",
             "cleaned_text",
-            "filename",
             "plan_sponsor_id",
         )
     )
@@ -864,7 +887,6 @@ def plan_shares() -> list[Share]:
         premium,
         status,
         cleaned_text,
-        filename,
         sponsor_id,
     ) in rows:
         found = batches.setdefault(
@@ -884,7 +906,7 @@ def plan_shares() -> list[Share]:
         )
         is_link = source == PolicyDocument.SOURCE_SHARED_LINK
         found["link_count" if is_link else "file_count"] += 1
-        if not is_link and not is_document(status, cleaned_text, filename or ""):
+        if not is_link and not is_document(status, cleaned_text):
             continue
         if sponsor_id is not None:
             found["companies"].add(sponsor_id)
@@ -1026,6 +1048,8 @@ def share_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
             {"year": "Not given", "plans": years.get(None, 0)},
         ],
         "premium_answered": sum(1 for share in plans if share.premium_answered),
+        # Received but not readable: shown to staff on its own, never a plan.
+        "unreadable_files": unreadable_file_count(),
     }
 
 

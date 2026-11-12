@@ -28,6 +28,7 @@ from fighthealthinsurance.shared_plan_documents import (
     link_fingerprint,
     plan_shares,
     share_counts,
+    unreadable_file_count,
 )
 
 User = get_user_model()
@@ -187,7 +188,9 @@ class TheGoalCountsCompaniesTest(_PlansTestCase):
         self.share(files=["b"], company="Mahoney Shipyards")
         self.share(files=["c"], company="Crumpler Cooperative")
         # Typed by the sharer, not read from the document: not counted.
-        self.share(files=["d"], plan_category="employer_erisa", employer_name="Fraser Mills")
+        self.share(
+            files=["d"], plan_category="employer_erisa", employer_name="Fraser Mills"
+        )
         self.share(files=["e"], plan_category="medicare_advantage")
         self.assertEqual((distinct_plan_count(), employer_plan_count()), (5, 2))
 
@@ -237,7 +240,8 @@ class StaffSeeThePlansTest(_PlansTestCase):
         weeks = self.rows(self.counts_on_the_page(), "shared-plan-weeks")
         self.assertEqual([row[1:] for row in weeks], [["2", "1"], ["1", "1"]])
         self.assertEqual(
-            weeks[0][0], f"{self.this_week:%b} {self.this_week.day}, {self.this_week.year}"
+            weeks[0][0],
+            f"{self.this_week:%b} {self.this_week.day}, {self.this_week.year}",
         )
 
     def test_plans_by_kind_year_and_premium_answer(self):
@@ -266,7 +270,12 @@ class StaffSeeThePlansTest(_PlansTestCase):
         )
         self.assertEqual(
             self.rows(section, "shared-plan-years"),
-            [[str(year + 1), "1"], [str(year), "1"], ["Other years", "0"], ["Not given", "1"]],
+            [
+                [str(year + 1), "1"],
+                [str(year), "1"],
+                ["Other years", "0"],
+                ["Not given", "1"],
+            ],
         )
         self.assertIn(
             "1 of 3 plans came with an answer to the premium question.",
@@ -277,22 +286,32 @@ class StaffSeeThePlansTest(_PlansTestCase):
         self.share(files=["a"], company="Crumpler Cooperative")
         self.share(files=["b"], company="Crumpler Clinic")
         self.share(files=["c"], plan_category="medicaid_chip")
-        text = self.counts_on_the_page().find(id="shared-plan-employer").get_text(
-            " ", strip=True
+        text = (
+            self.counts_on_the_page()
+            .find(id="shared-plan-employer")
+            .get_text(" ", strip=True)
         )
-        self.assertTrue(text.startswith("2 employer plans toward the goal of 100 by January 15, 2027"))
+        self.assertTrue(
+            text.startswith(
+                "2 employer plans toward the goal of 100 by January 15, 2027"
+            )
+        )
 
     def test_the_counts_match_the_rule(self):
         self.share(files=["a"])
         self.share(files=["a"])
         self.remove(self.share(links=[LINK]))
         counts = share_counts(self.today)
-        self.assertEqual((counts["shares"], counts["plans"]), (2, distinct_plan_count()))
+        self.assertEqual(
+            (counts["shares"], counts["plans"]), (2, distinct_plan_count())
+        )
         self.assertEqual(counts["employer_plans"], employer_plan_count())
 
     def test_with_nothing_shared_the_tables_say_so(self):
         section = self.counts_on_the_page()
-        self.assertIn("0 different plans from 0 shares.", section.get_text(" ", strip=True))
+        self.assertIn(
+            "0 different plans from 0 shares.", section.get_text(" ", strip=True)
+        )
         self.assertEqual(self.rows(section, "shared-plan-weeks"), [["No shares yet."]])
 
 
@@ -305,14 +324,54 @@ class OnlyReadDocumentsCountTest(_PlansTestCase):
         self.share(files=["sbc"], text="", status=PolicyDocument.PROCESSING_UNREADABLE)
         self.assertEqual(self.plans(), 0)
 
-    def test_a_scanned_pdf_with_no_text_is_a_plan(self):
+    def test_a_scanned_pdf_with_no_text_is_not_a_plan(self):
         self.share(
             files=["scan"],
             text="",
             status=PolicyDocument.PROCESSING_UNREADABLE,
             filename="shared-1.pdf",
         )
-        self.assertEqual(self.plans(), 1)
+        self.assertEqual(self.plans(), 0)
+
+    def test_an_unreadable_pdf_brings_no_company(self):
+        self.share(
+            files=["scan"],
+            text="",
+            status=PolicyDocument.PROCESSING_UNREADABLE,
+            filename="shared-1.pdf",
+            company="Crumpler Cooperative",
+        )
+        self.assertEqual(employer_plan_count(), 0)
+
+    def test_a_read_plan_counts(self):
+        self.share(
+            files=["sbc"], filename="shared-1.pdf", company="Crumpler Cooperative"
+        )
+        self.assertEqual((self.plans(), employer_plan_count()), (1, 1))
+
+
+class UnreadableFilesAreCountedForStaffTest(_PlansTestCase):
+    def test_received_but_not_readable_is_its_own_number(self):
+        self.share(files=["sbc"])
+        self.share(
+            files=["scan-1", "scan-2"],
+            text="",
+            status=PolicyDocument.PROCESSING_UNREADABLE,
+        )
+        counts = share_counts(START.date())
+        self.assertEqual((counts["plans"], counts["unreadable_files"]), (1, 2))
+
+    def test_removed_and_spam_files_are_not_in_it(self):
+        for status in (
+            PolicyDocument.PROCESSING_REMOVED,
+            PolicyDocument.PROCESSING_SPAM,
+        ):
+            self.share(files=[status], text="", status=status)
+        self.assertEqual(unreadable_file_count(), 0)
+
+    def test_a_file_waiting_to_be_read_is_not_in_it(self):
+        self.share(files=["sbc"], text="", status=PolicyDocument.PROCESSING_RECEIVED)
+        self.assertEqual(unreadable_file_count(), 0)
 
     def test_a_line_of_text_is_not_a_plan(self):
         self.share(files=["test"], text="hello")

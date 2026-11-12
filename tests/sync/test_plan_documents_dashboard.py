@@ -288,6 +288,24 @@ class SharesAreCountedTest(_DashboardTestCase):
         self.assertEqual(self.text(page, "premium-answered").split()[0], "1")
 
 
+class UnreadableFilesAreTheirOwnNumberTest(_DashboardTestCase):
+    def test_a_scan_is_counted_as_not_readable_and_not_as_a_plan(self):
+        self.share(files=["a"], company="Crumpler Cooperative")
+        self.share(
+            files=["scan"],
+            processing_status=PolicyDocument.PROCESSING_UNREADABLE,
+            cleaned_text="",
+            company="Mahoney Shipyards",
+        )
+        page = self.page()
+        self.assertEqual(self.text(page, "plans-total").split()[0], "1")
+        self.assertEqual(self.text(page, "employer-plans-total").split()[0], "1")
+        self.assertEqual(
+            self.text(page, "unreadable-files"),
+            "1 file received but not readable, not counted as plans",
+        )
+
+
 class TheReadingIsCountedTest(_DashboardTestCase):
     def test_shared_files_by_where_their_reading_is(self):
         self.share(files=["a", "b"], processing_status=PolicyDocument.PROCESSING_RECEIVED)
