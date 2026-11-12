@@ -107,12 +107,16 @@ class PlanDocumentsSweepWorkflow:
         return sent
 
     async def _start_readings(self, received_minutes: int, limit: int) -> int:
-        batches = await workflow.execute_activity(
-            sweep_activities.find_waiting_share_batches,
-            args=[received_minutes, limit],
-            start_to_close_timeout=timedelta(minutes=1),
-            retry_policy=LOOKUP_RETRY,
-        )
+        try:
+            batches = await workflow.execute_activity(
+                sweep_activities.find_waiting_share_batches,
+                args=[received_minutes, limit],
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=LOOKUP_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("waiting shares not looked up; next run tries")
+            return 0
         started = 0
         for share_batch in batches:
             try:

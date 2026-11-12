@@ -481,6 +481,24 @@ def note_dropped(reason: str, files: int) -> None:
         logger.opt(exception=True).warning("Could not count dropped shared copies")
 
 
+def _new_copies(
+    files: Sequence[UploadedFile], already_shared: Optional[set[str]]
+) -> int:
+    """How many of ``files`` would be new copies: with ``already_shared``,
+    not in it and not a repeat of an earlier one, as share_opt_in_copies
+    leaves those out."""
+    if already_shared is None:
+        return len(files)
+    seen = set(already_shared)
+    new = 0
+    for uploaded in files:
+        digest = fingerprint(uploaded)
+        if digest not in seen:
+            seen.add(digest)
+            new += 1
+    return new
+
+
 def share_opt_in_copies(
     request: HttpRequest,
     files: Sequence[UploadedFile],
@@ -517,7 +535,10 @@ def share_opt_in_copies(
         smallest = min(candidates, key=lambda f: f.size or 0)
         if daily_limit_problem(request, [smallest], source=source):
             logger.info(f"Left opted-in files from {source} unshared: over budget")
-            note_dropped(SharedPlanDocumentsDay.DROPPED_OVER_BUDGET, pending)
+            note_dropped(
+                SharedPlanDocumentsDay.DROPPED_OVER_BUDGET,
+                _new_copies(candidates, already_shared),
+            )
             return []
         passing: list[UploadedFile] = []
         for uploaded in candidates:

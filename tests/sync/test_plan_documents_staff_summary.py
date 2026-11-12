@@ -173,6 +173,21 @@ class DroppedCopiesAreCountedTest(TestCase):
             self.assertEqual(self.share(), [])
         self.assertEqual(self.counted(SharedPlanDocumentsDay.DROPPED_OVER_BUDGET), 2)
 
+    def test_over_budget_leaves_out_copies_already_shared(self):
+        already = {shared_plan_documents.fingerprint(self.files[0])}
+        with mock.patch.object(
+            shared_plan_documents, "daily_limit_problem", return_value="full"
+        ):
+            shared_plan_documents.share_opt_in_copies(
+                _request(),
+                self.files,
+                source=PolicyDocument.SOURCE_SHARED_APPEAL,
+                details={},
+                hashed_email=None,
+                already_shared=already,
+            )
+        self.assertEqual(self.counted(SharedPlanDocumentsDay.DROPPED_OVER_BUDGET), 1)
+
     def test_not_saved(self):
         with mock.patch(
             "fighthealthinsurance.chat_forms.validate_shared_document"
@@ -305,6 +320,19 @@ class TheEmailTest(TestCase):
             for _ in range(summary.MAX_TRIES_PER_DAY + 3):
                 summary.send_summary_if_due(WEDNESDAY)
         self.assertEqual(send.call_count, summary.MAX_TRIES_PER_DAY)
+
+
+    def test_a_sweep_that_loses_the_claim_uses_none_of_the_days_tries(self):
+        received(WEDNESDAY - datetime.timedelta(days=1))
+        # Another sweep took the claim after this one first looked.
+        summary.reserve(SharedPlanDocumentsDay.STAFF_SUMMARY, 1, 1)
+        with mock.patch.object(summary, "_taken", return_value=False):
+            self.assertFalse(summary.send_summary_if_due(WEDNESDAY))
+        self.assertFalse(
+            SharedPlanDocumentsDay.objects.filter(
+                name=SharedPlanDocumentsDay.STAFF_SUMMARY_TRIES, count__gt=0
+            ).exists()
+        )
 
 
 class AStuckReadingShowsTest(TestCase):

@@ -155,13 +155,15 @@ def send_summary_if_due(today: Optional[datetime.date] = None) -> bool:
     today = today or timezone.now().date()
     if _taken(SharedPlanDocumentsDay.STAFF_SUMMARY):
         return False
+    claimed = reserve(SharedPlanDocumentsDay.STAFF_SUMMARY, 1, 1)
+    if claimed is None:
+        return False
+    # A try is counted only by the sweep holding the claim.
     if (
         reserve(SharedPlanDocumentsDay.STAFF_SUMMARY_TRIES, 1, MAX_TRIES_PER_DAY)
         is None
     ):
-        return False
-    claimed = reserve(SharedPlanDocumentsDay.STAFF_SUMMARY, 1, 1)
-    if claimed is None:
+        give_back(SharedPlanDocumentsDay.STAFF_SUMMARY, 1, claimed)
         return False
     try:
         message = message_for(today, summary_counts(today))
