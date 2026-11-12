@@ -284,6 +284,29 @@ class RereadTest(TestCase):
         self.assertIn("2 shared file(s) to read again: 1 unreadable, 1 stored as ready", out.getvalue())
         self.assertNotIn(shifted("deductible", 3), out.getvalue())
 
+    def test_a_reading_ocr_could_not_finish_goes_back_to_waiting(self):
+        for why in ("OCR could not run", "OCR did not finish"):
+            with self.subTest(why):
+                row = self.row(
+                    processing_status=PolicyDocument.PROCESSING_READY,
+                    cleaned_text=f"[Page 1]\nPage 1\n\n[1 of 2 pages could not be read: {why}.]",
+                )
+                call_command("reread_shared_documents", "--apply", stdout=io.StringIO())
+                row.refresh_from_db()
+                self.assertEqual(row.processing_status, PolicyDocument.PROCESSING_RECEIVED)
+
+    def test_a_reading_cut_short_by_the_ocr_limit_is_left_alone(self):
+        row = self.row(
+            processing_status=PolicyDocument.PROCESSING_READY,
+            cleaned_text=(
+                f"[Page 1]\n{PLAN_TEXT}\n\n[60 of 100 pages could not be read: "
+                "reading scanned pages stops after 40 pages or 2 minutes.]"
+            ),
+        )
+        call_command("reread_shared_documents", "--apply", stdout=io.StringIO())
+        row.refresh_from_db()
+        self.assertEqual(row.processing_status, PolicyDocument.PROCESSING_READY)
+
     def test_without_apply_nothing_changes(self):
         row = self.row(processing_status=PolicyDocument.PROCESSING_UNREADABLE)
         call_command("reread_shared_documents", stdout=io.StringIO())

@@ -139,3 +139,8 @@ def test_a_page_is_clearly_text_only_with_enough_words():
     assert text_quality.is_clearly_text(PLAN_TEXT)
     assert not text_quality.is_clearly_text("Evidence of Coverage 2027")
     assert not text_quality.is_clearly_text(shifted(PLAN_TEXT, 3))
+
+
+def test_real_word_count_is_none_for_garbage():
+    assert text_quality.real_word_count(shifted(PLAN_TEXT, 3)) == 0
+    assert text_quality.real_word_count("Evidence of Coverage 2027") == 3

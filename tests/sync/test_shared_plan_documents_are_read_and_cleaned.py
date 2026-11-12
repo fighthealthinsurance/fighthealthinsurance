@@ -274,7 +274,7 @@ class ScansAndGarbledTextAreReadWithOcrTest(_ReadingTest):
             status, doc = self.read("scan.pdf", make_pdf_bytes(["", "", ""]))
         self.assertEqual(status, READY)
         self.assertIn(
-            "[2 of 3 pages could not be read and are left out: reading scanned "
+            "[2 of 3 pages could not be read: reading scanned "
             "pages stops after 40 pages or 2 minutes.]",
             doc.cleaned_text,
         )
@@ -342,14 +342,14 @@ class ScansAndGarbledTextAreReadWithOcrTest(_ReadingTest):
         finally:
             logger.remove(sink)
         self.assertEqual(status, READY)
-        self.assertIn("[1 of 2 pages could not be read and are left out: OCR could not run.]", doc.cleaned_text)
+        self.assertIn("[1 of 2 pages could not be read: OCR could not run.]", doc.cleaned_text)
         self.assertTrue(any("ERROR" in l and "tesseract is not installed" in l for l in lines))
 
     def test_a_page_ocr_failed_on_is_counted_in_the_note(self):
         with ocr_reads({0: PLAN_TEXT, 1: None}):
             status, doc = self.read("scan.pdf", make_pdf_bytes(["", ""]))
         self.assertEqual(status, READY)
-        self.assertIn("[1 of 2 pages could not be read and are left out.]", doc.cleaned_text)
+        self.assertIn("[1 of 2 pages could not be read.]", doc.cleaned_text)
 
     def test_an_ocr_that_times_out_keeps_the_pages_the_text_layer_read(self):
         with patch(
@@ -359,7 +359,7 @@ class ScansAndGarbledTextAreReadWithOcrTest(_ReadingTest):
             status, doc = self.read("plan.pdf", make_pdf_bytes([PLAN_TEXT[:300], ""]))
         self.assertEqual(status, READY)
         self.assertIn("[Page 1]\nSummary of Benefits", doc.cleaned_text)
-        self.assertIn("could not be read and are left out: OCR did not finish.]", doc.cleaned_text)
+        self.assertIn("could not be read: OCR did not finish.]", doc.cleaned_text)
 
     def test_a_readable_page_past_the_ocr_limit_is_kept_when_the_rest_is_garbled(self):
         pages = [shifted("Your plan covers this service in full", 3)] * 40 + [PLAN_TEXT]
@@ -371,6 +371,41 @@ class ScansAndGarbledTextAreReadWithOcrTest(_ReadingTest):
         self.assertNotIn(40, read.await_args.args[1])
         self.assertIn("[Page 41]\nSummary of Benefits", doc.cleaned_text)
         self.assertIn("[38 of 41 pages could not be read", doc.cleaned_text)
+
+    def test_a_stamped_scan_is_read_with_ocr(self):
+        # A scanner's stamp is the only text layer; the page is a picture.
+        with ocr_reads({0: PLAN_TEXT, 1: TABLE_TEXT}) as read:
+            status, doc = self.read("scan.pdf", make_pdf_bytes(["Page 1", "Page 2"]))
+        self.assertEqual(status, READY)
+        self.assertEqual(read.await_args.args[1], [0, 1])
+        self.assertIn("[Page 1]\nSummary of Benefits", doc.cleaned_text)
+        self.assertIn("[Page 2]\nPrimary care visit", doc.cleaned_text)
+        self.assertNotIn("could not be read", doc.cleaned_text)
+
+    def test_a_short_cover_page_is_kept_when_ocr_reads_less(self):
+        cover = "Evidence of Coverage 2027, Crumpler Mutual Health Gold PPO"
+        with ocr_reads({0: "Evidence"}):
+            status, doc = self.read("plan.pdf", make_pdf_bytes([cover]))
+        self.assertEqual(status, READY)
+        self.assertIn(f"[Page 1]\n{cover}", doc.cleaned_text)
+        self.assertNotIn("could not be read", doc.cleaned_text)
+
+    def test_a_stamped_scan_ocr_cannot_read_says_so(self):
+        from fighthealthinsurance.pdf_text import TESSERACT_MISSING
+
+        with patch(
+            "fighthealthinsurance.pdf_text.aocr_pdf_pages",
+            new=AsyncMock(side_effect=ValueError(TESSERACT_MISSING)),
+        ):
+            _, doc = self.read("scan.pdf", make_pdf_bytes(["Page 1", "Page 2"]))
+        self.assertIn("[2 of 2 pages could not be read: OCR could not run.]", doc.cleaned_text)
+
+    @skip_if_no_tesseract
+    def test_a_real_stamped_scan_is_read(self):
+        content = make_scanned_pdf_bytes([PLAN_TEXT], hidden_texts=["Page 1"])
+        status, doc = self.read("scan.pdf", content)
+        self.assertEqual(status, READY)
+        self.assertIn("deductible", doc.cleaned_text.lower())
 
     def test_a_pdf_with_good_text_never_runs_ocr(self):
         with ocr_reads({}) as read:

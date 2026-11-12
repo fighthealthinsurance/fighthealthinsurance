@@ -201,6 +201,12 @@ def is_garbled(text: str) -> bool:
     return not _has_the_shape_of_language(words, symbols / visible)
 
 
+def real_word_count(text: str) -> int:
+    """How many words of real text ``text`` holds (sampled): none when it is
+    garbled. For choosing between two readings of one page."""
+    return 0 if is_garbled(text) else len(_sample_words(text))
+
+
 def is_clearly_text(text: str) -> bool:
     """Enough words to judge, and not garbled: a page worth keeping as it is
     even when the text around it is garbage."""

@@ -36,7 +36,11 @@ from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance.models import PolicyDocument
-from fighthealthinsurance.text_quality import is_clearly_text, is_garbled
+from fighthealthinsurance.text_quality import (
+    is_clearly_text,
+    is_garbled,
+    real_word_count,
+)
 from fighthealthinsurance.upload_limits import (
     MAX_OCR_IMAGE_PIXELS,
     MAX_STORED_POLICY_DOCUMENT_BYTES,
@@ -61,6 +65,10 @@ MAX_ROWS_PER_BATCH = 50
 OCR_MAX_PAGES = 40
 OCR_SECONDS = 120
 OCR_DPI = 200
+# A page whose text layer has fewer visible characters than this (a scanner's
+# stamp, a fax header, "Page 3") is read with OCR too, and keeps whichever
+# reading has more real words, so a short cover page is never lost.
+THIN_PAGE_CHARS = 100
 
 # Threads of its own for reading files, so these never wait behind, or hold
 # up, the PDF reads appeal generation makes in the same worker process.
@@ -193,21 +201,27 @@ async def _apdf_text(content: bytes) -> str:
         return ""
     # Pages too short to judge alone are judged together: shifted letters
     # spread over many short pages are garbage only as a group.
-    retry = [n for n, page in enumerate(pages) if is_garbled(page)]
+    garbled = {n for n, page in enumerate(pages) if is_garbled(page)}
     short = [
         n
         for n, page in enumerate(pages)
-        if page.strip() and n not in retry and not is_clearly_text(page)
+        if page.strip() and n not in garbled and not is_clearly_text(page)
     ]
     doubtful: set[int] = set()
     if short and is_garbled("\n".join(pages[n] for n in short)):
         doubtful = set(short)
-        retry = sorted(set(retry) | doubtful)
+    thin = {
+        n
+        for n, page in enumerate(pages)
+        if 0 < sum(1 for ch in page if not ch.isspace()) < THIN_PAGE_CHARS
+    }
+    unusable = garbled | doubtful
+    retry = sorted(unusable | thin)
     read: dict[int, Optional[str]]
     try:
         read, why = await _aocr(content, retry) if retry else ({}, None)
     except (TimeoutError, RuntimeError, OSError) as e:
-        if len(retry) == len(pages):
+        if len(unusable) == len(pages):
             # Nothing to keep without OCR: the attempt fails and is retried.
             raise
         # Keep the pages the text layer read well, rather than lose them all
@@ -218,31 +232,37 @@ async def _apdf_text(content: bytes) -> str:
         read, why = {}, "OCR did not finish"
 
     def text_of(number: int, page: str) -> str:
-        if number in read:
-            return (read[number] or "").strip()
-        # Not reached: a garbled page stays out, and so does a short page
-        # that was garbage with the others.
-        return "" if number in doubtful else page.strip()
+        layer = "" if number in unusable else page.strip()
+        ocr = read.get(number)
+        if ocr is None:
+            return layer
+        ocr = ocr.strip()
+        return ocr if real_word_count(ocr) > real_word_count(layer) else layer
 
     texts = [text_of(number, page) for number, page in enumerate(pages)]
     kept = [number for number, text in enumerate(texts) if not is_garbled(text)]
     if not kept or is_garbled("\n".join(texts[number] for number in kept)):
         return ""
     parts = [f"[Page {number + 1}]\n{texts[number]}" for number in kept]
-    # A blank page (no text, and nothing for OCR to read) is left out quietly;
-    # a page with garbled text, or one OCR failed on or did not reach, is
-    # counted in a note.
+    # A blank page (no text, and nothing for OCR to read) is left out quietly.
+    # A page left out with text on it, or one OCR failed on or did not reach,
+    # is counted in a note, and so is a thin page kept with only its text
+    # layer because OCR could not read it.
     unread = [
         number
-        for number in set(range(len(pages))) - set(kept)
-        if pages[number].strip()
-        or read.get(number) is None
-        or (read[number] or "").strip()
+        for number in range(len(pages))
+        if (
+            number not in kept
+            and (
+                pages[number].strip()
+                or read.get(number) is None
+                or (read[number] or "").strip()
+            )
+        )
+        or (number in kept and number in thin and read.get(number) is None)
     ]
     if unread:
-        note = (
-            f"[{len(unread)} of {len(pages)} pages could not be read and are left out"
-        )
+        note = f"[{len(unread)} of {len(pages)} pages could not be read"
         parts.append(note + (f": {why}" if why else "") + ".]")
     return "\n\n".join(parts)
 
