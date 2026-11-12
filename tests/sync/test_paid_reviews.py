@@ -443,3 +443,72 @@ class BountyPayloadTest(TestCase):
     def test_client_refuses_to_start_without_a_key(self):
         with self.assertRaises(paid_reviews.RentAHumanError):
             paid_reviews.RentAHumanClient()
+
+
+class ReviewFollowUpTest(TestCase):
+    """Fixes from the PR's code review."""
+
+    def setUp(self):
+        self.bounty = make_bounty()
+        self.run = PaidReviewSession.objects.create(
+            bounty=self.bounty, session_key="s1", completion_code="FHI-ABCD-EFGH"
+        )
+
+    def test_second_redo_on_a_resubmission_uses_a_new_idempotency_key(self):
+        client = mock.Mock()
+        for text in ("no code", "FHI-ZZZZ-ZZZZ"):
+            paid_reviews.process_submission(
+                self.bounty, {"id": "sub-1", "text": text}, client
+            )
+        attempts = [c.kwargs["attempt"] for c in client.review_submission.call_args_list]
+        self.assertNotEqual(attempts[0], attempts[1])
+
+    def test_lost_claim_to_the_same_submission_sends_no_redo(self):
+        # The other path (webhook or poll) claimed sub-1 between the checks.
+        PaidReviewSession.objects.filter(id=self.run.id).update(
+            rah_submission_id="sub-1", status="verified"
+        )
+        client = mock.Mock()
+        outcome = paid_reviews.process_submission(
+            self.bounty, {"id": "sub-1", "text": "FHI-ABCD-EFGH"}, client
+        )
+        self.assertFalse(
+            any(c.args[2] == "request_redo" for c in client.review_submission.call_args_list),
+            outcome,
+        )
+
+    def test_example_code_in_the_bounty_text_is_not_a_code(self):
+        payload = paid_reviews.bounty_payload(self.bounty, dry_run=True)
+        self.assertEqual(paid_reviews.codes_in(payload), [])
+
+    def test_earned_code_stays_visible_after_the_bounty_closes(self):
+        self.bounty.status = "closed"
+        self.bounty.save()
+        request = mock.Mock(session={paid_reviews.SESSION_KEY: self.run.id})
+        self.assertEqual(paid_reviews.session_for(request), self.run)
+
+    def test_unfinished_run_is_dropped_when_the_bounty_closes(self):
+        self.bounty.status = "closed"
+        self.bounty.save()
+        unfinished = PaidReviewSession.objects.create(bounty=self.bounty, session_key="s2")
+        request = mock.Mock(session={paid_reviews.SESSION_KEY: unfinished.id})
+        self.assertIsNone(paid_reviews.session_for(request))
+
+    def test_non_json_answer_is_a_rentahuman_error(self):
+        http = mock.Mock()
+        http.request.return_value = mock.Mock(
+            status_code=200, content=b"<html>", text="<html>"
+        )
+        http.request.return_value.json.side_effect = ValueError("not json")
+        client = paid_reviews.RentAHumanClient(api_key="rah_test", session=http)
+        with self.assertRaises(paid_reviews.RentAHumanError):
+            client.wallet_balance()
+
+    @override_settings(RENTAHUMAN_API_KEY="")
+    def test_event_without_an_api_key_is_acknowledged_not_retried(self):
+        event = {
+            "id": "submission.submitted:sub-1",
+            "type": "submission.submitted",
+            "data": {"bountyId": "bounty-1", "submissionId": "sub-1"},
+        }
+        self.assertEqual(paid_reviews.handle_event(event), "ignored: no API key")

@@ -1,4 +1,4 @@
-"""Answer the RentAHuman submissions waiting on review for every open paid
+"""Answer the RentAHuman submissions waiting on review for every posted paid
 Arena bounty: the poll that backs up the webhook (paid_reviews.sync_bounty)."""
 
 from django.core.management.base import BaseCommand, CommandError
@@ -15,7 +15,9 @@ class Command(BaseCommand):
             client = paid_reviews.RentAHumanClient()
         except paid_reviews.RentAHumanError as e:
             raise CommandError(str(e))
-        bounties = PaidReviewBounty.objects.filter(status="open").exclude(
+        # Closed bounties too: a worker may submit a code earned before the
+        # join link closed.
+        bounties = PaidReviewBounty.objects.exclude(status="draft").exclude(
             rah_bounty_id=""
         )
         for bounty in bounties:

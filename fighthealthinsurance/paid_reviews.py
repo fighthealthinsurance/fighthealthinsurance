@@ -35,6 +35,7 @@ from decimal import Decimal
 import requests
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.http import (
     HttpRequest,
     HttpResponse,
@@ -96,13 +97,16 @@ def total_cost(price: Decimal, spots: int) -> Decimal:
 
 
 def session_for(request) -> typing.Optional[PaidReviewSession]:
-    """The paid run this browser session is in, if its bounty is open."""
+    """The paid run this browser session is in: while its bounty is open,
+    and after it closes too if the run earned its code, so a worker who has
+    not pasted it yet can still see it."""
     run_id = request.session.get(SESSION_KEY)
     if not run_id:
         return None
     return (
         PaidReviewSession.objects.select_related("bounty")
-        .filter(id=run_id, bounty__status="open")
+        .filter(id=run_id)
+        .filter(Q(bounty__status="open") | Q(completion_code__isnull=False))
         .first()
     )
 
@@ -152,8 +156,9 @@ def progress(
 ) -> dict:
     """The run's progress as the Arena shows it, issuing the completion code
     once enough votes count. ``last_vote`` adds whether it counted."""
-    counted = counted_votes(run)
     required = run.bounty.reviews_required
+    # Votes past the code are welcome but unpaid: no need to count them.
+    counted = required if run.completion_code else counted_votes(run)
     if counted >= required and not run.completion_code:
         _issue_code(run)
     result: dict = {
@@ -235,7 +240,14 @@ class RentAHumanClient:
             raise RentAHumanError(
                 f"{method} {path} answered {response.status_code}: {response.text[:300]}"
             )
-        return response.json() if response.content else {}
+        if not response.content:
+            return {}
+        try:
+            return response.json()
+        except ValueError:
+            raise RentAHumanError(
+                f"{method} {path} answered {response.status_code} without JSON"
+            )
 
     def create_bounty(self, payload: dict) -> dict:
         key = payload.get("idempotencyKey") or str(uuid.uuid4())
@@ -262,8 +274,16 @@ class RentAHumanClient:
         return _as_dict(found)
 
     def review_submission(
-        self, bounty_id: str, submission_id: str, action: str, response: str = ""
+        self,
+        bounty_id: str,
+        submission_id: str,
+        action: str,
+        response: str = "",
+        attempt: str = "",
     ) -> None:
+        """Answer a submission. ``attempt`` tells apart the versions of one
+        submission (a resubmission after a redo keeps its id), so a second
+        redo is not swallowed as a repeat of the first."""
         body: dict = {"action": action}
         if response:
             body["response"] = response
@@ -271,7 +291,7 @@ class RentAHumanClient:
             "PATCH",
             f"/bounties/{bounty_id}/submissions/{submission_id}",
             body,
-            idempotency_key=f"fhi-{submission_id}-{action}",
+            idempotency_key=f"fhi-{submission_id}-{action}-{attempt}".rstrip("-"),
         )
 
     # Account setup (rentahuman_setup).
@@ -361,7 +381,7 @@ def bounty_payload(bounty: PaidReviewBounty, dry_run: bool) -> dict:
         f"A review only counts if you spend at least "
         f"{settings.PAID_REVIEW_MIN_SECONDS} seconds on it and give a reason. "
         f"After {bounty.reviews_required} counted reviews the page shows a "
-        "completion code like FHI-ABCD-EFGH: paste it as your submission.\n\n"
+        "completion code like FHI-1234-5678: paste it as your submission.\n\n"
         "No medical or legal background is needed: judge like an insurance "
         "reviewer who has to say yes or no. Use one browser for the whole "
         "run; the code is shown in the browser that did the reviews."
@@ -431,7 +451,7 @@ def process_submission(
         redo = (
             f"We could not find a completion code. Finish "
             f"{bounty.reviews_required} reviews at {join_url(bounty)} and paste "
-            "the code it shows (it looks like FHI-ABCD-EFGH)."
+            "the code it shows (it looks like FHI-1234-5678)."
         )
     else:
         for code in codes:
@@ -448,6 +468,15 @@ def process_submission(
             if updated:
                 claimed = PaidReviewSession.objects.get(completion_code=code)
                 break
+        if (
+            claimed is None
+            and PaidReviewSession.objects.filter(
+                rah_submission_id=submission_id
+            ).exists()
+        ):
+            # The webhook and the poll raced on this submission, and the
+            # other one claimed it: it is being approved, not reused.
+            return "already handled (claimed concurrently)"
         if claimed is None:
             known = PaidReviewSession.objects.filter(
                 bounty=bounty, completion_code__in=codes
@@ -468,9 +497,19 @@ def process_submission(
     logger.info(f"Paid review submission {submission_id}: redo ({redo})")
     if client is not None:
         client.review_submission(
-            bounty.rah_bounty_id, submission_id, "request_redo", redo
+            bounty.rah_bounty_id,
+            submission_id,
+            "request_redo",
+            redo,
+            attempt=submission_version(submission),
         )
     return "redo requested"
+
+
+def submission_version(submission: dict) -> str:
+    """A short digest of what was submitted, for the redo's idempotency key."""
+    text = json.dumps(submission, sort_keys=True, default=str)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 def _approve(
@@ -548,6 +587,12 @@ def handle_event(event: dict) -> str:
     bounty = PaidReviewBounty.objects.filter(rah_bounty_id=bounty_id).first()
     if bounty is None:
         return "ignored: not our bounty"
+    if not settings.RENTAHUMAN_API_KEY:
+        # Answering 5xx would only have RentAHuman retry, then disable the
+        # endpoint. The submission stays pending there; sync_paid_reviews
+        # answers it once the key is back.
+        logger.error("RentAHuman event received but RENTAHUMAN_API_KEY is not set")
+        return "ignored: no API key"
     client = RentAHumanClient()
     # The event says which submission; its contents come from the API.
     submission = client.get_submission(bounty_id, submission_id)
