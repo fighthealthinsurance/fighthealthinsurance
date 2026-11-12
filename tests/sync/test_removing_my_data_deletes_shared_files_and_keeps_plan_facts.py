@@ -280,16 +280,20 @@ class TheCopySaysWhatIsDeletedAndWhatStaysTest(TestCase):
     def test_the_share_pages_email_hint_says_it(self):
         self.assertEqual(
             SharePlanDocumentsForm().fields["email"].help_text,
-            "We keep only a scrambled form of it, so we can find what you shared "
-            "if you ask us to delete it. What we've learned about the plan, like "
-            "what it costs, stays, because it describes the plan, not you. We "
-            "can't use it to write to you.",
+            consent.SHARING_EMAIL_HINT,
+        )
+        # What stays when it is deleted is said in the fold under the box.
+        self.assertIn(
+            "What we've learned about the plan, like what it costs, stays, "
+            "because it describes the plan, not you.",
+            consent.SHARING_EMAIL_DETAILS,
         )
 
     def test_none_of_it_uses_a_long_dash(self):
         words = (
             REMOVE_DATA_NOTE,
             str(SharePlanDocumentsForm().fields["email"].help_text),
+            *consent.SHARING_EMAIL_DETAILS,
             consent.SHARING_OPT_IN_TERMS,
         )
         for text in words:

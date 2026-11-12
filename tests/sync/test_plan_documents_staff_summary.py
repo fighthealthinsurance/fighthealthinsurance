@@ -84,9 +84,17 @@ class TheCountsTest(TestCase):
                 "read": 2,
                 "unreadable": 1,
                 "no_company": 1,
+                "company_typed": 0,
                 "dropped": 2,
             },
         )
+
+    def test_a_company_only_the_person_typed_is_its_own_count(self):
+        yesterday = WEDNESDAY - datetime.timedelta(days=1)
+        doc = received(yesterday, company="Crumpler Cooperative")
+        PolicyDocument.objects.filter(pk=doc.pk).update(plan_sponsor_source="person")
+        counts = summary.summary_counts(WEDNESDAY)["day"]
+        self.assertEqual((counts["no_company"], counts["company_typed"]), (0, 1))
 
     def test_yesterday_and_the_week_are_their_own_windows(self):
         received(WEDNESDAY - datetime.timedelta(days=1))

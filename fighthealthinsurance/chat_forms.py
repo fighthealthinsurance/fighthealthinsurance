@@ -1,7 +1,7 @@
 import ipaddress
 import re
 import typing
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 from urllib.parse import urlsplit
 
 from django import forms
@@ -142,6 +142,70 @@ def _check_pdf(content: bytes) -> None:
             f"This PDF has more than {MAX_SHARED_PDF_PAGES:,} pages. Please split "
             "it and share the parts."
         )
+
+
+#: How much of a shared PDF the share page looks at for text: the first
+#: pages only, in a child process, never OCR.
+_TEXT_LAYER_PAGES = 3
+_TEXT_LAYER_CHARS = 4000
+#: The most the whole check may add to one share, all its PDFs together,
+#: checked at once. A PDF not answered by then says nothing: the note is a
+#: courtesy and is never why a share is slow.
+SCAN_CHECK_BUDGET_SECONDS = 8.0
+#: The least text, not counting spaces, that says a PDF has a text layer.
+MIN_TEXT_LAYER_CHARS = 50
+#: Shown, not refused, when a shared PDF has no text to read.
+SCAN_MESSAGE = (
+    "We saved this file, but it looks like a scan, so we may not be able to "
+    "read it. If you have the original PDF from your plan or employer, that "
+    "works better."
+)
+
+
+def pdf_text_layers(
+    contents: Sequence[bytes], budget_seconds: float = SCAN_CHECK_BUDGET_SECONDS
+) -> list[Optional[bool]]:
+    """For each PDF, whether its first pages hold text, as a scan's don't:
+    True or False, or None when we couldn't tell within the budget. All are
+    checked at once, and each child's deadline includes any wait for a free
+    thread, so the whole pass ends within ``budget_seconds``."""
+    import asyncio
+
+    from asgiref.sync import async_to_sync
+
+    from fighthealthinsurance.pdf_text import aextract_pdf_page_texts
+
+    if not contents:
+        return []
+
+    async def check_all() -> list[Any]:
+        return await asyncio.gather(
+            *(
+                aextract_pdf_page_texts(
+                    content, _TEXT_LAYER_PAGES, _TEXT_LAYER_CHARS, budget_seconds
+                )
+                for content in contents
+            ),
+            return_exceptions=True,
+        )
+
+    try:
+        results = async_to_sync(check_all)()
+    except Exception:
+        return [None] * len(contents)
+    return [
+        (
+            None
+            if isinstance(texts, BaseException)
+            else len("".join("".join(texts).split())) >= MIN_TEXT_LAYER_CHARS
+        )
+        for texts in results
+    ]
+
+
+def pdf_has_text_layer(content: bytes) -> Optional[bool]:
+    """pdf_text_layers for one PDF."""
+    return pdf_text_layers([content])[0]
 
 
 # ---- Links to a plan's documents --------------------------------------------
@@ -390,9 +454,8 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
     # All the files in one upload, with room under the proxy's 80MB limit.
     MAX_TOTAL_BYTES = MAX_UPLOAD_TOTAL_BYTES
     # The optional fields, shown folded under "About the plan".
+    # Employer and insurer sit above it, so they show without opening it.
     ABOUT_THE_PLAN = (
-        "insurer_name",
-        "employer_name",
         "plan_year",
         "state",
         "premium_amount",
@@ -475,12 +538,8 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         required=False,
         max_length=300,
         label="Your email",
-        help_text=(
-            "We keep only a scrambled form of it, so we can find what you shared "
-            "if you ask us to delete it. What we've learned about the plan, like "
-            "what it costs, stays, because it describes the plan, not you. We "
-            "can't use it to write to you."
-        ),
+        # One short line; the rest folds under it (consent.SHARING_EMAIL_DETAILS).
+        help_text=consent.SHARING_EMAIL_HINT,
     )
     agree = forms.BooleanField(
         required=True,
@@ -492,10 +551,28 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        # The box is described by the line beside it and the folded terms,
+        # so a screen reader reaches all of what it agrees to.
+        self.fields["agree"].widget.attrs[
+            "aria-describedby"
+        ] = "sharing-terms what-happens"
+        # The names of PDFs with no text to read, a scan among them: kept,
+        # and the person told (clean_plan_documents).
+        self.scans: list[str] = []
         state_field = typing.cast(forms.ChoiceField, self.fields["state"])
         state_field.choices = [("", "Choose a state")] + [
             (state.abbreviation, state.name) for state in get_states_sorted_by_name()
         ]
+
+    def full_clean(self) -> None:
+        super().full_clean()
+        # Django adds a field's error to aria-describedby only when the widget
+        # names none; the box names the terms, so add its error after them.
+        if self.errors.get("agree"):
+            attrs = self.fields["agree"].widget.attrs
+            attrs["aria-describedby"] = (
+                f"{attrs.get('aria-describedby', '')} {self['agree'].auto_id}_error"
+            ).strip()
 
     def clean_plan_documents(self) -> list[UploadedFile]:
         files = [f for f in self.cleaned_data.get("plan_documents") or [] if f]
@@ -512,6 +589,19 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
                 problems.extend(f"{file.name}: {message}" for message in error.messages)
         if problems:
             raise forms.ValidationError(problems)
+        pdfs = [
+            file
+            for file in files
+            if policy_document_extension(file.name or "") == ".pdf"
+        ]
+        contents = []
+        for file in pdfs:
+            file.seek(0)
+            contents.append(file.read())
+            file.seek(0)
+        for file, has_text in zip(pdfs, pdf_text_layers(contents)):
+            if has_text is False:
+                self.scans.append(file.name or "")
         return files
 
     def clean_plan_links(self) -> list[str]:
@@ -544,9 +634,11 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
             or self.has_error("plan_links")
         ):
             self.add_error("plan_documents", self.NOTHING_TO_SHARE)
-        # Only the scrambled form is kept, so the address goes no further.
+        # The scrambled form finds a removal request; the address itself is
+        # kept encrypted with the share (consent.SHARING_TERMS).
         email = (cleaned.pop("email", "") or "").strip().lower()
         cleaned["hashed_email"] = Denial.get_hashed_email(email) if email else None
+        cleaned["contact_email"] = email
         return cleaned
 
     @classmethod

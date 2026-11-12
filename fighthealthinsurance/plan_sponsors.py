@@ -16,14 +16,18 @@ taken off (never one with a different EIN), and adds it when it isn't
 there. The share page's goal counts the
 companies on the list, each once (shared_plan_documents.plan_shares).
 Sharers never have to name a company: a document that names none stays
-unlinked, and staff can link it in the admin.
+unlinked, and staff can link it in the admin. An employer the person types
+on the share page is linked when it matches a company already on the list
+(link_typed_employer), marked as theirs; it counts toward the goal only
+once a reading or staff confirms the company.
 """
 
 import re
 import uuid
-from typing import NamedTuple, Optional, Union
+from typing import NamedTuple, Optional, Sequence, Union
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 
 from fighthealthinsurance.models import InsuranceCompany, PlanSponsor, PolicyDocument
 
@@ -125,6 +129,12 @@ _SUFFIXES = {
 SOURCE_MODEL = "model"
 SOURCE_RULES = "rules"
 SOURCE_STAFF = "staff"
+#: The employer the person typed on the share page, matched to a company
+#: already on the list. Staff see it; it counts toward the goal only once a
+#: reading or staff confirms the company (COUNTED_SOURCES).
+SOURCE_PERSON = "person"
+#: The sources whose company the share page's goal counts.
+COUNTED_SOURCES = (SOURCE_MODEL, SOURCE_RULES, SOURCE_STAFF)
 
 
 class Sponsor(NamedTuple):
@@ -240,6 +250,30 @@ def match_sponsor(sponsor: Sponsor) -> Optional[PlanSponsor]:
     return PlanSponsor.objects.filter(normalized_name=normalized).order_by("pk").first()
 
 
+def link_typed_employer(
+    doc_ids: Sequence[Union[str, uuid.UUID]], name: str
+) -> Optional[PlanSponsor]:
+    """Link the documents ``doc_ids`` that have no company yet to the
+    company on the list matching ``name``, the employer a person typed on
+    the share page, marked as theirs (SOURCE_PERSON). Only a company
+    already on the list: with no match, nothing is made or linked, and the
+    typed name stays in employer_name for staff."""
+    name = name.strip()
+    if not name or not normalize_name(name):
+        return None
+    company = match_sponsor(Sponsor(name=name, ein="", source=SOURCE_PERSON))
+    if company is None:
+        return None
+    PolicyDocument.objects.filter(
+        pk__in=list(doc_ids), plan_sponsor__isnull=True
+    ).update(
+        plan_sponsor=company,
+        plan_sponsor_source=SOURCE_PERSON,
+        plan_sponsor_evidence="",
+    )
+    return company
+
+
 def link_sponsor(doc_id: Union[str, uuid.UUID], sponsor: Sponsor) -> PlanSponsor:
     """The company on the running list for ``sponsor`` (match_sponsor),
     added when it isn't there, linked to the document ``doc_id`` if that
@@ -267,7 +301,14 @@ def link_sponsor(doc_id: Union[str, uuid.UUID], sponsor: Sponsor) -> PlanSponsor
                 company = match_sponsor(sponsor)
                 if company is None:
                     raise
-        PolicyDocument.objects.filter(pk=doc_id, plan_sponsor__isnull=True).exclude(
+        # A company the person typed gives way to the one a reading finds:
+        # the same company is now confirmed; a different one is linked, and
+        # the typed employer_name stays for staff to compare
+        # (shared_plan_documents.typed_employer_disagreements).
+        open_to_link = Q(plan_sponsor__isnull=True)
+        if sponsor.source != SOURCE_PERSON:
+            open_to_link |= Q(plan_sponsor_source=SOURCE_PERSON)
+        PolicyDocument.objects.filter(open_to_link, pk=doc_id).exclude(
             processing_status=PolicyDocument.PROCESSING_REMOVED
         ).update(
             plan_sponsor=company,

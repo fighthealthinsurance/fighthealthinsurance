@@ -25,10 +25,13 @@ from fighthealthinsurance.chat_forms import SharePlanDocumentsForm
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "templates"
 
-# The core terms beside the box, as the page words them.
+# The one line beside the box, and the rest of the terms, folded.
+SHARING_LINE = (
+    "We keep what you share and use it, with other people's documents, to "
+    "publish what we learn about plans."
+)
 SHARING_POINTS = [
-    "We keep what you share, including what you tell us about the plan, and use "
-    "it with other people's documents to publish what we learn about plans.",
+    "That includes what you tell us about the plan.",
     "Our team and AI models, including outside services, read your files.",
     "We keep everything as long as we can.",
 ]
@@ -53,6 +56,8 @@ SHARING_WORDS_SHA256 = {
     "2026-10-27": "976263b9b1f1d3c98d77d4da8237de17ae0defd254da2d843362f3959537f7e9",
     # From here the share page's folded details are part of the words.
     "2026-10-28": "4bd9edc25d22114e3057439d8d3e931f8fb52cd281610589388a8948a726d273",
+    # From here the share page's email box and its fold are part of the words.
+    "2026-11-11": "51ce9d546419959c001f964776e0c350ed27e454cda3901fbbea9e3f3f49ab66",
 }
 
 EM_DASH = "\u2014"
@@ -87,11 +92,9 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertEqual(agree["type"], "checkbox")
         self.assertTrue(agree.has_attr("required"))
 
-    def test_the_core_terms_show_beside_the_box(self):
+    def test_one_line_of_the_terms_shows_beside_the_box(self):
         terms = self.soup.find(id="sharing-terms")
-        for point in SHARING_POINTS:
-            with self.subTest(point=point):
-                self.assertIn(point, terms.get_text(" ", strip=True))
+        self.assertEqual(terms.get_text(" ", strip=True), SHARING_LINE)
         self.assertIsNone(terms.find_parent("details"))
         box = self.soup.find("input", attrs={"name": "agree"})
         self.assertIs(box.find_previous(id="sharing-terms"), terms)
@@ -102,18 +105,34 @@ class SharePlanDocumentsPageTest(TestCase):
         fold = self.soup.find("details", id="what-happens")
         self.assertFalse(fold.has_attr("open"))
         self.assertEqual(
-            fold.find("summary").get_text(strip=True),
-            "More about how we use what you share",
+            fold.find("summary").get_text(strip=True), "What sharing means"
         )
         self.assertEqual(
             [li.get_text(" ", strip=True) for li in fold.find_all("li")],
-            SHARING_DETAIL_POINTS,
+            SHARING_POINTS + SHARING_DETAIL_POINTS,
         )
         self.assertEqual(list(consent.SHARING_DETAILS), SHARING_DETAIL_POINTS)
         terms = self.soup.find(id="sharing-terms")
         box = self.soup.find("input", attrs={"name": "agree"})
         self.assertIs(terms.find_next("details"), fold)
         self.assertIs(fold.find_next("input", attrs={"name": "agree"}), box)
+
+    def test_every_sentence_of_the_terms_is_on_the_page(self):
+        page = self.soup.find(id="sharing-agreement").get_text(" ", strip=True)
+        for sentence in re.split(r"(?<=\.) ", consent.SHARING_TERMS):
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, page)
+        for words in (
+            "Our team and AI models, including outside services, read your files.",
+            "We keep everything as long as we can.",
+        ):
+            self.assertIn(words, consent.SHARING_TERMS)
+
+    def test_the_box_is_described_by_the_line_and_the_fold(self):
+        box = self.soup.find("input", attrs={"name": "agree"})
+        self.assertEqual(
+            box["aria-describedby"].split(), ["sharing-terms", "what-happens"]
+        )
 
     def test_no_term_says_an_ai_model_reads_a_link(self):
         words = [consent.SHARING_TERMS, *consent.SHARING_DETAILS]
@@ -126,7 +145,13 @@ class SharePlanDocumentsPageTest(TestCase):
 
     def test_the_terms_promise_no_privacy_and_no_deletion(self):
         words = " ".join([consent.SHARING_TERMS, *consent.SHARING_DETAILS]).lower()
-        for word in ("private", "anonymous", "confidential", "we delete", "we will delete"):
+        for word in (
+            "private",
+            "anonymous",
+            "confidential",
+            "we delete",
+            "we will delete",
+        ):
             with self.subTest(word=word):
                 self.assertNotIn(word, words)
 
@@ -170,8 +195,15 @@ class SharePlanDocumentsPageTest(TestCase):
         goal = self.soup.find(id="share-goal")
         self.assertEqual(goal.find_next("label")["for"], files["id"])
         cards = self.soup.find(id="most-useful")
-        self.assertIs(cards.find_previous("input", attrs={"name": "plan_documents"}), files)
-        for part in ("most-useful", "which-versions", "other-plans", "no-documents-yet"):
+        self.assertIs(
+            cards.find_previous("input", attrs={"name": "plan_documents"}), files
+        )
+        for part in (
+            "most-useful",
+            "which-versions",
+            "other-plans",
+            "no-documents-yet",
+        ):
             with self.subTest(part=part):
                 self.assertIsNotNone(files.find_next(id=part))
         form = self.soup.find("form", id="share-plan-documents-form")
@@ -202,7 +234,9 @@ class SharePlanDocumentsPageTest(TestCase):
         # A fold's summary counts as a heading; "Name: more" reads as "Name".
         headings = [
             tag.get_text(" ", strip=True).lower().split(":")[0]
-            for tag in self.soup.find("main").find_all(["h1", "h2", "h3", "h4", "summary"])
+            for tag in self.soup.find("main").find_all(
+                ["h1", "h2", "h3", "h4", "summary"]
+            )
         ]
         self.assertEqual(len(headings), len(set(headings)), headings)
 
@@ -382,6 +416,35 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertIsNotNone(soup.find("section", id="get-your-plan-documents"))
 
 
+class TheEmailBoxSaysLittleAndFoldsTheRestTest(TestCase):
+    def setUp(self):
+        response = self.client.get(reverse("share_plan_documents"))
+        self.soup = BeautifulSoup(response.content, "html.parser")
+
+    def test_one_short_line_shows_beside_the_box(self):
+        box = self.soup.find("input", attrs={"name": "email"})
+        hint = self.soup.find(id=box["aria-describedby"].split()[0])
+        self.assertEqual(hint.get_text(strip=True), consent.SHARING_EMAIL_HINT)
+        self.assertLess(len(consent.SHARING_EMAIL_HINT), 60)
+
+    def test_the_rest_folds_closed_under_it(self):
+        fold = self.soup.find("details", id="email-use")
+        self.assertFalse(fold.has_attr("open"))
+        self.assertEqual(
+            fold.find("summary").get_text(strip=True), consent.SHARING_EMAIL_FOLD
+        )
+        self.assertEqual(
+            [li.get_text(" ", strip=True) for li in fold.find_all("li")],
+            list(consent.SHARING_EMAIL_DETAILS),
+        )
+        box = self.soup.find("input", attrs={"name": "email"})
+        self.assertIs(fold.find_previous("input", attrs={"name": "email"}), box)
+
+    def test_no_word_of_it_says_we_cannot_write(self):
+        page = self.soup.get_text(" ", strip=True)
+        self.assertNotIn("We can't use it to write to you", page)
+
+
 class SharingTermsVersionTest(TestCase):
     def test_the_words_match_the_version_they_are_dated(self):
         words = "\n".join(
@@ -391,6 +454,10 @@ class SharingTermsVersionTest(TestCase):
                 consent.SHARING_CHECKBOX,
                 consent.SHARING_OPT_IN_TERMS,
                 consent.SHARING_OPT_IN_CHECKBOX,
+                consent.SHARING_EMAIL_HINT,
+                consent.SHARING_EMAIL_FOLD,
+                *consent.SHARING_EMAIL_DETAILS,
+                consent.SHARING_TERMS_FOLD,
             ]
         )
         digest = hashlib.sha256(words.encode()).hexdigest()

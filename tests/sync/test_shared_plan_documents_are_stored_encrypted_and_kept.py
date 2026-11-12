@@ -225,12 +225,16 @@ class SharingRejectsTest(_ShareTestCase):
         deleted.assert_any_call(stored_names[0])
 
 
-class SharedEmailIsOnlyHashedTest(_ShareTestCase):
-    def test_an_email_is_stored_only_as_its_hash(self):
+class SharedEmailIsHashedAndKeptEncryptedTest(_ShareTestCase):
+    def test_an_email_is_kept_only_as_its_hash_and_encrypted(self):
         self.share([pdf()], email=EMAIL)
         doc = PolicyDocument.objects.get()
         self.assertEqual(doc.hashed_email, Denial.get_hashed_email(EMAIL.lower()))
+        # contact_email holds it, encrypted at rest; no other field does.
+        self.assertEqual(doc.contact_email, EMAIL.lower())
         for field in PolicyDocument._meta.concrete_fields:
+            if field.name == "contact_email":
+                continue
             value = str(field.value_from_object(doc) or "")
             with self.subTest(field=field.name):
                 self.assertNotIn("crumpler@example.com", value.lower())
