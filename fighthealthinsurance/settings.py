@@ -402,6 +402,25 @@ class Base(Configuration):
     CHOOSER_EVIDENCE_JUDGING_TIMEOUT = float(
         os.getenv("CHOOSER_EVIDENCE_JUDGING_TIMEOUT", "60")
     )
+    # HumanJudge (humanjudge.com): outside human reviewers who give each
+    # Arena appeal draft a pass or flag (see chooser_humanjudge and
+    # docs/chooser.md). Only synthetic Arena drafts are ever sent, since
+    # their reviewers read what they are sent. On when an API key is set,
+    # unless CHOOSER_HUMANJUDGE=false. HUMANJUDGE_API_KEY is the model's
+    # gj_sk_ key (sends drafts and reads their verdicts); HUMANJUDGE_TOKEN, a
+    # gj_pat_ personal access token, is used for reads instead when set.
+    # HUMANJUDGE_MODEL_ID is needed only when the key's account has more
+    # than one model.
+    CHOOSER_HUMANJUDGE = os.getenv("CHOOSER_HUMANJUDGE", "true").lower() != "false"
+    HUMANJUDGE_API_KEY = os.getenv("HUMANJUDGE_API_KEY", "")
+    HUMANJUDGE_TOKEN = os.getenv("HUMANJUDGE_TOKEN", "")
+    HUMANJUDGE_MODEL_ID = os.getenv("HUMANJUDGE_MODEL_ID", "")
+    HUMANJUDGE_BASE_URL = os.getenv("HUMANJUDGE_BASE_URL", "https://api.humanjudge.com")
+    # Verdicts each active draft of a case needs before HumanJudge's pick
+    # for the case is recorded.
+    CHOOSER_HUMANJUDGE_MIN_VERDICTS = int(
+        os.getenv("CHOOSER_HUMANJUDGE_MIN_VERDICTS", "1")
+    )
     # The share of new appeal arena cases written as explicitly simple ones
     # (an everyday denial, two or three facts); 0 for none, 1 for all.
     CHOOSER_SIMPLE_CASE_SHARE = _env_float(
@@ -1332,6 +1351,12 @@ class _TestBase(Dev):
     CHOOSER_JUDGE_EVIDENCE = False
     # Candidate judging is mocked and enabled per test, never read from the host.
     CHOOSER_SCORE_CANDIDATES = False
+    # Nor may a draft go to HumanJudge (only staff send them, from the
+    # admin); a test that sends one mocks the transport and sets a fake key.
+    CHOOSER_HUMANJUDGE = False
+    HUMANJUDGE_API_KEY = ""
+    HUMANJUDGE_TOKEN = ""
+    HUMANJUDGE_MODEL_ID = ""
     # Every case a test builds is the standard, seeded kind unless the test
     # asks for a simple one; a random draw would make the seeded tests flaky.
     CHOOSER_SIMPLE_CASE_SHARE = 0.0
