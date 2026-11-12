@@ -19,7 +19,7 @@ from fighthealthinsurance import plan_documents_processing as processing
 from fighthealthinsurance.activities import plan_documents_sweep as sweep_activities
 from fighthealthinsurance.models import PolicyDocument
 from fighthealthinsurance.plan_sponsor_reader import PlanReading
-from fighthealthinsurance.plan_sponsors import Sponsor
+from fighthealthinsurance.plan_sponsors import Sponsor, link_sponsor
 from tests.plan_text_samples import PLAN_TEXT
 from tests.sync.test_shared_plan_documents_are_read_and_cleaned import _ReadingTest
 
@@ -172,3 +172,22 @@ class TheSweepLooksAgainTest(_LookupTest):
                 async_to_sync(sweep_activities.retry_company_lookups)(), 1
             )
 
+
+class ALinkLandsOnlyOnARowStillAPlanTest(_LookupTest):
+    def link_after_marking(self, status):
+        (doc,) = self.unfinished()
+        PolicyDocument.objects.filter(pk=doc.pk).update(processing_status=status)
+        link_sponsor(doc.pk, FOUND.sponsor)
+        doc.refresh_from_db()
+        return doc.plan_sponsor_id
+
+    def test_a_row_marked_potential_spam_meanwhile_gets_no_company(self):
+        self.assertIsNone(self.link_after_marking(PolicyDocument.PROCESSING_SPAM))
+
+    def test_a_row_read_as_not_a_plan_meanwhile_gets_no_company(self):
+        self.assertIsNone(
+            self.link_after_marking(PolicyDocument.PROCESSING_NOT_A_PLAN)
+        )
+
+    def test_a_ready_row_still_gets_its_company(self):
+        self.assertIsNotNone(self.link_after_marking(READY))
