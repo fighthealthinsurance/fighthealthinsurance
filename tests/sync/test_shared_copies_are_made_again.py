@@ -9,7 +9,8 @@ origin's deletion takes it, and only reason codes and counts are logged.
 """
 
 import datetime
-from unittest.mock import patch
+import itertools
+from unittest.mock import Mock, patch
 
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -153,6 +154,46 @@ class AnExplainPolicyCopyIsMadeAgainTest(_ExplainPolicy):
         shared_copy_retries.retry_due_copies()
         self.assertFalse(SharedCopyRetry.objects.exists())
         self.assertEqual(dropped(Day.DROPPED_NOT_SAVED), 1)
+
+    def test_a_copy_that_reaches_its_lifetime_during_the_run_is_not_saved(self):
+        self.fail_first_try()
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        real = ml_document_extraction.read_and_decrypt_file
+
+        def expired_while_reading(field, max_bytes=None):
+            SharedCopyRetry.objects.update(
+                created_at=timezone.now() - shared_copy_retries.RETRY_LIFETIME
+            )
+            return real(field, max_bytes=max_bytes)
+
+        with patch.object(
+            ml_document_extraction, "read_and_decrypt_file", expired_while_reading
+        ):
+            outcome = due_now()
+        self.assertEqual(outcome[shared_copy_retries.DROPPED], 1)
+        self.assertFalse(self.copies().exists())
+        self.assertFalse(SharedCopyRetry.objects.exists())
+        self.assertEqual(dropped(Day.DROPPED_NOT_SAVED), 1)
+
+    def test_a_run_starts_no_copy_past_its_time_bound(self):
+        own = self.fail_first_try()
+        SharedCopyRetry.objects.create(
+            source=PolicyDocument.SOURCE_SHARED_EXPLAIN,
+            origin_policy_document=own,
+            consent_version=consent.SHARING_VERSION,
+            next_try_at=timezone.now(),
+        )
+        clock = Mock()
+        clock.monotonic.side_effect = itertools.chain(
+            [0, 0], itertools.repeat(shared_copy_retries.RUN_SECONDS)
+        )
+        with patch.object(shared_copy_retries, "time", clock):
+            outcome = due_now()
+        self.assertEqual(outcome[shared_copy_retries.SAVED], 1)
+        left = SharedCopyRetry.objects.get()
+        self.assertEqual(left.attempts, 0)
+        self.assertLessEqual(left.next_try_at, timezone.now())
 
     def test_a_page_copy_with_no_file_any_more_drops_it(self):
         own = self.fail_first_try()

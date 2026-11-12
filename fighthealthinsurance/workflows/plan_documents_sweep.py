@@ -57,6 +57,10 @@ LOOKUP_RETRY = RetryPolicy(
 SEND_RETRY = RetryPolicy(maximum_attempts=1)
 # The same pace the Ray email loop keeps between sends.
 SEND_PACING = timedelta(seconds=2)
+# Inside the plan documents worker's five-minute shutdown drain, so a deploy
+# lets them finish; each bounds its own work below this.
+FILE_CHECK_TIMEOUT = timedelta(minutes=4)
+COPY_RETRY_TIMEOUT = timedelta(minutes=4)
 
 
 @workflow.defn
@@ -80,7 +84,7 @@ class PlanDocumentsSweepWorkflow:
         try:
             return await workflow.execute_activity(
                 sweep_activities.retry_shared_copies,
-                start_to_close_timeout=timedelta(minutes=10),
+                start_to_close_timeout=COPY_RETRY_TIMEOUT,
                 retry_policy=SEND_RETRY,
             )
         except ActivityError:
@@ -91,7 +95,7 @@ class PlanDocumentsSweepWorkflow:
         try:
             return await workflow.execute_activity(
                 sweep_activities.check_shared_plan_document_files,
-                start_to_close_timeout=timedelta(minutes=15),
+                start_to_close_timeout=FILE_CHECK_TIMEOUT,
                 retry_policy=SEND_RETRY,
             )
         except ActivityError:

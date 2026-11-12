@@ -22,7 +22,11 @@ Every retry ends within RETRY_LIFETIME:
   MAX_COPY_ATTEMPTS it is dropped (DROPPED_NOT_SAVED);
 - the closer look refuses it: dropped (DROPPED_REFUSED);
 - the origin has no file any more: dropped (DROPPED_ORIGIN_GONE);
-- past RETRY_LIFETIME: dropped (DROPPED_NOT_SAVED).
+- past RETRY_LIFETIME, checked again just before the save: dropped
+  (DROPPED_NOT_SAVED).
+
+A run starts no copy after RUN_SECONDS, so it ends inside the plan
+documents worker's shutdown drain; the rest wait for the next run.
 
 A removal by email deletes the rows (remove_shared_documents), and a
 deleted origin takes its rows with it (cascade).
@@ -30,6 +34,7 @@ deleted origin takes its rows with it (cascade).
 
 import datetime
 import os
+import time
 from typing import Any, Callable, Optional, Sequence
 
 from django.core.files.uploadedfile import SimpleUploadedFile, UploadedFile
@@ -49,8 +54,10 @@ RETRY_LIFETIME = datetime.timedelta(days=7)
 #: The wait after a failed retry, and how many failed tries end it.
 RETRY_AFTER = datetime.timedelta(hours=6)
 MAX_COPY_ATTEMPTS = 4
-#: The most copies one sweep makes again.
+#: The most copies one sweep makes again, and how long into a run the last
+#: may start.
 MAX_RETRIES_PER_RUN = 10
+RUN_SECONDS = 120
 
 SAVED = "saved"
 ALREADY_SHARED = "already_shared"
@@ -213,6 +220,8 @@ def _retry_one(row: SharedCopyRetry) -> str:
                 return GONE
             if _origin_file(held)[0] is None:
                 return _drop(held, SharedPlanDocumentsDay.DROPPED_ORIGIN_GONE)
+            if held.created_at <= timezone.now() - RETRY_LIFETIME:
+                return _drop(held, SharedPlanDocumentsDay.DROPPED_NOT_SAVED)
             saved = save_shared_documents(
                 [uploaded],
                 source=held.source,
@@ -260,8 +269,9 @@ def _drop_expired(now: datetime.datetime) -> int:
 
 def retry_due_copies(limit: int = MAX_RETRIES_PER_RUN) -> dict[str, int]:
     """Drop every copy past RETRY_LIFETIME, then make again up to ``limit``
-    copies that are due. Returns counts by outcome. Never raises for one
-    copy."""
+    copies that are due, starting none after RUN_SECONDS. Returns counts by
+    outcome. Never raises for one copy."""
+    started = time.monotonic()
     now = timezone.now()
     counts = {SAVED: 0, ALREADY_SHARED: 0, WAITING: 0, DROPPED: 0, GONE: 0}
     counts[DROPPED] += _drop_expired(now)
@@ -269,6 +279,9 @@ def retry_due_copies(limit: int = MAX_RETRIES_PER_RUN) -> dict[str, int]:
         "next_try_at", "id"
     )[:limit]
     for row in list(due):
+        if time.monotonic() - started >= RUN_SECONDS:
+            logger.info("Shared copy retries hit the run's time bound; the rest wait")
+            break
         try:
             outcome = _retry_one(row)
         except Exception as e:
