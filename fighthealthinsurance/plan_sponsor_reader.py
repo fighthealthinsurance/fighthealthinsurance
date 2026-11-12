@@ -267,8 +267,9 @@ async def aread_sponsor(text: str) -> tuple[Optional[Sponsor], bool]:
     except asyncio.TimeoutError:
         logger.warning("Plan sponsor model read ran out of time")
         return None, False
-    except Exception:
-        logger.opt(exception=True).warning("Plan sponsor model read failed")
+    except Exception as e:
+        # The class only: a model error's message can quote the document.
+        logger.warning(f"Plan sponsor model read failed: {type(e).__name__}")
         return None, False
     if answer is None:
         return None, False

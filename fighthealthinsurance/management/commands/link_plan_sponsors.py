@@ -20,9 +20,10 @@ from typing import Any
 
 from asgiref.sync import async_to_sync
 from django.core.management.base import BaseCommand
+from django.db.models import F
 
 from fighthealthinsurance.models import PolicyDocument
-from fighthealthinsurance.plan_documents_processing import afind_company
+from fighthealthinsurance.plan_documents_processing import afind_company, ready_row
 from fighthealthinsurance.plan_sponsors import (
     link_sponsor,
     match_sponsor,
@@ -51,6 +52,7 @@ class Command(BaseCommand):
         sources: Counter[str] = Counter()
         looked = 0
         failed_before = rows.filter(company_lookup_failures__gt=0).count()
+        failed_now = 0
         # The ids first, then each text on its own: the model's reading
         # takes seconds a document, longer than a database cursor should
         # stay open, and the texts together can be large.
@@ -59,12 +61,22 @@ class Command(BaseCommand):
             if text is None:
                 continue
             looked += 1
-            sponsor = async_to_sync(afind_company)(text)
+            try:
+                sponsor = async_to_sync(afind_company)(text)
+            except Exception as e:
+                # Counted like a failure in a reading; the next row goes on.
+                failed_now += 1
+                self.stderr.write(f"  a lookup failed: {type(e).__name__}")
+                if options["apply"]:
+                    ready_row(pk).update(
+                        company_lookup_failures=F("company_lookup_failures") + 1
+                    )
+                continue
             if options["apply"]:
                 # This lookup finished, so earlier failures no longer stand.
-                PolicyDocument.objects.filter(
-                    pk=pk, company_lookup_failures__gt=0
-                ).update(company_lookup_failures=0)
+                ready_row(pk).filter(company_lookup_failures__gt=0).update(
+                    company_lookup_failures=0
+                )
             if sponsor is None:
                 continue
             if options["apply"]:
@@ -88,8 +100,8 @@ class Command(BaseCommand):
             f"to {len(found)} compan{'y' if len(found) == 1 else 'ies'}"
         )
         self.stdout.write(
-            f"  {failed_before} of them had a company lookup fail during "
-            "their reading"
+            f"  {failed_before} of them had a company lookup fail before; "
+            f"{failed_now} failed this time"
         )
         if sources:
             self.stdout.write(

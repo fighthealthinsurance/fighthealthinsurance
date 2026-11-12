@@ -5512,8 +5512,8 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     # tries again later, up to plan_documents_processing.MAX_READ_ATTEMPTS.
     read_attempts = models.PositiveSmallIntegerField(db_default=0, default=0)
     read_attempted_at = models.DateTimeField(null=True, blank=True)
-    # Company lookups that failed (not "names no company"): the sweep tries
-    # again, up to plan_documents_processing.MAX_COMPANY_LOOKUPS.
+    # Company lookups that failed, not "names no company"; a lookup that
+    # finishes clears it. Staff look again with link_plan_sponsors.
     company_lookup_failures = models.PositiveSmallIntegerField(db_default=0, default=0)
 
     class Meta:

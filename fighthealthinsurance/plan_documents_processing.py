@@ -72,9 +72,10 @@ MAX_ROWS_PER_BATCH = 50
 #: unreadable for good with the reason of the last one.
 READ_RETRY_AFTER = datetime.timedelta(hours=6)
 MAX_READ_ATTEMPTS = 8
-#: Company lookups that fail (an error, not "names no company") before the
-#: row is left unlinked for staff.
-MAX_COMPANY_LOOKUPS = 3
+#: A second report of the same failed reading (its bookkeeping activity
+#: retried) within this is not counted again. Shorter than READ_RETRY_AFTER,
+#: so a real next reading always counts.
+SAME_READING = datetime.timedelta(hours=1)
 # OCR for pages with no text or garbled text: the first OCR_MAX_PAGES such
 # pages, in OCR_SECONDS in all, each drawn at OCR_DPI within the server OCR's
 # pixel cap and time per image. Pages past either bound are left out, and the
@@ -439,17 +440,27 @@ async def alink_company(document_id: str, text: str) -> None:
         sponsor = await afind_company(text)
         if sponsor is not None:
             await database_sync_to_async(link_sponsor)(document_id, sponsor)
-    except Exception:
-        logger.opt(exception=True).warning(
-            f"Could not link policy document {document_id} to a company"
+    except Exception as e:
+        # The class only: an error's message can quote the document.
+        logger.warning(
+            f"Could not link policy document {document_id} to a company: "
+            f"{type(e).__name__}"
         )
         # Counted apart from "names no company", so staff can look again.
-        await _shared_rows().filter(pk=document_id).aupdate(
+        await ready_row(document_id).aupdate(
             company_lookup_failures=F("company_lookup_failures") + 1
         )
         return
-    await _shared_rows().filter(pk=document_id, company_lookup_failures__gt=0).aupdate(
+    await ready_row(document_id).filter(company_lookup_failures__gt=0).aupdate(
         company_lookup_failures=0
+    )
+
+
+def ready_row(document_id: Any):
+    """The shared row, only while it is read as ready: one removed or marked
+    spam meanwhile is left as it is."""
+    return _shared_rows().filter(
+        pk=document_id, processing_status=PolicyDocument.PROCESSING_READY
     )
 
 
@@ -465,16 +476,22 @@ async def amark_unreadable(document_id: str) -> str:
     for the sweep to read it again, and after MAX_READ_ATTEMPTS such
     readings it is unreadable for good, with no text and the reason of the
     last failure."""
+    now = timezone.now()
+    # Not a reading already counted: a retried activity reports it once.
     waiting = _shared_rows().filter(
-        pk=document_id, processing_status=PolicyDocument.PROCESSING_RECEIVED
+        Q(read_attempted_at__isnull=True)
+        | Q(read_attempted_at__lte=now - SAME_READING),
+        pk=document_id,
+        processing_status=PolicyDocument.PROCESSING_RECEIVED,
     )
     retried = await waiting.filter(read_attempts__lt=MAX_READ_ATTEMPTS - 1).aupdate(
-        read_attempts=F("read_attempts") + 1, read_attempted_at=timezone.now()
+        read_attempts=F("read_attempts") + 1, read_attempted_at=now
     )
     if retried:
         return PolicyDocument.PROCESSING_RECEIVED
     doc = await waiting.only("unreadable_reason").afirst()
     if doc is None:
+        # Counted already, removed, or read meanwhile.
         return await _status_now(document_id)
     reason = doc.unreadable_reason or PolicyDocument.UNREADABLE_DID_NOT_FINISH
     logger.info(f"Shared plan document {document_id} is unreadable: {reason}")
@@ -484,5 +501,5 @@ async def amark_unreadable(document_id: str) -> str:
         "",
         unreadable_reason=reason,
         read_attempts=F("read_attempts") + 1,
-        read_attempted_at=timezone.now(),
+        read_attempted_at=now,
     )

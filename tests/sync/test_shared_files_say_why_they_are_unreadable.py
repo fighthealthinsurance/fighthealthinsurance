@@ -180,6 +180,30 @@ class AReadingThatFailsEveryTryWaitsTest(_ReadingTest):
         )
         self.assertEqual(self.fail_once(doc), RECEIVED)
 
+    def test_a_retried_report_of_the_same_failed_reading_counts_once(self):
+        (doc,) = share(upload("plan.txt", PLAN_TEXT.encode()))
+        self.fail_once(doc)
+        again = async_to_sync(activities.mark_shared_plan_document_unreadable)(
+            str(doc.pk)
+        )
+        doc.refresh_from_db()
+        self.assertEqual((again, doc.read_attempts), (RECEIVED, 1))
+
+    def test_a_retried_report_at_the_cap_does_not_end_it_early(self):
+        (doc,) = share(upload("plan.txt", PLAN_TEXT.encode()))
+        PolicyDocument.objects.filter(pk=doc.pk).update(
+            read_attempts=processing.MAX_READ_ATTEMPTS - 2
+        )
+        self.fail_once(doc)
+        again = async_to_sync(activities.mark_shared_plan_document_unreadable)(
+            str(doc.pk)
+        )
+        doc.refresh_from_db()
+        self.assertEqual(
+            (again, doc.processing_status, doc.read_attempts),
+            (RECEIVED, RECEIVED, processing.MAX_READ_ATTEMPTS - 1),
+        )
+
     def test_the_cap_is_about_two_days(self):
         waits = processing.READ_RETRY_AFTER * (processing.MAX_READ_ATTEMPTS - 1)
         self.assertGreaterEqual(waits, datetime.timedelta(days=1))
@@ -197,7 +221,7 @@ class CompanyLookupsThatFailAreCountedTest(_ReadingTest):
     def test_a_lookup_that_fails_is_counted_and_the_reading_stands(self):
         with patch.object(
             processing, "afind_company", new=AsyncMock(side_effect=RuntimeError)
-        ), patch.object(processing.logger, "opt"):
+        ), patch.object(processing.logger, "warning"):
             status, doc = self.read("plan.txt", PLAN_TEXT.encode())
         self.assertEqual((status, doc.company_lookup_failures), (READY, 1))
 
@@ -206,10 +230,52 @@ class CompanyLookupsThatFailAreCountedTest(_ReadingTest):
             _, doc = self.read("plan.txt", PLAN_TEXT.encode())
         self.assertEqual(doc.company_lookup_failures, 0)
 
+    def test_a_failure_on_a_row_removed_meanwhile_is_not_written(self):
+        async def removed_then_fails(text):
+            await PolicyDocument.objects.filter(pk=doc.pk).aupdate(
+                processing_status=PolicyDocument.PROCESSING_REMOVED
+            )
+            raise RuntimeError("lookup failed")
+
+        (doc,) = share(upload("plan.txt", PLAN_TEXT.encode()))
+        with patch.object(processing, "afind_company", new=removed_then_fails):
+            self.process(doc)
+        doc.refresh_from_db()
+        self.assertEqual(doc.company_lookup_failures, 0)
+
+    def test_the_failure_log_names_the_error_class_only(self):
+        lines: list = []
+        sink = logger.add(lambda message: lines.append(str(message)), level="DEBUG")
+        try:
+            with patch.object(
+                processing,
+                "afind_company",
+                new=AsyncMock(side_effect=RuntimeError("Rebecca Lee Crumpler")),
+            ):
+                self.read("plan.txt", PLAN_TEXT.encode())
+        finally:
+            logger.remove(sink)
+        self.assertFalse(any("Rebecca Lee Crumpler" in line for line in lines))
+        self.assertTrue(any("to a company: RuntimeError" in line for line in lines))
+
+    def test_link_plan_sponsors_counts_a_lookup_that_fails_now(self):
+        self.read("plan.txt", PLAN_TEXT.encode())
+        out, err = StringIO(), StringIO()
+        with patch(
+            "fighthealthinsurance.management.commands.link_plan_sponsors.afind_company",
+            new=AsyncMock(side_effect=RuntimeError("Rebecca Lee Crumpler")),
+        ):
+            call_command("link_plan_sponsors", "--apply", stdout=out, stderr=err)
+        self.assertIn("1 failed this time", out.getvalue())
+        self.assertNotIn("Rebecca", err.getvalue())
+        self.assertEqual(
+            PolicyDocument.objects.get().company_lookup_failures, 1
+        )
+
     def test_link_plan_sponsors_counts_rows_whose_lookup_failed(self):
         with patch.object(
             processing, "afind_company", new=AsyncMock(side_effect=RuntimeError)
-        ), patch.object(processing.logger, "opt"):
+        ), patch.object(processing.logger, "warning"):
             self.read("plan.txt", PLAN_TEXT.encode())
         out = StringIO()
         with patch(
@@ -217,7 +283,7 @@ class CompanyLookupsThatFailAreCountedTest(_ReadingTest):
             new=AsyncMock(return_value=None),
         ):
             call_command("link_plan_sponsors", "--apply", stdout=out)
-        self.assertIn("1 of them had a company lookup fail", out.getvalue())
+        self.assertIn("1 of them had a company lookup fail before", out.getvalue())
         self.assertFalse(
             PolicyDocument.objects.filter(company_lookup_failures__gt=0).exists()
         )
