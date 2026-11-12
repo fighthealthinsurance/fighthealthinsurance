@@ -29,6 +29,10 @@ from .fax_status import (
 )
 from .utils import _try_pandoc_engines, pandoc_convert_command
 
+# ExternalServiceHealth row for FaxyMcFaxFace's modem check (the staff status
+# page reads it).
+FAXY_MODEM_HEALTH_SERVICE = "fax_modem_faxymcfaxface"
+
 FROM_FAX = os.getenv("FROM_FAX", "4158407591")
 FROM_VOICE = os.getenv("FROM_VOICE", "2029383266")
 
@@ -507,6 +511,9 @@ class HylaFaxClient(FaxSenderBase):
     cost_per_page = 0
     host: Optional[str]
     professional = True
+    # The ExternalServiceHealth row the modem check records on, which the
+    # staff status page shows (None: not recorded).
+    modem_health_service: Optional[str] = None
     # Going above 9600 causes issues sometimes
     max_speed = 9600
     # Default is no modem specified which uses any modem on host
@@ -539,10 +546,17 @@ class HylaFaxClient(FaxSenderBase):
         prefix: str = destination[0:4]
         return self.modem_mapping.get(prefix, []) + [self.default_modem]
 
-    def _host_strings(self, destination: str) -> list[str]:
-        """Compute the different host strings, this depends on if there is custom modem mappings"""
+    def _host_strings(
+        self, destination: str, modems: Optional[list[Optional[str]]] = None
+    ) -> list[str]:
+        """Compute the different host strings, this depends on if there is custom modem mappings.
+
+        ``modems`` defaults to every modem ``_choose_modems`` picks for the destination.
+        """
         if self.host is None:
             raise Exception("Need host")
+        if modems is None:
+            modems = self._choose_modems(destination)
 
         def __host_string(modem: Optional[str]) -> str:
             # Yes this is silly but mypy...
@@ -553,7 +567,62 @@ class HylaFaxClient(FaxSenderBase):
             else:
                 return f"{modem}@{self.host}"
 
-        return list(map(__host_string, self._choose_modems(destination)))
+        return list(map(__host_string, modems))
+
+    async def _modem_problem(self, modem: str) -> Optional[Tuple[str, str]]:
+        """Why ``modem`` can't place a call right now, or None when it can.
+
+        A USB modem that drops off the fax host takes its faxgetty with it,
+        but faxq keeps accepting jobs and ``faxstat -s`` keeps showing the
+        modem's last status, so a ``sendfax -w`` would sit out the whole send
+        timeout for a call nothing will ever place (FaxyMcFaxFace, Oct-Nov
+        2026: every fax waited 20 minutes before going out through Sonic).
+        The device node is the signal that doesn't lie.
+
+        Returns ``(state, detail)``: state is "missing" (no device) or
+        "unchecked" (the check itself failed, e.g. no ssh to the host)."""
+        device = f"/dev/{modem}"
+        exit_code, result_text = await self._run_command(["test", "-e", device])
+        if exit_code == 0:
+            return None
+        if exit_code == 1:
+            return ("missing", f"modem {modem} is not attached ({device} is missing)")
+        return ("unchecked", f"could not check modem {modem}: {result_text}")
+
+    async def _usable_modems(self, destination: str) -> list[Optional[str]]:
+        """The modems ``_choose_modems`` picks for ``destination`` that are
+        attached. An unnamed modem (HylaFAX's choice) can't be checked and is
+        kept."""
+        usable: list[Optional[str]] = []
+        problems: list[str] = []
+        for modem in self._choose_modems(destination):
+            problem = None if modem is None else await self._modem_problem(modem)
+            if problem is None:
+                usable.append(modem)
+                continue
+            state, detail = problem
+            logger.warning(f"Not faxing via {self}: {detail}")
+            note_fax_failure(f"HylaFAX: {detail}", FAILURE_OUR_SIDE, classify=False)
+            problems.append(f"{modem} {state}")
+        await self._record_modem_health(problems)
+        return usable
+
+    async def _record_modem_health(self, problems: list[str]) -> None:
+        """Record the modem check on this backend's ExternalServiceHealth row
+        for the staff status page, which runs on pods with no ssh to the fax
+        host. ``problems`` are "<modem> missing"/"<modem> unchecked", nothing
+        from the host's output.
+        Best effort, like every ExternalServiceHealth write."""
+        if self.modem_health_service is None:
+            return
+        from fighthealthinsurance.models import ExternalServiceHealth
+
+        if problems:
+            await ExternalServiceHealth.anote_failure(
+                self.modem_health_service, ", ".join(problems)
+            )
+        else:
+            await ExternalServiceHealth.anote_success(self.modem_health_service)
 
     async def _upload_file(self, path: str) -> Optional[str]:
         """Upload files to remote host if needed. Returns None on failure. Return remote path."""
@@ -604,7 +673,12 @@ class HylaFaxClient(FaxSenderBase):
     ) -> bool:
         if self.host is None:
             raise Exception("Can not send fax without a host to fax from")
-        host_strings = self._host_strings(destination)
+        modems = await self._usable_modems(destination)
+        if not modems:
+            # Fail now so the next backend gets the fax, rather than queueing
+            # a job no modem will pick up and waiting out the send timeout.
+            return False
+        host_strings = self._host_strings(destination, modems)
         with tempfile.NamedTemporaryFile(
             suffix=".txt", prefix="dest", mode="w+t", delete=True
         ) as f:
@@ -770,6 +844,7 @@ class FaxyMcFaxFace(SshHylaFaxClient):
     remote_host = os.getenv("FAXYMCFAXFACE_HOST")
     max_speed = 9600
     default_modem = "ttyACM0"
+    modem_health_service = FAXY_MODEM_HEALTH_SERVICE
     # IAX is... not working great right now
     # modem_mapping = {"1800": ["ttyIAX0"], "1844": ["ttyIAX0"], "1877": ["ttyIAX0"], "1888": ["ttyIAX0"]}
 
