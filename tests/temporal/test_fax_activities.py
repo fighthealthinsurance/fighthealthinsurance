@@ -152,4 +152,11 @@ def test_claim_is_taken_only_after_document_assembly():
     with patch("fighthealthinsurance.models.FaxesToSend", MagicMock()) as mock_model:
         with pytest.raises(RuntimeError):
             fax_send_core.send_fax_via_vendor(fax)
-        mock_model.objects.filter.assert_not_called()
+        # The claim is the conditional UPDATE on vendor_send_completed: no
+        # query may select on it or write it. (The failure reason, which is
+        # our side here, is still recorded: that write touches no claim.)
+        rows = mock_model.objects.filter
+        assert not any("vendor_send_completed" in c.kwargs for c in rows.call_args_list)
+        updates = rows.return_value.update.call_args_list
+        assert not any("vendor_send_completed" in c.kwargs for c in updates)
+        assert any(c.kwargs.get("failure_reason") == "our_side" for c in updates)
