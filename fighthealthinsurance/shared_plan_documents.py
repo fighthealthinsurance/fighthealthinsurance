@@ -214,6 +214,9 @@ _BUDGET_NAMES = (
     SharedPlanDocumentsDay.LINKS,
     SharedPlanDocumentsDay.OPT_IN_FILES,
     SharedPlanDocumentsDay.REMINDERS,
+    *SharedPlanDocumentsDay.DROPPED,
+    SharedPlanDocumentsDay.STAFF_SUMMARY,
+    SharedPlanDocumentsDay.STAFF_SUMMARY_TRIES,
 )
 
 
@@ -462,6 +465,22 @@ def match_insurer(insurer_name: str) -> Any:
 # ---- Copies shared by ticking the box on another page -----------------------
 
 
+def note_dropped(reason: str, files: int) -> None:
+    """Count ``files`` opted-in copies left out today for ``reason`` (one of
+    SharedPlanDocumentsDay.DROPPED), for the staff summary. Counts only, no
+    file or person. Never raises."""
+    if files <= 0:
+        return
+    try:
+        day = timezone.now().date()
+        SharedPlanDocumentsDay.objects.get_or_create(day=day, name=reason)
+        SharedPlanDocumentsDay.objects.filter(day=day, name=reason).update(
+            count=F("count") + files
+        )
+    except Exception:
+        logger.opt(exception=True).warning("Could not count dropped shared copies")
+
+
 def share_opt_in_copies(
     request: HttpRequest,
     files: Sequence[UploadedFile],
@@ -486,16 +505,19 @@ def share_opt_in_copies(
 
     from fighthealthinsurance.chat_forms import validate_shared_document
 
+    pending = 0
     try:
         candidates = [uploaded for uploaded in files if uploaded]
         if not candidates:
             return []
+        pending = len(candidates)
         # Before the closer look, which opens each PDF in a child process: a
         # visitor with no room left today for even the smallest file pays for
         # none of that. The check after it stays the one that counts.
         smallest = min(candidates, key=lambda f: f.size or 0)
         if daily_limit_problem(request, [smallest], source=source):
             logger.info(f"Left opted-in files from {source} unshared: over budget")
+            note_dropped(SharedPlanDocumentsDay.DROPPED_OVER_BUDGET, pending)
             return []
         passing: list[UploadedFile] = []
         for uploaded in candidates:
@@ -509,6 +531,10 @@ def share_opt_in_copies(
                 f"Left {len(candidates) - len(passing)} opted-in file(s) from {source} "
                 "unshared: they failed the closer look"
             )
+            note_dropped(
+                SharedPlanDocumentsDay.DROPPED_REFUSED, len(candidates) - len(passing)
+            )
+        pending = len(passing)
         if already_shared is not None:
             # After the closer look, so a copy that fails it never stands in
             # for one that passes.
@@ -520,10 +546,13 @@ def share_opt_in_copies(
                 already_shared.add(digest)
                 fresh.append(uploaded)
             passing = fresh
+            # A repeat of a copy already shared is not dropped: it is there.
+            pending = len(passing)
         if not passing:
             return []
         if daily_limit_problem(request, passing, source=source):
             logger.info(f"Left opted-in files from {source} unshared: over budget")
+            note_dropped(SharedPlanDocumentsDay.DROPPED_OVER_BUDGET, pending)
             return []
         saved = save_shared_documents(
             passing,
@@ -536,11 +565,13 @@ def share_opt_in_copies(
         return saved
     except OverDailyBudget:
         logger.info(f"Left opted-in files from {source} unshared: over budget")
+        note_dropped(SharedPlanDocumentsDay.DROPPED_OVER_BUDGET, pending)
         return []
     except Exception:
         logger.opt(exception=True).error(
             f"Failed to save opted-in shared copies from {source}"
         )
+        note_dropped(SharedPlanDocumentsDay.DROPPED_NOT_SAVED, pending)
         return []
 
 

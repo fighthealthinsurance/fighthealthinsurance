@@ -1348,6 +1348,7 @@ def test_the_plan_documents_worker_registers_only_its_workflows_and_activities()
         plan_documents_sweep.find_due_plan_documents_reminders,
         plan_documents_sweep.send_plan_documents_reminder,
         plan_documents_sweep.find_waiting_share_batches,
+        plan_documents_sweep.send_plan_documents_staff_summary,
     ]
     # One at a time, so at most one PDF child shares the appeal worker's memory.
     assert plan_docs["max_concurrent_activities"] == 1

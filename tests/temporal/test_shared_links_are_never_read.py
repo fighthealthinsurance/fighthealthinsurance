@@ -56,6 +56,7 @@ ACTIVITIES = [
     sweep_activities.find_due_plan_documents_reminders,
     sweep_activities.send_plan_documents_reminder,
     sweep_activities.find_waiting_share_batches,
+    sweep_activities.send_plan_documents_staff_summary,
 ]
 
 
@@ -153,9 +154,7 @@ async def _run(workflow_cls, request, workflow_id, calls, also_wait_for=None):
                 )
                 other = None
                 if also_wait_for:
-                    other = await env.client.get_workflow_handle(
-                        also_wait_for
-                    ).result()
+                    other = await env.client.get_workflow_handle(also_wait_for).result()
     return result, other
 
 
@@ -194,7 +193,8 @@ async def test_the_sweep_starts_no_reading_for_a_share_of_links():
         str(uuid.uuid4()),
         calls,
     )
-    assert result == {"reminders_sent": 0, "readings_started": 0}
+    # The day's staff summary is its own step (plan_documents_summary).
+    assert (result["reminders_sent"], result["readings_started"]) == (0, 0)
     assert calls == []
     await _assert_links_untouched(rows[1:])
     first = await _row(rows[0])
@@ -215,7 +215,8 @@ async def test_the_sweep_reads_a_waiting_file_and_leaves_its_links_alone():
         calls,
         also_wait_for=shared_plan_documents_workflow_id(batch),
     )
-    assert result == {"reminders_sent": 0, "readings_started": 1}
+    # The day's staff summary is its own step (plan_documents_summary).
+    assert (result["reminders_sent"], result["readings_started"]) == (0, 1)
     assert reading == {PolicyDocument.PROCESSING_READY: 1}
     assert calls == []
     await _assert_links_untouched(rows)

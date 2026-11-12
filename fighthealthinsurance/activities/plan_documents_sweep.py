@@ -11,10 +11,12 @@ email. The workflow runs that activity once, never retried, so a reminder
 goes at most once, as it does from the Ray email loop.
 """
 
+from loguru import logger
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from fighthealthinsurance import plan_documents_processing as processing
+from fighthealthinsurance import plan_documents_summary as summary
 from fighthealthinsurance import plan_documents_reminder as reminders
 from fighthealthinsurance.activities.appeal_journey import (
     _NON_RETRYABLE_ERRORS,
@@ -78,3 +80,20 @@ async def find_waiting_share_batches(received_minutes: int, limit: int) -> list[
         raise _failure(e, "waiting shares", retryable=False) from None
     except Exception as e:
         raise _failure(e, "waiting shares") from None
+
+
+@activity.defn
+async def send_plan_documents_staff_summary() -> bool:
+    """Send today's staff summary of shared plan documents, unless it went
+    already today (plan_documents_summary.send_summary_if_due). True when an
+    email went. Counts only; nothing about a file or a person."""
+    from asgiref.sync import sync_to_async
+
+    await _aclose_old_connections()
+    try:
+        return await sync_to_async(summary.send_summary_if_due)()
+    except Exception as e:
+        # Never retried: the day is claimed before the send. Logged at error
+        # level so a failed summary is seen; the sweep goes on.
+        logger.error(f"The plan documents staff summary failed: {type(e).__name__}")
+        raise _failure(e, "staff summary", retryable=False) from None

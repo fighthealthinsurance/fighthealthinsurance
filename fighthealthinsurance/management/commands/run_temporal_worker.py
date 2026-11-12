@@ -598,6 +598,7 @@ class Command(BaseCommand):
                         sweep_activities.find_due_plan_documents_reminders,
                         sweep_activities.send_plan_documents_reminder,
                         sweep_activities.find_waiting_share_batches,
+                        sweep_activities.send_plan_documents_staff_summary,
                     ],
                     max_concurrent_activities=1,
                     # Covers a reading's three-minute start_to_close, inside
