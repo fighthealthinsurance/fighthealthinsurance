@@ -50,7 +50,7 @@ current_stamp() {
 # --no-install-recommends (used here to keep the install to ~45s) drops;
 # without it pandoc's LaTeX template stops at "File `lmodern.sty' not found"
 # and every fax-assembly test fails.
-SYSTEM_PACKAGES="pandoc texlive lmodern tesseract-ocr shellcheck"
+SYSTEM_PACKAGES="pandoc texlive lmodern tesseract-ocr tesseract-ocr-spa shellcheck"
 APT_LOG=".tox/fhi-apt-install.log"
 
 system_deps_present() {

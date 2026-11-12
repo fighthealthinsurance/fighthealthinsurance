@@ -154,10 +154,12 @@ def mupdf_pages(
 
 
 #: Tesseract reading a page image from stdin and writing its text to stdout,
-#: so neither touches the disk. English only: the image installs tesseract-ocr,
-#: which carries English alone. Spanish scans still read, without accents.
-TESSERACT = ("tesseract", "stdin", "stdout", "-l", "eng")
+#: so neither touches the disk.
+TESSERACT = ("tesseract", "stdin", "stdout")
 _TESSERACT = TESSERACT
+#: The languages pages are read in, those of them installed: the image carries
+#: English and Spanish (tesseract-ocr-spa); English alone where it doesn't.
+OCR_LANGUAGES = ("eng", "spa")
 #: The error a reading reports when tesseract isn't installed.
 TESSERACT_MISSING = "tesseract is not installed"
 #: All tesseract is given of the worker's environment: no secrets.
@@ -206,6 +208,8 @@ def ocr_pdf_pages(
     def time_left() -> float:
         return budget_seconds - (time.monotonic() - started)
 
+    command = [*_TESSERACT, "-l", _languages(env)]
+
     with pymupdf.open(stream=content, filetype="pdf") as doc:
         for number in pages:
             if time_left() < _MIN_OCR_SECONDS or chars_left <= 0:
@@ -236,7 +240,7 @@ def ocr_pdf_pages(
                 break
             try:
                 done = subprocess.run(
-                    _TESSERACT,
+                    command,
                     input=image,
                     capture_output=True,
                     timeout=min(seconds_per_page, left),
@@ -257,6 +261,25 @@ def ocr_pdf_pages(
             texts.append([number, text])
             chars_left -= len(text)
     return {"texts": texts, "stopped_at": stopped_at}
+
+
+def _languages(env: dict) -> str:
+    """The OCR_LANGUAGES tesseract has installed, as its -l value; English
+    when it can't say. Raises ValueError when tesseract is not installed."""
+    try:
+        done = subprocess.run(
+            [_TESSERACT[0], "--list-langs"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=10,
+            env=env,
+        )
+    except FileNotFoundError:
+        raise ValueError(TESSERACT_MISSING) from None
+    except subprocess.TimeoutExpired:
+        return "eng"
+    installed = set(done.stdout.decode("utf-8", "replace").split())
+    return "+".join(lang for lang in OCR_LANGUAGES if lang in installed) or "eng"
 
 
 def count_pdf_pages(content: bytes) -> int:
