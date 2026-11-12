@@ -11,6 +11,7 @@ from fighthealthinsurance.media_references import (
     SOCIAL_MEDIA_REFERENCES,
 )
 from fighthealthinsurance.views import STATIC_ISH_PAGE_CACHE_SECONDS
+from tests.cached_page_fixtures import keep_page_day_far_from_midnight
 
 ALL_REFERENCES = MEDIA_REFERENCES + SOCIAL_MEDIA_REFERENCES
 
@@ -20,6 +21,7 @@ class TestMediaReferencesPage(TestCase):
 
     def setUp(self):
         self.client = Client()
+        keep_page_day_far_from_midnight(self)
 
     def test_media_references_page_loads(self):
         response = self.client.get(reverse("media-references"))

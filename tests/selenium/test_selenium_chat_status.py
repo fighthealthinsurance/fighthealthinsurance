@@ -6,7 +6,6 @@ from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from seleniumbase import BaseCase
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
 from fighthealthinsurance.models import ChatLeads
 from .fhi_selenium_base import FHISeleniumBase
@@ -31,12 +30,6 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
     def tearDownClass(cls):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
-
-    def wait_for_element(self, selector, timeout=10):
-        """Wait for an element to be present."""
-        WebDriverWait(self.driver, timeout).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-        )
 
     def wait_for_text_in_element(self, selector, text, timeout=10):
         """Wait for specific text to appear in an element."""
@@ -69,7 +62,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # The chat interface should load after redirect
-        self.wait_for_element("#chat-interface-root", timeout=15)
+        self.wait_for_chat_interface()
 
     def test_status_message_displays_on_send(self):
         """Test that status message appears when sending a chat message."""
@@ -79,7 +72,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         self.wait_for_page_ready()
         time.sleep(1)  # Let React components settle
 
@@ -148,7 +141,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         self.wait_for_page_ready()
         time.sleep(1)  # Let React components settle
 
@@ -203,7 +196,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         self.wait_for_page_ready(localstorage_key="fhi_user_info")
         time.sleep(1)  # Let React components settle
 
@@ -229,7 +222,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         self.wait_for_page_ready()
         time.sleep(1)  # Let React components settle
 
@@ -257,7 +250,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         self.wait_for_page_ready()
         time.sleep(1)  # Let React components settle
 
@@ -285,7 +278,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         # Wait for JavaScript to initialize session key
         self.wait_for_page_ready(localstorage_key="fhi_user_info")
         time.sleep(1)  # Let React components settle
@@ -338,7 +331,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         self.wait_for_page_ready()
         time.sleep(1)  # Let React components settle
 
@@ -397,7 +390,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         self.wait_for_page_ready()
         time.sleep(1)  # Let React components settle
 
@@ -511,7 +504,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         # Submit the consent form so the preference is saved to localStorage
         self.fill_consent_form()
         self.click("button[type='submit']")
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         self.wait_for_page_ready(localstorage_key="fhi_user_info")
         time.sleep(1)
 
@@ -548,7 +541,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         self.wait_for_page_ready()
         time.sleep(1)  # Let React components settle
 
@@ -590,7 +583,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
 
         # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_chat_interface()
         self.wait_for_page_ready()
         time.sleep(1)  # Let React components settle
 
