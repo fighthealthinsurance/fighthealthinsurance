@@ -58,8 +58,8 @@ _PARTY_WORDS = re.compile(
     re.IGNORECASE,
 )
 #: Each model's answer, and all of them together: the reading's activity
-#: has 8 minutes (workflows/shared_plan_documents.READ_TIMEOUT) and reading
-#: the file can take five and a half with OCR, so the company step stays
+#: has 5 minutes (workflows/shared_plan_documents.READ_TIMEOUT) and reading
+#: the file can take a little over three with OCR, so the company step stays
 #: inside the rest.
 MODEL_TIMEOUT_SECONDS = 30.0
 TOTAL_TIMEOUT_SECONDS = 70.0

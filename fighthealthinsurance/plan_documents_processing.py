@@ -27,6 +27,7 @@ SharedPlanDocumentsWorkflow activities wrap these
 
 import asyncio
 import datetime
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
@@ -35,7 +36,7 @@ from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance.models import PolicyDocument
-from fighthealthinsurance.text_quality import is_garbled
+from fighthealthinsurance.text_quality import is_clearly_text, is_garbled
 from fighthealthinsurance.upload_limits import (
     MAX_OCR_IMAGE_PIXELS,
     MAX_STORED_POLICY_DOCUMENT_BYTES,
@@ -58,7 +59,7 @@ MAX_ROWS_PER_BATCH = 50
 # pixel cap and time per image. Pages past either bound are left out, and the
 # text says how many.
 OCR_MAX_PAGES = 40
-OCR_SECONDS = 240
+OCR_SECONDS = 120
 OCR_DPI = 200
 
 # Threads of its own for reading files, so these never wait behind, or hold
@@ -134,11 +135,21 @@ def _read_stored(doc: PolicyDocument) -> Optional[bytes]:
     return read_and_decrypt_file(doc.document_enc, max_bytes=MAX_STORED_BYTES)
 
 
-async def _aocr(content: bytes, pages: list[int]) -> tuple[dict[int, str], bool]:
-    """(page -> text read with OCR, whether a bound left pages unread).
-    Without tesseract, or for a PDF it can't open, no page is read; an OCR
-    that timed out or could not run raises, so the activity's retries apply."""
-    from fighthealthinsurance.pdf_text import aocr_pdf_pages
+def ocr_available() -> bool:
+    """Whether tesseract is on this machine, for the worker to say so."""
+    from fighthealthinsurance.pdf_text import TESSERACT
+
+    return shutil.which(TESSERACT[0]) is not None
+
+
+async def _aocr(
+    content: bytes, pages: list[int]
+) -> tuple[dict[int, Optional[str]], Optional[str]]:
+    """(page -> text read with OCR, or None where OCR failed on the page; why
+    pages were left unread, or None).
+    Without tesseract, or for a PDF it can't open, no page is read, and the
+    reason says so; an OCR that timed out or could not run raises."""
+    from fighthealthinsurance.pdf_text import TESSERACT_MISSING, aocr_pdf_pages
 
     try:
         result = await aocr_pdf_pages(
@@ -152,11 +163,22 @@ async def _aocr(content: bytes, pages: list[int]) -> tuple[dict[int, str], bool]
             executor=_OCR_READERS,
         )
     except ValueError as e:
-        # The pages stay as they were; the error names only its class.
-        logger.warning(f"OCR of a shared plan document stopped: {type(e).__name__}")
-        return {}, False
+        # Our own message, or the class alone: MuPDF's can quote the file.
+        if str(e) == TESSERACT_MISSING:
+            logger.error(
+                "OCR could not run on a shared plan document: "
+                "tesseract is not installed"
+            )
+            return {}, "OCR could not run"
+        logger.warning(f"OCR could not open a shared plan document: {type(e).__name__}")
+        return {}, "OCR could not open the file"
     read = {int(number): text for number, text in result["texts"]}
-    return read, len(pages) > OCR_MAX_PAGES or result["stopped_at"] is not None
+    if len(pages) > OCR_MAX_PAGES or result["stopped_at"] is not None:
+        return read, (
+            f"reading scanned pages stops after {OCR_MAX_PAGES} pages"
+            f" or {OCR_SECONDS // 60} minutes"
+        )
+    return read, None
 
 
 async def _apdf_text(content: bytes) -> str:
@@ -169,40 +191,59 @@ async def _apdf_text(content: bytes) -> str:
     except ValueError:
         # The child's own report: locked, broken or too big to read.
         return ""
-    if is_garbled("\n".join(pages)):
-        # Garbled as a whole, as with short pages each too short to judge.
-        retry = list(range(len(pages)))
-    else:
-        retry = [number for number, page in enumerate(pages) if is_garbled(page)]
-    read, bounded = await _aocr(content, retry) if retry else ({}, False)
-    # Retried pages OCR did not reach keep their own text, unless the whole
-    # text layer was garbled: then none of it is kept.
-    whole = len(retry) == len(pages)
-    texts = [
-        read.get(number, "" if whole else page).strip()
-        for number, page in enumerate(pages)
+    # Pages too short to judge alone are judged together: shifted letters
+    # spread over many short pages are garbage only as a group.
+    retry = [n for n, page in enumerate(pages) if is_garbled(page)]
+    short = [
+        n
+        for n, page in enumerate(pages)
+        if page.strip() and n not in retry and not is_clearly_text(page)
     ]
+    doubtful: set[int] = set()
+    if short and is_garbled("\n".join(pages[n] for n in short)):
+        doubtful = set(short)
+        retry = sorted(set(retry) | doubtful)
+    read: dict[int, Optional[str]]
+    try:
+        read, why = await _aocr(content, retry) if retry else ({}, None)
+    except (TimeoutError, RuntimeError, OSError) as e:
+        if len(retry) == len(pages):
+            # Nothing to keep without OCR: the attempt fails and is retried.
+            raise
+        # Keep the pages the text layer read well, rather than lose them all
+        # when every retry times out the same way.
+        logger.warning(
+            f"OCR of a shared plan document did not finish: {type(e).__name__}"
+        )
+        read, why = {}, "OCR did not finish"
+
+    def text_of(number: int, page: str) -> str:
+        if number in read:
+            return (read[number] or "").strip()
+        # Not reached: a garbled page stays out, and so does a short page
+        # that was garbage with the others.
+        return "" if number in doubtful else page.strip()
+
+    texts = [text_of(number, page) for number, page in enumerate(pages)]
     kept = [number for number, text in enumerate(texts) if not is_garbled(text)]
     if not kept or is_garbled("\n".join(texts[number] for number in kept)):
         return ""
     parts = [f"[Page {number + 1}]\n{texts[number]}" for number in kept]
-    # A blank page is left out quietly; a page with garbled text, or one OCR
-    # did not reach, is counted in a note.
+    # A blank page (no text, and nothing for OCR to read) is left out quietly;
+    # a page with garbled text, or one OCR failed on or did not reach, is
+    # counted in a note.
     unread = [
         number
         for number in set(range(len(pages))) - set(kept)
-        if pages[number].strip() or read.get(number, "").strip() or number not in read
+        if pages[number].strip()
+        or read.get(number) is None
+        or (read[number] or "").strip()
     ]
     if unread:
         note = (
             f"[{len(unread)} of {len(pages)} pages could not be read and are left out"
         )
-        if bounded:
-            note += (
-                f": reading scanned pages stops after {OCR_MAX_PAGES} pages"
-                f" or {OCR_SECONDS // 60} minutes"
-            )
-        parts.append(note + ".]")
+        parts.append(note + (f": {why}" if why else "") + ".]")
     return "\n\n".join(parts)
 
 

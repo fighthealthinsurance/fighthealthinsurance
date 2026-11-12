@@ -8,8 +8,13 @@ neither may be stored as if it were the document's text.
 The check is cheap and needs no model: real text in English or Spanish is
 full of short common words ("the", "of", "and", "de", "la"), and a plan
 document's tables still name plans, services and costs, while garbled text
-has almost none. Text mostly in another script (Chinese, Korean, Russian...)
-is not judged by its words, only by how much of it is symbols.
+has almost none. Text with few common words is garbage when shifting its
+letters back turns it into English or Spanish (a font's own encoding often
+shifts every letter by the same amount), or when it doesn't have the shape
+of written language: mostly symbols, or letters standing alone. Otherwise
+it is taken as a language the word list doesn't know (Vietnamese, Tagalog)
+and passes, so a real plan is never lost to the word list. Text mostly in
+another script (Chinese, Korean, Russian...) is judged by symbols only.
 """
 
 import re
@@ -54,14 +59,34 @@ MIN_COMMON_WORD_SHARE = 0.12
 #: Below this many words a text is too short to judge by its words; it is
 #: judged by how much of it is symbols instead.
 MIN_WORDS_TO_JUDGE = 20
-#: A short text is garbage when symbols (not letters, digits or spaces) make up
-#: more than half of it and number at least this many: a page of dots.
+#: Text is garbage when symbols (not letters, digits or spaces) make up more
+#: than half of it and number at least this many: a page of dots, whatever
+#: words are mixed in.
 MIN_SYMBOLS_FOR_GARBAGE = 200
+#: With no words at all, this many symbols are enough; fewer, as in a page
+#: number between dashes, is too little to tell.
+MIN_SYMBOLS_WITHOUT_WORDS = 20
+#: The most characters counted for symbols, taken from across the text.
+SYMBOL_SAMPLE_CHARS = 50_000
 #: The most words read to judge a text: enough for a steady share, and a
 #: fixed cost however long the text.
 SAMPLE_WORDS = 5000
+#: The most characters tried shifted back, taken from across the text.
+SHIFT_SAMPLE_CHARS = 8000
+#: Shifted back, garbage reads as plainly as the text it came from (plan
+#: text runs 0.3 to 0.75); a real language with short words, such as
+#: Tagalog, reaches about 0.16 by chance on its best shift.
+MIN_SHIFTED_BACK_SHARE = 0.25
+#: Written language, in any Latin-script language: at most this share of
+#: symbols and of one-letter words, and words this long on average.
+MAX_SYMBOL_SHARE = 0.25
+MAX_ONE_LETTER_SHARE = 0.25
+MIN_MEAN_WORD_LENGTH = 2.5
+MAX_MEAN_WORD_LENGTH = 12.0
 
 _WORD = re.compile(r"[^\W\d_]+")
+#: A run of one symbol, spaced or not: the dot leaders of a table of contents.
+_LEADER = re.compile(r"([^\w\s])(?: ?\1){3,}")
 #: Letters past Latin Extended-B: other scripts, judged by symbols only.
 _LATIN_END = 0x024F
 
@@ -72,6 +97,61 @@ def _is_symbol(ch: str) -> bool:
     if ch.isspace() or ch.isdigit():
         return False
     return not unicodedata.category(ch).startswith("L")
+
+
+def _shift_tables() -> list[dict[int, int]]:
+    """Each way back from a shifted text: the alphabet rotated by 1 to 25,
+    and printable ASCII moved by 1 to 64 either way."""
+    tables = []
+    for by in range(1, 26):
+        table = {}
+        for first in (ord("a"), ord("A")):
+            for i in range(26):
+                table[first + i] = first + (i + by) % 26
+        tables.append(table)
+    for by in [*range(1, 65), *range(-64, 0)]:
+        tables.append(
+            {code: code + by for code in range(33, 127) if 33 <= code + by <= 126}
+        )
+    return tables
+
+
+_SHIFTS = _shift_tables()
+
+
+def _spread(text: str, size: int, pieces: int = 8) -> str:
+    """Up to ``size`` characters, in ``pieces`` windows spread over ``text``."""
+    if len(text) <= size:
+        return text
+    width, step = size // pieces, len(text) // pieces
+    return " ".join(text[i * step : i * step + width] for i in range(pieces))
+
+
+def _reads_when_shifted_back(text: str) -> bool:
+    sample = _spread(text, SHIFT_SAMPLE_CHARS)
+    return any(
+        common_word_share(sample.translate(table)) >= MIN_SHIFTED_BACK_SHARE
+        for table in _SHIFTS
+    )
+
+
+def _has_the_shape_of_language(words: list[str], symbol_share: float) -> bool:
+    one_letter = sum(1 for w in words if len(w) == 1)
+    mean_length = sum(len(w) for w in words) / len(words)
+    return (
+        symbol_share <= MAX_SYMBOL_SHARE
+        and one_letter <= MAX_ONE_LETTER_SHARE * len(words)
+        and MIN_MEAN_WORD_LENGTH <= mean_length <= MAX_MEAN_WORD_LENGTH
+    )
+
+
+def _without_leaders(text: str) -> str:
+    """Each run of one symbol cut to one, on lines that also have letters: a
+    contents line ("Your costs ........ 12") is not a line of symbols."""
+    return "\n".join(
+        _LEADER.sub(r"\1", line) if any(ch.isalpha() for ch in line) else line
+        for line in text.split("\n")
+    )
 
 
 def _sample_words(text: str) -> list[str]:
@@ -93,19 +173,35 @@ def common_word_share(text: str) -> float:
 
 def is_garbled(text: str) -> bool:
     """True when ``text`` holds no real text: empty, mostly symbols, or words
-    that are almost never common words. A short text with few symbols is not
-    judged garbled: there is too little to tell."""
-    visible = [ch for ch in text if not ch.isspace()]
+    that are almost never common words and either read as English or Spanish
+    once shifted back or don't have the shape of written language. A short
+    text with some words and few symbols is not judged garbled: there is too
+    little to tell."""
+    sample = _without_leaders(_spread(text, SYMBOL_SAMPLE_CHARS))
+    visible = sum(1 for ch in sample if not ch.isspace())
     if not visible:
         return True
+    symbols = sum(1 for ch in sample if _is_symbol(ch))
     words = _sample_words(text)
+    if symbols * 2 > visible and (
+        symbols >= MIN_SYMBOLS_FOR_GARBAGE
+        or (not words and symbols >= MIN_SYMBOLS_WITHOUT_WORDS)
+    ):
+        return True
     if len(words) < MIN_WORDS_TO_JUDGE:
-        symbols = sum(1 for ch in visible if _is_symbol(ch))
-        return symbols >= MIN_SYMBOLS_FOR_GARBAGE and symbols * 2 > len(visible)
+        return False
     letters = [ch for w in words for ch in w]
-    other_script = sum(1 for ch in letters if ord(ch) > _LATIN_END)
-    if other_script * 2 > len(letters):
-        symbols = sum(1 for ch in visible if _is_symbol(ch))
-        return symbols * 2 > len(visible)
+    if sum(1 for ch in letters if ord(ch) > _LATIN_END) * 2 > len(letters):
+        return False
     share = sum(1 for w in words if w in COMMON_WORDS) / len(words)
-    return share < MIN_COMMON_WORD_SHARE
+    if share >= MIN_COMMON_WORD_SHARE:
+        return False
+    if _reads_when_shifted_back(text):
+        return True
+    return not _has_the_shape_of_language(words, symbols / visible)
+
+
+def is_clearly_text(text: str) -> bool:
+    """Enough words to judge, and not garbled: a page worth keeping as it is
+    even when the text around it is garbage."""
+    return len(_sample_words(text)) >= MIN_WORDS_TO_JUDGE and not is_garbled(text)

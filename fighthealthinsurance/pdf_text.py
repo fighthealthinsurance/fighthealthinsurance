@@ -34,6 +34,7 @@ import math
 import os
 import resource
 import selectors
+import signal
 import subprocess
 import sys
 import time
@@ -153,11 +154,17 @@ def mupdf_pages(
 
 
 #: Tesseract reading a page image from stdin and writing its text to stdout,
-#: so neither touches the disk.
-_TESSERACT = ("tesseract", "stdin", "stdout")
+#: so neither touches the disk. English only: the image installs tesseract-ocr,
+#: which carries English alone. Spanish scans still read, without accents.
+TESSERACT = ("tesseract", "stdin", "stdout", "-l", "eng")
+_TESSERACT = TESSERACT
+#: The error a reading reports when tesseract isn't installed.
+TESSERACT_MISSING = "tesseract is not installed"
+#: All tesseract is given of the worker's environment: no secrets.
+_TESSERACT_ENV = ("PATH", "TESSDATA_PREFIX", "LANG", "LC_ALL")
 #: Leave a page unread when less than this is left of the budget.
 _MIN_OCR_SECONDS = 5.0
-#: Draw a page no smaller than this, however large it is.
+#: A page that fits the pixel cap only below this is too big to read.
 _MIN_OCR_DPI = 50
 
 
@@ -174,44 +181,59 @@ def ocr_pdf_pages(
 
     Each page is drawn in memory in grey at ``dpi``, or at the resolution that
     keeps it within ``max_pixels``, and given to tesseract on stdin, which
-    writes its text to stdout and gets ``seconds_per_page`` for each page; a
-    page it doesn't finish reads as "". The texts hold at most ``max_chars``
-    characters in all. Reading stops before a page when less than
-    ``_MIN_OCR_SECONDS`` of ``budget_seconds`` is left.
+    writes its text to stdout and gets ``seconds_per_page`` for each page,
+    or what is left of ``budget_seconds`` once the page is drawn. A page that
+    won't fit ``max_pixels`` at ``_MIN_OCR_DPI`` is never drawn; it, and a
+    page tesseract doesn't finish or fails on, reads as None, while a page
+    tesseract finds nothing on reads as "". The texts hold at most
+    ``max_chars`` characters in all. Reading stops before a page when less
+    than ``_MIN_OCR_SECONDS`` of the budget is left.
 
-    Returns ``{"texts": [[page, text], ...], "stopped_at": page or None}``,
-    ``stopped_at`` being the first page left unread for want of time or
-    characters. Raises ValueError when tesseract is not installed.
+    Returns ``{"texts": [[page, text or None], ...], "stopped_at": page or
+    None}``, ``stopped_at`` being the first page left unread for want of
+    time or characters. Raises ValueError when tesseract is not installed.
     """
     import pymupdf
 
     started = time.monotonic()
     # One thread: several readings may run at once, each with its own child.
-    env = {**os.environ, "OMP_THREAD_LIMIT": "1"}
+    env = {name: os.environ[name] for name in _TESSERACT_ENV if name in os.environ}
+    env["OMP_THREAD_LIMIT"] = "1"
     texts: List[List[Any]] = []
     stopped_at: Optional[int] = None
     chars_left = max_chars
+
+    def time_left() -> float:
+        return budget_seconds - (time.monotonic() - started)
+
     with pymupdf.open(stream=content, filetype="pdf") as doc:
         for number in pages:
-            left = budget_seconds - (time.monotonic() - started)
-            if left < _MIN_OCR_SECONDS or chars_left <= 0:
+            if time_left() < _MIN_OCR_SECONDS or chars_left <= 0:
                 stopped_at = number
                 break
             if not 0 <= number < doc.page_count:
                 continue
             page = doc.load_page(number)
             inches = (page.rect.width / 72) * (page.rect.height / 72)
-            fit = math.floor(math.sqrt(max_pixels / inches)) if inches > 0 else dpi
-            pixmap = page.get_pixmap(
-                dpi=max(min(dpi, fit), _MIN_OCR_DPI),
-                colorspace=pymupdf.csGRAY,
-                alpha=False,
+            draw_dpi = (
+                min(dpi, math.floor(math.sqrt(max_pixels / inches)))
+                if inches > 0
+                else 0
             )
-            if pixmap.width * pixmap.height > max_pixels:
-                texts.append([number, ""])
+            if draw_dpi < _MIN_OCR_DPI:
+                # Never drawn: at a readable size it would pass the cap.
+                texts.append([number, None])
                 continue
+            pixmap = page.get_pixmap(
+                dpi=draw_dpi, colorspace=pymupdf.csGRAY, alpha=False
+            )
             image = pixmap.tobytes("png")
             del pixmap
+            # Drawing takes time too: tesseract gets only what is left of it.
+            left = time_left()
+            if left < _MIN_OCR_SECONDS:
+                stopped_at = number
+                break
             try:
                 done = subprocess.run(
                     _TESSERACT,
@@ -221,12 +243,15 @@ def ocr_pdf_pages(
                     env=env,
                 )
             except FileNotFoundError:
-                raise ValueError("tesseract is not installed") from None
+                raise ValueError(TESSERACT_MISSING) from None
             except subprocess.TimeoutExpired:
                 if seconds_per_page > left:
                     stopped_at = number
                     break
-                texts.append([number, ""])
+                texts.append([number, None])
+                continue
+            if done.returncode != 0:
+                texts.append([number, None])
                 continue
             text = done.stdout.decode("utf-8", "replace")[:chars_left]
             texts.append([number, text])
@@ -316,18 +341,19 @@ def _run_child(
     # -P keeps this module's directory off the child's sys.path, so the child
     # imports the standard library and pypdf, never a sibling module. Its
     # stderr, where pypdf's warnings go, is discarded rather than collected.
+    # A session of its own, so a tesseract the child started dies with it.
     with subprocess.Popen(
         [sys.executable, "-P", __file__, *arguments],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
+        start_new_session=True,
     ) as child:
         try:
             output = _exchange(child, stdin, deadline, max_output_bytes)
             returncode = child.wait(timeout=max(deadline - time.monotonic(), 0))
         finally:
-            # Does nothing when the child has already exited.
-            child.kill()
+            _kill_group(child)
     try:
         report = json.loads(output)
     except ValueError:
@@ -335,6 +361,15 @@ def _run_child(
     if "error" in report:
         raise ValueError(report["error"])
     return report["result"]
+
+
+def _kill_group(child: "subprocess.Popen[bytes]") -> None:
+    """Kill the child and anything it started; nothing when all have exited."""
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    child.kill()
 
 
 def read_mupdf_pages(
@@ -431,7 +466,7 @@ async def aextract_pdf_page_texts(
 
 
 #: Time the child gets past its OCR budget to open the PDF and finish a page.
-_OCR_GRACE_SECONDS = 30
+_OCR_GRACE_SECONDS = 20
 
 
 async def aocr_pdf_pages(
@@ -517,10 +552,20 @@ def _limit_address_space() -> None:
         pass
 
 
+def _no_core_dumps() -> None:
+    """A crash of this process, or of a tesseract it starts, writes no core
+    file: one would hold the decrypted document."""
+    try:
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    except (OSError, ValueError):
+        pass
+
+
 def _child_main(arguments: List[str], report: Optional[IO[str]] = None) -> int:
     """Run the operation named in ``arguments`` and write its result as JSON
     to ``report``, stdout by default."""
     report = report or sys.stdout
+    _no_core_dumps()
     _limit_address_space()
     operation, rest = arguments[0], arguments[1:]
     result: Any = None
