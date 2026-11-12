@@ -92,7 +92,8 @@ class Command(BaseCommand):
             text, company_id = row
             looked += 1
             try:
-                reading = async_to_sync(afind_company)(text)
+                # The stored text is the cleaned one, so it is both.
+                reading = async_to_sync(afind_company)(text, text)
                 # Only a row with no company is linked, as before.
                 sponsor = reading.sponsor if company_id is None else None
                 linked = (

@@ -266,7 +266,7 @@ class CompanyLookupsThatFailAreCountedTest(_ReadingTest):
         self.assertEqual(doc.company_lookup_failures, 0)
 
     def test_a_failure_on_a_row_removed_meanwhile_is_not_written(self):
-        async def removed_then_fails(text):
+        async def removed_then_fails(text, cleaned_text):
             await PolicyDocument.objects.filter(pk=doc.pk).aupdate(
                 processing_status=PolicyDocument.PROCESSING_REMOVED
             )

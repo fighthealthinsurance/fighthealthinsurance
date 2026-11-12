@@ -85,9 +85,16 @@ _PARTY_WORDS = re.compile(
 _SPONSOR_WORDS = re.compile(r"sponsor|employer\s+identification|\bEIN\b", re.IGNORECASE)
 _NOT_UNDER_ERISA = (
     r"non-?erisa|not\s+(?:subject\s+to|governed\s+by|covered\s+by)\s+erisa"
-    r"|exempt\s+from\s+erisa"
+    r"|exempt\s+from\s+erisa|not\s+an?\s+erisa"
 )
 _ERISA_DENIED = re.compile(_NOT_UNDER_ERISA, re.IGNORECASE)
+_OFF_EXCHANGE = re.compile(
+    r"off[\s-]+(?:the[\s-]+)?(?:exchange|marketplace)"
+    r"|outside\s+(?:of\s+)?(?:the\s+)?(?:health\s+insurance\s+)?(?:marketplace|exchange)"
+    r"|not\s+(?:sold|offered|purchased|bought|available)\s+(?:on|through|in)\s+"
+    r"(?:the\s+)?(?:health\s+insurance\s+)?(?:marketplace|exchange)",
+    re.IGNORECASE,
+)
 #: Words that name each kind of plan (PolicyDocument.PLAN_CATEGORY_CHOICES
 #: but "unknown"): a type is kept only when its quoted line holds one.
 _PLAN_TYPE_WORDS = {
@@ -112,9 +119,19 @@ _PLAN_TYPE_WORDS = {
     ),
     "tricare": re.compile(r"\btricare\b", re.IGNORECASE),
     "va": re.compile(r"\bveterans?\b", re.IGNORECASE),
-    "individual_off_exchange": re.compile(r"\bindividual\b", re.IGNORECASE),
+    "individual_off_exchange": _OFF_EXCHANGE,
     "short_term": re.compile(r"\bshort[\s-]*term\b", re.IGNORECASE),
 }
+#: Words in a quoted line that rule a type out though its own words are
+#: there: Medicare Advantage is not Original Medicare, an off-exchange plan
+#: is not a Marketplace one.
+_PLAN_TYPE_DENIED = {
+    "employer_erisa": _ERISA_DENIED,
+    "aca_marketplace": _OFF_EXCHANGE,
+    "medicare_traditional": _PLAN_TYPE_WORDS["medicare_advantage"],
+}
+#: A type's words right after "not" ("not an ERISA plan") deny it.
+_NEGATED = re.compile(r"\bnot\s+(?:an?\s+|the\s+)?$", re.IGNORECASE)
 #: Each model's answer, and all of them together, a second look included:
 #: the reading's activity has 5 minutes
 #: (workflows/shared_plan_documents.READ_TIMEOUT) and reading the file can
@@ -368,13 +385,16 @@ def _scrubbed(line: str) -> str:
     return scrub(re.sub(r"\s+", " ", line).strip())
 
 
-def checked_facts(answer: str, text: str) -> PlanFacts:
+def checked_facts(answer: str, cleaned_text: str) -> PlanFacts:
     """The insurer, plan year and plan type in a model's ``answer``, each
-    kept only when it passes its checks against the document ``text``."""
+    kept only when it passes its checks against ``cleaned_text``, the
+    document as it is stored, personal details taken out
+    (plan_documents_processing.clean): a quoted line must be there, so a
+    detail the cleaning takes out never becomes a fact."""
     data = _parse(answer)
     if data is None:
         return PlanFacts()
-    squashed = _squash(text)
+    squashed = _squash(cleaned_text)
     return PlanFacts(
         insurer_name=_checked_insurer(data, squashed),
         plan_year=_checked_year(data, squashed),
@@ -438,16 +458,18 @@ def _checked_plan_type(data: dict, squashed_text: str) -> str:
     if words is None:
         return ""
     line = _quoted_line(data, "plan_type_evidence", squashed_text)
-    if not words.search(line):
+    if not any(not _NEGATED.search(line, 0, m.start()) for m in words.finditer(line)):
         return ""
-    if kind == "employer_erisa" and _ERISA_DENIED.search(line):
+    denied = _PLAN_TYPE_DENIED.get(kind)
+    if denied is not None and denied.search(line):
         return ""
     return kind
 
 
-async def aread_plan(text: str) -> PlanReading:
+async def aread_plan(text: str, cleaned_text: str) -> PlanReading:
     """What our models read in ``text``: the sponsor, whether a model
-    answered (PlanReading.answered), and the plan's insurer, year and type.
+    answered (PlanReading.answered), and the plan's insurer, year and type,
+    those three checked against ``cleaned_text`` (checked_facts).
 
     When a model finds no sponsor in a document longer than its excerpt, it
     reads the passages the excerpt left out (second_excerpt), once, if
@@ -466,7 +488,7 @@ async def aread_plan(text: str) -> PlanReading:
     if first is None:
         return PlanReading(None, False)
     sponsor, answer = first
-    facts = checked_facts(answer, text)
+    facts = checked_facts(answer, cleaned_text)
     if sponsor is None and deadline - clock() >= MODEL_TIMEOUT_SECONDS:
         more = second_excerpt(text)
         second = await _aask(more, text, insurers, deadline) if more else None

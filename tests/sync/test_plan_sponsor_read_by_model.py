@@ -62,7 +62,7 @@ def model_answers(*answers):
 
 
 def read(text):
-    reading = async_to_sync(aread_plan)(text)
+    reading = async_to_sync(aread_plan)(text, text)
     return reading.sponsor, reading.answered
 
 
@@ -177,7 +177,7 @@ class AModelThatTakesTooLongTest(TestCase):
         with patch(
             "fighthealthinsurance.ml.ml_inference.infer_with_fallback", slow
         ), patch("fighthealthinsurance.plan_sponsor_reader.TOTAL_TIMEOUT_SECONDS", 0.1):
-            sponsor = async_to_sync(afind_company)(text).sponsor
+            sponsor = async_to_sync(afind_company)(text, text).sponsor
         self.assertEqual(sponsor.source, "rules")
 
 
@@ -219,7 +219,7 @@ class TheReadingUsesTheModelFirstTest(TestCase):
                 "This plan is sponsored by Google LLC for its eligible employees.",
             )
         ):
-            async_to_sync(alink_company)(str(doc.pk), BOOKLET)
+            async_to_sync(alink_company)(str(doc.pk), BOOKLET, BOOKLET)
         doc.refresh_from_db()
         self.assertEqual(
             (
@@ -236,7 +236,7 @@ class TheReadingUsesTheModelFirstTest(TestCase):
             + ("Covered. " * 30)
         )
         with model_answers():
-            sponsor = async_to_sync(afind_company)(text).sponsor
+            sponsor = async_to_sync(afind_company)(text, text).sponsor
         self.assertEqual(
             (sponsor.name, sponsor.source), ("Crumpler Cooperative, LLC", "rules")
         )
@@ -249,7 +249,7 @@ class TheReadingUsesTheModelFirstTest(TestCase):
         with model_answers(
             json.dumps({"sponsor": None, "ein": None, "evidence": None})
         ):
-            self.assertIsNone(async_to_sync(afind_company)(text).sponsor)
+            self.assertIsNone(async_to_sync(afind_company)(text, text).sponsor)
 
 
 class StaffCanCheckWithoutHoldingItUpTest(TestCase):
@@ -371,7 +371,7 @@ class TheReviewFindingsTest(TestCase):
                 "This plan is sponsored by Google LLC for its eligible employees.",
             )
         ):
-            async_to_sync(alink_company)(str(doc.pk), BOOKLET)
+            async_to_sync(alink_company)(str(doc.pk), BOOKLET, BOOKLET)
         doc.refresh_from_db()
         self.assertEqual((doc.plan_sponsor_id, doc.plan_sponsor_evidence), (None, ""))
 

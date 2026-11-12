@@ -434,20 +434,21 @@ async def aprocess_document(document_id: str) -> str:
     if stored == PolicyDocument.PROCESSING_READY and text:
         # The company is read from the text before cleaning, which may have
         # taken a line that looked personal.
-        await alink_company(document_id, text)
+        await alink_company(document_id, text, cleaned)
     return stored
 
 
-async def afind_company(text: str) -> "PlanReading":
+async def afind_company(text: str, cleaned_text: str) -> "PlanReading":
     """What ``text`` says about its plan. Its sponsor, the company it names
     (None when it names none): our model's reading, checked against the
     text (plan_sponsor_reader), or, when no model gave a usable answer, the
     fixed patterns' (plan_sponsors.identify_sponsor). Its insurer, plan year
-    and plan type: our model's reading only, each checked."""
+    and plan type: our model's reading only, each checked against
+    ``cleaned_text``, the text as stored."""
     from fighthealthinsurance.plan_sponsor_reader import aread_plan
     from fighthealthinsurance.plan_sponsors import identify_sponsor
 
-    reading = await aread_plan(text)
+    reading = await aread_plan(text, cleaned_text)
     if reading.answered:
         return reading
     sponsor = await database_sync_to_async(identify_sponsor)(text)
@@ -478,16 +479,17 @@ async def afill_plan_facts(document_id: Any, facts: "PlanFacts") -> list[str]:
     return filled
 
 
-async def alink_company(document_id: str, text: str) -> None:
+async def alink_company(document_id: str, text: str, cleaned_text: str) -> None:
     """Link the shared row to the company its text names as plan sponsor,
     adding the company to the list if it's new, and fill the insurer, plan
     year and plan type our model found where the row has none
-    (afill_plan_facts). A failure is logged and leaves the rest undone: the
-    reading itself stands."""
+    (afill_plan_facts), checked against ``cleaned_text``, the text as
+    stored. A failure is logged and leaves the rest undone: the reading
+    itself stands."""
     from fighthealthinsurance.plan_sponsors import link_sponsor
 
     try:
-        found = await afind_company(text)
+        found = await afind_company(text, cleaned_text)
         if found.sponsor is not None:
             await database_sync_to_async(link_sponsor)(document_id, found.sponsor)
         await afill_plan_facts(document_id, found.facts)

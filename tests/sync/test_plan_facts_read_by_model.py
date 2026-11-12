@@ -33,6 +33,7 @@ from fighthealthinsurance.models import PlanSponsor, PolicyDocument
 from fighthealthinsurance.plan_documents_processing import (
     alink_company,
     aprocess_document,
+    clean,
 )
 from fighthealthinsurance.plan_sponsor_reader import PlanFacts, PlanReading, aread_plan
 from fighthealthinsurance.plan_sponsors import Sponsor
@@ -83,7 +84,7 @@ def models_say(answer_for):
 
 
 def read(text):
-    return async_to_sync(aread_plan)(text)
+    return async_to_sync(aread_plan)(text, clean(text))
 
 
 def shared_row(text=PAGE_ONE, **fields):
@@ -100,7 +101,7 @@ def shared_row(text=PAGE_ONE, **fields):
 
 def link(doc, said):
     with models_say(lambda prompt: said):
-        async_to_sync(alink_company)(str(doc.pk), doc.cleaned_text)
+        async_to_sync(alink_company)(str(doc.pk), doc.cleaned_text, doc.cleaned_text)
     doc.refresh_from_db()
     return doc
 
@@ -191,7 +192,7 @@ class TheReadingFillsThePlanFactsTest(TestCase):
             processing_status=PolicyDocument.PROCESSING_REMOVED, cleaned_text=""
         )
         with models_say(lambda prompt: answer(**FACTS)):
-            async_to_sync(alink_company)(str(doc.pk), PAGE_ONE)
+            async_to_sync(alink_company)(str(doc.pk), PAGE_ONE, clean(PAGE_ONE))
         doc.refresh_from_db()
         self.assertEqual(plan_facts(doc), ("", None, "unknown"))
 
@@ -212,6 +213,33 @@ class TheReadingFillsThePlanFactsTest(TestCase):
         self.assertEqual(
             (doc.processing_status, doc.insurer_name, doc.plan_year),
             (PolicyDocument.PROCESSING_READY, "Crumpler Health Mutual", 2026),
+        )
+
+    def test_a_member_or_birth_date_quoted_without_its_label_is_never_a_fact(self):
+        doc = PolicyDocument.objects.create(
+            source=PolicyDocument.SOURCE_SHARED,
+            share_batch=uuid.uuid4(),
+            shared_at=timezone.now(),
+            processing_status=PolicyDocument.PROCESSING_RECEIVED,
+            filename="sbc.txt",
+        )
+        member = "Member Name: Rebecca Lee Crumpler    Date of Birth: 03/14/2001\n"
+        with patch(
+            "fighthealthinsurance.plan_documents_processing._read_stored",
+            return_value=(PAGE_ONE + member).encode(),
+        ), models_say(
+            lambda prompt: answer(
+                insurer="Rebecca Lee Crumpler",
+                insurer_evidence="Rebecca Lee Crumpler",
+                plan_year=2001,
+                plan_year_evidence="03/14/2001",
+            )
+        ):
+            async_to_sync(aprocess_document)(str(doc.pk))
+        doc.refresh_from_db()
+        self.assertEqual(
+            (doc.processing_status, doc.insurer_name, doc.plan_year),
+            (PolicyDocument.PROCESSING_READY, "", None),
         )
 
 

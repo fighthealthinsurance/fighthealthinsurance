@@ -19,6 +19,7 @@ import pytest
 from django.utils import timezone
 
 from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.plan_documents_processing import clean
 from fighthealthinsurance.plan_sponsor_reader import (
     _PLAN_TYPE_WORDS,
     ASK,
@@ -44,8 +45,9 @@ PAGE_ONE = (
 
 
 def facts(text=PAGE_ONE, **fields):
+    # Checked against the text as stored, as the reading does.
     data = {"sponsor": None, "ein": None, "evidence": None} | fields
-    return checked_facts(json.dumps(data), text)
+    return checked_facts(json.dumps(data), clean(text))
 
 
 class TestTheInsurer:
@@ -71,6 +73,12 @@ class TestTheInsurer:
         found = facts(
             insurer="Rebecca Lee Crumpler",
             insurer_evidence="Member Name: Rebecca Lee Crumpler",
+        )
+        assert found.insurer_name == ""
+
+    def test_a_person_quoted_without_their_label_is_dropped(self):
+        found = facts(
+            insurer="Rebecca Lee Crumpler", insurer_evidence="Rebecca Lee Crumpler"
         )
         assert found.insurer_name == ""
 
@@ -124,6 +132,10 @@ class TestThePlanYear:
         )
         assert found.plan_year is None
 
+    def test_a_birth_date_quoted_without_its_label_is_dropped(self):
+        found = facts(plan_year=2001, plan_year_evidence="03/14/2001")
+        assert found.plan_year is None
+
     @pytest.mark.parametrize("given", [2026.0, True, "２０２６", "26", "2026-27"])
     def test_a_year_that_is_not_four_plain_digits_is_dropped(self, given):
         assert facts(plan_year=given, plan_year_evidence=YEAR_LINE).plan_year is None
@@ -157,6 +169,33 @@ class TestThePlanType:
         line = "This plan is a governmental plan and is not subject to ERISA."
         found = facts(PAGE_ONE + line, plan_type=kind, plan_type_evidence=line)
         assert found.plan_category == kept
+
+    @pytest.mark.parametrize(
+        "kind, line",
+        [
+            ("medicare_traditional", "This is a Medicare Advantage plan."),
+            ("aca_marketplace", "This individual plan is sold off-exchange."),
+            ("individual_off_exchange", "This individual plan is sold on the Marketplace."),
+            ("employer_erisa", "This is not an ERISA plan."),
+            ("medicare_advantage", "This is not a Medicare Advantage plan."),
+        ],
+    )
+    def test_a_line_that_rules_its_type_out_drops_it(self, kind, line):
+        found = facts(PAGE_ONE + line, plan_type=kind, plan_type_evidence=line)
+        assert found.plan_category == ""
+
+    @pytest.mark.parametrize(
+        "kind, line",
+        [
+            ("medicare_advantage", "This is a Medicare Advantage plan."),
+            ("individual_off_exchange", "This individual plan is sold off-exchange."),
+            ("aca_marketplace", "This plan is sold on the Health Insurance Marketplace."),
+            ("employer_non_erisa", "This is not an ERISA plan."),
+        ],
+    )
+    def test_a_line_that_names_its_type_keeps_it(self, kind, line):
+        found = facts(PAGE_ONE + line, plan_type=kind, plan_type_evidence=line)
+        assert found.plan_category == kind
 
     def test_every_plan_category_but_unknown_has_the_words_that_name_it(self):
         categories = {key for key, _ in PolicyDocument.PLAN_CATEGORY_CHOICES}
