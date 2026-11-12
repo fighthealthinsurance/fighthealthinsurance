@@ -544,6 +544,78 @@ Four things write tasks, all under one generation claim per type
   current process (a dev machine without Ray); `--count` and `--min-votes`
   override the settings.
 
+## HumanJudge, an outside human judge (`chooser_humanjudge.py`)
+
+[HumanJudge](https://humanjudge.com) has its own volunteer and expert
+reviewers give AI outputs a blind pass or flag. The Arena uses it as one
+more judge of which appeal draft is best, beside Jev and fhi-local. It is
+off unless `HUMANJUDGE_API_KEY` (the HumanJudge model's `gj_sk_` key) is
+set; `CHOOSER_HUMANJUDGE=false` turns it off with the key in place.
+
+Staff run it from the admin; nothing goes out or comes back on a timer:
+
+- **Upload.** Select cases on the Chooser Task list (the **HumanJudge**
+  filter shows which have gone) and run **Upload to HumanJudge**. Up to 25
+  cases at a time (`MAX_TASKS_PER_UPLOAD`). Drafts already sent are skipped,
+  so uploading a case again sends only what failed. Failures are listed under
+  HumanJudge Submissions with their status code, where **Upload again**
+  retries them.
+- **Only the Arena, only synthetic appeals.** HumanJudge's reviewers read
+  what they are sent, so only the active drafts of `source="synthetic"`,
+  `task_type="appeal"` cases that have reached voters (READY, IN_USE or
+  EXHAUSTED) ever go. Any other selected case is skipped, and the message
+  says how many. Never a real denial or appeal, and never a chat case.
+- **What is sent.** Each draft is one trace (`POST /api/v1/traces/ingest`):
+  the input is a brief saying the case is made up and what to pass or flag,
+  then the case (treatment, diagnosis, insurer, denial reason, facts, the
+  simulated interview and the evidence titles and summaries); the output is
+  the draft. The trace's name and model are both `fhi-appeal-arena`, and its
+  metadata only our task and candidate ids, so nothing says which model
+  wrote it. Each draft's `gj_inference_id` is made once
+  (`HumanJudgeSubmission`) and reused on every retry, so a resend is
+  idempotent on HumanJudge's side. A refused key stops the upload without
+  counting an attempt.
+- **Download.** **Download verdicts from HumanJudge**, on the HumanJudge
+  Verdict list, reads the votes
+  (`GET /api/v1/models/{id}/evaluations?detail=votes`, with
+  `HUMANJUDGE_TOKEN`, a `gj_pat_` personal access token, when set, else the
+  key) from two days before the newest stored, matches them to drafts by
+  inference id, and updates the picks of the cases that got one. Votes that
+  match no draft we uploaded are counted in the message and left out.
+- **Verdicts are stored apart.** Each lands in `HumanJudgeVerdict`
+  (verdict, flag category, feedback, HumanJudge's reviewer id, time, and the
+  raw record), never in `ChooserVote`, so they never count toward the
+  Arena's tallies, the staff dashboard's win rates or the public rankings.
+  Downloading a vote again does not add a row. **Export selected verdicts as
+  CSV** on that list gives them with the model behind each draft.
+- **The pick.** HumanJudge rates drafts one at a time, not side by side, so
+  once every active draft of a case has `CHOOSER_HUMANJUDGE_MIN_VERDICTS`
+  verdicts the case's pick is the draft with the best smoothed pass rate,
+  (passes + 1) / (verdicts + 2). It goes into the task's `scoring_json` under
+  `humanjudge`, in the same shape as Jev's and fhi-local's picks plus
+  `passes` and `verdicts`, with scorer `humanjudge/pass-rate-1`. A tie for
+  best records no pick.
+- **On the public rankings.** Each appeal-letter row carries the model's
+  HumanJudge pass rate (`humanjudge` in the JSON: reviews, passes,
+  pass rate, warming up) in its own "Outside reviewers passed" column, shown
+  as a rate from `PUBLIC_RANKINGS_MIN_SHOWN` reviews; the leader's card
+  repeats it. It never changes the order, which stays our voters' alone.
+  Only aggregate counts reach the public page, never reviewers' feedback.
+  HumanJudge reviews blind, so its verdicts are not held to the
+  blind-voting cut-off; the 30-day window counts them by when they were cast
+  (`humanjudge_reports.model_verdict_stats`).
+- **Staff breakdown.** **Breakdown by model** on the HumanJudge Verdict
+  list (`.../humanjudgeverdict/breakdown/`, `?format=json` for the data)
+  shows each model's uploads, verdicts, pass rate and flags by category
+  beside its Arena record, how often HumanJudge's pick is the same draft as
+  the Arena voters', Jev's and fhi-local's, and the latest written feedback.
+  It is an admin view: anyone not signed in as staff is sent to the admin
+  login, and staff without view permission on HumanJudge verdicts get a 403,
+  the JSON included (`humanjudge_reports.breakdown`).
+- **The account.** One HumanJudge model, standalone (not enrolled in a
+  public benchmark), holds every Arena draft. With more than one model on
+  the account, set `HUMANJUDGE_MODEL_ID` to it.
+
 ## Rankings and privacy (`condition_rankings.py`, `public_rankings.py`)
 
 The public page shows two things, both safe to publish:
@@ -617,6 +689,9 @@ environment variables of the same name.
 | `CHOOSER_SIMULATED_QA` | `True` (`False` in tests) | Give appeal cases a simulated interview |
 | `CHOOSER_JUDGE_EVIDENCE` | `True` (`False` in tests) | Judge a case's evidence as it is built: Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on, our own model for whatever Jev does not judge. Off also hides our own model's stored verdicts |
 | `CHOOSER_SCORE_CANDIDATES` | `True` (`False` in tests) | Ask Jev and fhi-local for their highest-scoring candidate during generation and store the picks in backend-only task metadata |
+| `CHOOSER_HUMANJUDGE` | `True` when `HUMANJUDGE_API_KEY` is set (`False` in tests) | Allow the admin's HumanJudge upload and download (see above) |
+| `HUMANJUDGE_API_KEY` / `HUMANJUDGE_TOKEN` / `HUMANJUDGE_MODEL_ID` | unset | HumanJudge's model key, an optional personal access token for reading votes, and the model id when the account has several |
+| `CHOOSER_HUMANJUDGE_MIN_VERDICTS` | `1` | HumanJudge verdicts every draft of a case needs before its pick is recorded |
 | `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` | `60` | Seconds a case waits for those verdicts, Jev's and our own model's together |
 | `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |
 | `CHOOSER_QA_TIMEOUT` | `60` | Seconds each question generator may take |
@@ -658,7 +733,8 @@ reviews, `chosen_candidate` is null and `vote_count` is zero rather than the
 task disappearing from the export. Non-empty rationales are in
 `review_feedback` with their outcome and candidate references, but no user,
 session or address identifier. Generation-time Jev and fhi-local picks are in
-`scorer_picks`, keyed `jev` and `fhi_local`, each with the winning candidate's
+`scorer_picks`, keyed `jev` and `fhi_local` (and `humanjudge` once
+HumanJudge's reviewers have picked one), each with the winning candidate's
 id, index and model name, its score, and the scorer/rubric. These stay on the
 task's backend-only `scoring_json`, never in the case context or voter API.
 The case (summaries and `qa_pairs` included) rides along in `context`, and its

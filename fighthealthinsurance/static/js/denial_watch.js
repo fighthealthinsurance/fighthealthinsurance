@@ -11,7 +11,7 @@ const MOVED_TO=MOVED.get(location.hash.slice(1));
 if(OE_URL&&MOVED_TO){location.replace(OE_URL+'#'+MOVED_TO);return;}
 const DATA_EL=document.getElementById('dw-data');const ROOT=document.querySelector('.dw');
 if(!DATA_EL||!ROOT||!window.DWCharts)return;
-const {foldLinks,fmt,pct,tok,line,grow,slide,countUp}=window.DWCharts;
+const {foldLinks,fmt,pct,tok,line,grow,slide,countUp,sectionStrip}=window.DWCharts;
 /* Before the data is read, so a bad bundle or a chart that throws can't leave a link stuck on a closed fold. */
 foldLinks();
 const D=JSON.parse(DATA_EL.textContent);
@@ -53,6 +53,7 @@ $('stats').innerHTML=[
   [pct(imr25.r,0),'reviews won','by patients at California\'s independent review','good']
 ].map(([b,l,s,k])=>`<div class="dw-stat dw-stat-${k}"><p class="dw-stat-head"><b class="dw-num">${b}</b> <strong>${l}</strong></p><span>${s}</span></div>`).join('');
 countUp($('stats'));
+sectionStrip(document.querySelector('.dw .fhi-jump-links'));
 
 /* tile map engine */
 const S=48,G=2.5,OX=6,OY=6;

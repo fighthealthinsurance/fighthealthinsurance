@@ -5019,6 +5019,98 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
         return f"Skip of Task {self.task_id} by {self.session_key}"
 
 
+class HumanJudgeSubmission(ExportModelOperationsMixin("HumanJudgeSubmission"), models.Model):  # type: ignore
+    """One Arena draft sent to HumanJudge (humanjudge.com) for outside human
+    review (see chooser_humanjudge). Only synthetic Arena appeal drafts are
+    ever sent: HumanJudge shows what it is sent to its reviewers. The
+    inference id is made once and reused on every retry, so a resend after a
+    lost response is idempotent on their side."""
+
+    STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("SENT", "Sent"),
+        ("FAILED", "Failed"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    task = models.ForeignKey(
+        ChooserTask, on_delete=models.CASCADE, related_name="humanjudge_submissions"
+    )
+    candidate = models.OneToOneField(
+        ChooserCandidate,
+        on_delete=models.CASCADE,
+        related_name="humanjudge_submission",
+    )
+    # Our gj_inference_id for the trace: how HumanJudge's votes are matched
+    # back to the draft.
+    inference_id = models.CharField(max_length=100, unique=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="PENDING")
+    attempts = models.PositiveSmallIntegerField(default=0)
+    # Status code or exception class only, never a response body.
+    last_error = models.CharField(max_length=200, blank=True, default="")
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "created_at"])]
+        verbose_name = "HumanJudge Submission"
+        verbose_name_plural = "HumanJudge Submissions"
+
+    def __str__(self):
+        return f"HumanJudge {self.status} for Candidate {self.candidate_id}"
+
+
+class HumanJudgeVerdict(ExportModelOperationsMixin("HumanJudgeVerdict"), models.Model):  # type: ignore
+    """One HumanJudge reviewer's verdict on one Arena draft.
+
+    Kept apart from ChooserVote on purpose: these are an outside judge's
+    pass/flag verdicts on single drafts, not our voters' side-by-side picks,
+    so they never count toward the Arena's vote tallies or public rankings.
+    They feed only the "humanjudge" pick in ChooserTask.scoring_json, next to
+    Jev's and fhi-local's."""
+
+    VERDICT_CHOICES = [
+        ("pass", "Pass"),
+        ("flag", "Flag"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    submission = models.ForeignKey(
+        HumanJudgeSubmission, on_delete=models.CASCADE, related_name="verdicts"
+    )
+    # Denormalized from the submission for direct queries.
+    task = models.ForeignKey(
+        ChooserTask, on_delete=models.CASCADE, related_name="humanjudge_verdicts"
+    )
+    candidate = models.ForeignKey(
+        ChooserCandidate, on_delete=models.CASCADE, related_name="humanjudge_verdicts"
+    )
+    # Their vote id when the record carries one, else a digest of the trace,
+    # reviewer and time, so re-fetching the same vote never adds a row.
+    external_key = models.CharField(max_length=128, unique=True)
+    verdict = models.CharField(max_length=10, choices=VERDICT_CHOICES)
+    # HumanJudge's category for a flag (Wrong, Incomplete, Missed Point,
+    # Harmful, Impractical); blank on a pass.
+    flag_category = models.CharField(max_length=100, blank=True, default="")
+    feedback = models.TextField(blank=True, default="")
+    # HumanJudge's opaque reviewer id, not one of our users.
+    evaluator_id = models.CharField(max_length=128, blank=True, default="")
+    voted_at = models.DateTimeField(null=True, blank=True)
+    raw = models.JSONField(default=dict, blank=True)
+    fetched_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["task"]),
+            models.Index(fields=["candidate", "verdict"]),
+        ]
+        verbose_name = "HumanJudge Verdict"
+        verbose_name_plural = "HumanJudge Verdicts"
+
+    def __str__(self):
+        return f"HumanJudge {self.verdict} on Candidate {self.candidate_id}"
+
+
 class EvaluatorLoginThrottle(models.Model):
     digest = models.CharField(max_length=64, unique=True)
     failures = models.PositiveIntegerField(default=0)

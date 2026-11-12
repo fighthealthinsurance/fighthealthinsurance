@@ -27,6 +27,7 @@
                     <h3 class="fhi-card-title arena-leader-model"><span class="arena-trophy" aria-hidden="true">🏆</span> {{ t.leader.model }}</h3>
                     <p class="arena-leader-stat"><b class="arena-leader-num">{{ t.leader.win_rate|floatformat:0 }}%</b> <span>win rate: picked in {{ t.leader.won|floatformat:"-1" }} of the {{ t.leader.shown }} votes it was shown in</span></p>
                     <p class="fhi-hint">Caught making things up in {{ t.leader.flag_rate|floatformat:0 }}% of those votes.{% if t.ranked > 1 %} {{ t.ranked|add:"-1" }} other model{{ t.ranked|add:"-1"|pluralize }} ranked below it.{% endif %}</p>
+                    {% if t.leader.humanjudge and not t.leader.humanjudge.warming_up %}<p class="fhi-hint arena-leader-humanjudge">Outside reviewers at <a href="#humanjudge">HumanJudge</a> passed {{ t.leader.humanjudge.pass_rate|floatformat:0 }}% of its drafts ({{ t.leader.humanjudge.reviews }} reviews).</p>{% endif %}
                     <a class="fhi-card-action" href="#window-all">See the full table</a>
                     {% else %}
                     <h3 class="fhi-card-title arena-leader-model">No leader yet</h3>
@@ -71,6 +72,7 @@
                         <th class="num" title="Votes this model's draft was shown in">Shown</th>
                         <th class="num arena-rate-head" title="Won / shown">Win rate</th>
                         <th class="num" title="Votes in which a referee flagged this model's draft as making things up, over votes shown in">Caught making things up</th>
+                        {% if t.has_humanjudge %}<th class="num arena-humanjudge-head" title="Share of this model's drafts that HumanJudge's outside reviewers passed; counted apart from the votes and never part of the rank">Outside reviewers passed</th>{% endif %}
                     </tr>
                 </thead>
                 <tbody>
@@ -82,6 +84,7 @@
                         <td class="num">{{ r.shown }}</td>
                         <td class="num arena-rate">{% if r.win_rate is None %}&mdash;{% else %}<span class="arena-rate-number">{{ r.win_rate|floatformat:0 }}%</span><span class="arena-bar" aria-hidden="true"><span class="arena-bar-fill" style="width: {{ r.win_rate|floatformat:0 }}%"></span></span>{% endif %}</td>
                         <td class="num">{% if r.flag_rate is None %}&mdash;{% else %}{{ r.flag_rate|floatformat:0 }}%{% endif %}</td>
+                        {% if t.has_humanjudge %}<td class="num arena-humanjudge">{% if not r.humanjudge %}&mdash;{% elif r.humanjudge.warming_up %}<span class="fhi-hint" title="Fewer than {{ data.min_shown }} reviews so far">{{ r.humanjudge.reviews }} review{{ r.humanjudge.reviews|pluralize }} so far</span>{% else %}{{ r.humanjudge.pass_rate|floatformat:0 }}% <span class="fhi-hint">of {{ r.humanjudge.reviews }}</span>{% endif %}</td>{% endif %}
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -143,6 +146,7 @@
                 <li><strong>Win rate</strong> is votes a model's draft won over votes it was shown in. A referee who finds two or more drafts equally good can call a tie, which splits that vote evenly between them (half a win each for a two-way tie). Drafts are shown blind (the page gets opaque references, never a model name or a stored order), in random order, so a vote is for the letter, not the brand. Only votes cast since blind voting began count.</li>
                 <li><strong>Leading</strong> is the ranked model with the best win rate; a tie goes to the one caught making things up less often.</li>
                 <li><strong>Caught making things up</strong> is how often a referee flagged the draft for inventing a study, a law, a test result, a date or a history that was not in the case. A draft can be flagged and still lose honestly; a flagged draft can never be the vote.</li>
+                <li id="humanjudge"><strong>Outside reviewers passed</strong> (appeal letters only) is a second opinion from people outside the Arena: <a href="https://humanjudge.com" rel="noopener">HumanJudge</a>'s reviewers read one draft at a time, blind to the model, and pass it or flag it as wrong, incomplete, off the point, harmful or impractical. It is the share of a model's drafts they passed, shown once a model has {{ data.min_shown }} reviews. Their verdicts are counted apart from the Arena's votes and never change a model's rank. They see only the made-up cases and their drafts.</li>
                 <li><strong>Warming up</strong> marks a model with fewer than {{ data.min_shown }} votes; its rates are listed but not ranked against the rest, and it cannot lead.</li>
                 <li><strong>Cases are synthetic.</strong> Each one is written by a model about a real condition and treatment pair, with made-up facts, the published evidence already on file for that pair, and, on newer cases, web pages a search found that a reviewer judged relevant. Newer cases also carry a summary of each study and the made-up patient's answers to the questions the app would ask, and every draft is given the same. No real patient's letter is ever shown.</li>
                 <li>The same data is available as <a href="?format=json">JSON</a>. Counts refresh every few minutes.</li>

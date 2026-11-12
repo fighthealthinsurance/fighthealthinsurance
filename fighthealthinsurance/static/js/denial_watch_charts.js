@@ -39,6 +39,7 @@ function line(svg,pts,{ymin,ymax,fmtY,ticks,color,ink=color,label,open,dash,also
   for(const s of also){h+='<g class="dw-line">';series(s.pts,s);h+='</g>';}
   h+='<g class="dw-line dw-line-main">';series(pts,{color,ink,label,open,dash});h+='</g>';
   svg.innerHTML=h;
+  svg._dwRead={X,Y,top:Tp,bottom:H-B,mid:(L+W-R)/2,series:[{pts,label},...also.map(s=>({pts:s.pts,label:s.label}))]};readout(svg);
   if(!MOTION)return;
   const prev=svg._dwY;svg._dwY=new Map(pts.map(p=>[p.x,Y(p.y)]));
   const pp=pts.map(p=>[X(p.x),Y(p.y),prev&&prev.has(p.x)?prev.get(p.x):H-B]);
@@ -46,6 +47,24 @@ function line(svg,pts,{ymin,ymax,fmtY,ticks,color,ink=color,label,open,dash,also
   if(prev&&seen.has(svg)){if(pp.some(([,y,y0])=>Math.abs(y-y0)>0.01))glide(svg,pp);}
   else onView(svg,()=>hideLines(svg),()=>drawIn(svg));
 }
+
+/* Pointing at a line chart (a hover, or a tap on a phone) shows the nearest year's figures beside a thin rule. The table under the chart has the same figures for keyboards and screen readers. */
+const NS='http://www.w3.org/2000/svg';
+const el=(tag,attrs)=>{const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);return e;};
+function readout(svg){if(svg._dwReadOn)return;svg._dwReadOn=true;
+  const hide=()=>{const g=svg.querySelector('.dw-read');if(g)g.remove();};
+  const show=e=>{const r=svg._dwRead,m=svg.getScreenCTM();if(!r||!m)return;const vx=new DOMPoint(e.clientX,e.clientY).matrixTransform(m.inverse()).x;
+    const main=r.series[0].pts;let p=main[0];for(const q of main)if(Math.abs(r.X(q.x)-vx)<Math.abs(r.X(p.x)-vx))p=q;
+    const x=r.X(p.x),lines=[String(p.x)];for(const s of r.series){const q=s.pts.find(t=>t.x===p.x);if(q)lines.push(s.label(q.y));}
+    hide();const g=el('g',{class:'dw-read','aria-hidden':'true'});g.append(el('line',{x1:x,x2:x,y1:r.top,y2:r.bottom}));
+    const box=el('rect',{rx:4}),t=el('text',{y:r.top+16,'font-size':13});g.append(box,t);
+    lines.forEach((s,i)=>{const sp=el('tspan',{x:0,dy:i?17:0});if(!i)sp.setAttribute('font-weight','700');sp.textContent=s;t.append(sp);});
+    svg.append(g);const b=t.getBBox(),left=x>r.mid,tx=left?x-10-b.width:x+10;
+    t.querySelectorAll('tspan').forEach(sp=>sp.setAttribute('x',tx));box.setAttribute('x',tx-6);box.setAttribute('y',b.y-4);box.setAttribute('width',b.width+12);box.setAttribute('height',b.height+8);};
+  svg.addEventListener('pointermove',show);svg.addEventListener('pointerdown',show);
+  /* A mouse leaving hides it; a finger lifting leaves it up until the next tap elsewhere. */
+  svg.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse')hide();});
+  document.addEventListener('pointerdown',e=>{if(!svg.contains(e.target))hide();});}
 
 /* Motion: each chart moves once as it comes into view, then stays still. Nothing moves for anyone who asks for less motion, and print shows the finished chart. */
 const MQ=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: no-preference)');
@@ -55,7 +74,8 @@ const finishers=new Set();
 /* Finish everything now and stop: every chart at its final state, nothing waiting. For printing, and for turning on reduced motion mid-visit. */
 function settle(){MOTION=false;if(io)io.disconnect();held.clear();finishers.forEach(f=>f());finishers.clear();document.getAnimations().forEach(a=>{if(a.effect&&a.effect.target&&a.effect.target.closest&&a.effect.target.closest('.dw'))a.finish();});
   document.querySelectorAll('.dw .dw-bar-fill,.dw .dw-dumb i').forEach(e=>{e.style.scale='';e.style.translate='';});
-  document.querySelectorAll('.dw .dw-line').forEach(g=>g.style.clipPath='');document.querySelectorAll('.dw .dw-end').forEach(t=>t.style.opacity='');}
+  document.querySelectorAll('.dw .dw-line').forEach(g=>g.style.clipPath='');document.querySelectorAll('.dw .dw-end').forEach(t=>t.style.opacity='');
+  document.querySelectorAll('.dw .dw-mix-donut [mask]').forEach(p=>p.removeAttribute('mask'));document.querySelectorAll('.dw .dw-mix-donut > *').forEach(e=>e.style.opacity='');}
 window.addEventListener('beforeprint',settle);
 if(MQ&&MQ.addEventListener)MQ.addEventListener('change',()=>{if(!MQ.matches)settle();});
 const EASE='cubic-bezier(.2,.7,.2,1)';
@@ -109,5 +129,36 @@ function countUp(box){if(!MOTION||!box||!inView(box))return;seen.add(box);
     const run=now=>{const p=Math.min(1,Math.max(0,(now-t0)/1000));if(p>=1){done();return;}b.textContent=f(v*(1-Math.pow(1-p,3)));raf=requestAnimationFrame(run);};
     run(t0-1);});}
 
-return {foldLinks,fmt,pct,tok,line,grow,slide,countUp};
+/* The coverage donut sweeps round from twelve o'clock, then its labels come in. */
+let sweeps=0;
+function sweep(svg){if(!MOTION||!svg)return;const slices=[...svg.querySelectorAll(':scope > path')],labels=[...svg.querySelectorAll(':scope > g, :scope > text')],id='dw-sweep-'+(++sweeps);
+  let ring=null,mask=null;
+  const hold=()=>{if(ring)return;ring=el('circle',{cx:100,cy:100,r:50,fill:'none',stroke:'white','stroke-width':100,pathLength:1,'stroke-dasharray':'1 1','stroke-dashoffset':1,transform:'rotate(-90 100 100)'});
+    mask=el('mask',{id,maskUnits:'userSpaceOnUse',x:-50,y:-50,width:300,height:300});mask.append(ring);(svg.querySelector('defs')||svg).append(mask);
+    slices.forEach(p=>p.setAttribute('mask',`url(#${id})`));labels.forEach(l=>l.style.opacity='0');};
+  const clear=()=>{slices.forEach(p=>p.removeAttribute('mask'));if(mask)mask.remove();};
+  onView(svg,hold,()=>{hold();labels.forEach((l,i)=>{l.style.opacity='';l.animate({opacity:[0,1]},{duration:300,delay:900+i*60,fill:'backwards'});});
+    ring.animate({strokeDashoffset:[1,0]},{duration:1100,easing:'cubic-bezier(.4,0,.2,1)',fill:'forwards'}).finished.then(clear,clear);});}
+
+/* The page's section links, kept in a slim bar under the site header once the big ones scroll away, with the section being read marked. Wide screens only: on a phone the header already takes a fifth of the screen. It also rechecks when the page changes height, e.g. a table opens. */
+function sectionStrip(nav){const root=document.querySelector('.dw');if(!nav||!root)return;
+  const links=[...nav.querySelectorAll('a[href^="#"]')],secs=links.map(a=>document.getElementById(a.getAttribute('href').slice(1)));if(!links.length||secs.some(x=>!x))return;
+  const bar=document.createElement('nav'),row=document.createElement('div');bar.className='dw-where';bar.setAttribute('aria-label','Sections');bar.hidden=true;row.className='dw-where-row';bar.append(row);
+  links.forEach(a=>{const b=document.createElement('a');b.href=a.getAttribute('href');b.textContent=a.textContent;row.append(b);});
+  nav.after(bar);root.classList.add('dw-has-where');
+  const pills=[...row.children],head=document.querySelector('.navbar-default'),wide=window.matchMedia('(min-width: 768px)');let raf=0,cur=-2;
+  const update=()=>{raf=0;const top=head?Math.max(0,head.getBoundingClientRect().bottom):0,show=wide.matches&&nav.getBoundingClientRect().bottom<top;
+    bar.hidden=!show;if(!show)return;bar.style.top=top+'px';
+    const line=top+bar.offsetHeight+24;let at=-1;secs.forEach((x,i)=>{if(x.getBoundingClientRect().top<=line)at=i;});
+    if(window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-2&&secs[secs.length-1].getBoundingClientRect().top<window.innerHeight)at=secs.length-1;
+    if(at===cur)return;cur=at;pills.forEach((p,i)=>{if(i===at)p.setAttribute('aria-current','location');else p.removeAttribute('aria-current');});
+    const p=pills[at];if(p&&(p.offsetLeft<row.scrollLeft||p.offsetLeft+p.offsetWidth>row.scrollLeft+row.clientWidth))row.scrollLeft=p.offsetLeft-16;};
+  const ask=()=>{if(!raf)raf=requestAnimationFrame(update);};
+  window.addEventListener('scroll',ask,{passive:true});window.addEventListener('resize',ask);
+  if(window.ResizeObserver)new ResizeObserver(ask).observe(root);update();}
+
+/* The donut is drawn by the page itself, so it sweeps from here on any page that has one. */
+document.querySelectorAll('.dw .dw-mix-donut').forEach(sweep);
+
+return {foldLinks,fmt,pct,tok,line,grow,slide,countUp,sectionStrip};
 })();

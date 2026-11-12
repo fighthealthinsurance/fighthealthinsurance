@@ -34,6 +34,37 @@ def make_pdf_bytes(
     return pdf_bytes
 
 
+def make_scanned_pdf_bytes(
+    page_texts: Sequence[str], hidden_texts: Optional[Sequence[str]] = None
+) -> bytes:
+    """Build a PDF whose pages are pictures of ``page_texts``, as a scanner
+    makes them: no text layer.
+
+    With ``hidden_texts``, each page also carries that text invisibly, as a
+    font with an encoding of its own does: the page shows one text and its
+    text layer reads as another.
+    """
+    doc = pymupdf.open()
+    for number, text in enumerate(page_texts):
+        source = pymupdf.open()
+        drawn = source.new_page()
+        drawn.insert_textbox(drawn.rect + (54, 54, -54, -54), text, fontsize=16)
+        picture = drawn.get_pixmap(dpi=200, colorspace=pymupdf.csGRAY).tobytes("png")
+        source.close()
+        page = doc.new_page()
+        page.insert_image(page.rect, stream=picture)
+        if hidden_texts is not None:
+            page.insert_textbox(
+                page.rect + (54, 54, -54, -54),
+                hidden_texts[number],
+                fontsize=11,
+                render_mode=3,
+            )
+    pdf_bytes: bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
 def make_shared_stream_pdf_bytes(page_count: int, text_operations: int) -> bytes:
     """Build a PDF whose ``page_count`` pages all draw one content stream.
 
