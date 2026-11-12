@@ -9,6 +9,12 @@ can tell at a glance whether faxing (and Sonic in particular) is working.
 The Sonic check makes a network login round-trip, so it is run under a timeout;
 other backends are reported as configured without an active probe (they do not
 expose a cheap liveness check).
+
+A HylaFAX backend checks its modem is attached before each send and records the
+result (``modem_health_service``); the status page can't do that check itself,
+since only the fax workers can ssh to the fax host. That last recorded result is
+shown with the backend, and a backend whose latest check found a modem missing
+is reported down.
 """
 
 import concurrent.futures
@@ -25,6 +31,7 @@ class FaxBackendHealthDetail:
     professional: bool = False
     probed: bool = False
     error: Optional[str] = None
+    modem: Optional[Dict[str, Any]] = None
 
 
 # A ``check_health`` probe can make several sequential HTTP round-trips
@@ -68,6 +75,40 @@ def _probe_backend(backend: Any, timeout: float) -> tuple[bool, Optional[str]]:
         ex.shutdown(wait=False, cancel_futures=True)
 
 
+def _modem_health(service: str) -> Dict[str, Any]:
+    """The last modem check a HylaFAX backend recorded on its
+    ExternalServiceHealth row. ``ok`` is None when it has never recorded one,
+    else whether its latest check found every modem attached. Never raises."""
+    from fighthealthinsurance.models import ExternalServiceHealth
+
+    out: Dict[str, Any] = {
+        "ok": None,
+        "last_success_at": None,
+        "last_failure_at": None,
+        "last_failure": "",
+        "error": None,
+    }
+    try:
+        health = ExternalServiceHealth.objects.filter(service=service).first()
+    except Exception as e:
+        logger.warning(f"{service} health read failed: {type(e).__name__}")
+        out["error"] = type(e).__name__
+        return out
+    if health is None:
+        return out
+    out["last_success_at"] = health.last_success_at
+    out["last_failure_at"] = health.last_failure_at
+    out["last_failure"] = health.last_failure
+    if health.last_failure_at is None:
+        out["ok"] = health.last_success_at is not None
+    else:
+        out["ok"] = (
+            health.last_success_at is not None
+            and health.last_success_at > health.last_failure_at
+        )
+    return out
+
+
 def check_fax_backends_health(probe_timeout: float = 10.0) -> Dict[str, Any]:
     """Check the health of all registered fax backends.
 
@@ -101,6 +142,14 @@ def check_fax_backends_health(probe_timeout: float = 10.0) -> Dict[str, Any]:
             sonic_ok = ok
             sonic_error = error
 
+        modem: Optional[Dict[str, Any]] = None
+        modem_service = getattr(backend, "modem_health_service", None)
+        if isinstance(modem_service, str):
+            modem = _modem_health(modem_service)
+            if modem["ok"] is False:
+                ok = False
+                error = f"modem: {modem['last_failure']}"
+
         details.append(
             FaxBackendHealthDetail(
                 name=name,
@@ -108,6 +157,7 @@ def check_fax_backends_health(probe_timeout: float = 10.0) -> Dict[str, Any]:
                 professional=professional,
                 probed=probed,
                 error=error,
+                modem=modem,
             )
         )
 
@@ -132,6 +182,7 @@ def check_fax_backends_health(probe_timeout: float = 10.0) -> Dict[str, Any]:
                 "professional": d.professional,
                 "probed": d.probed,
                 "error": d.error,
+                "modem": d.modem,
             }
             for d in details
         ],

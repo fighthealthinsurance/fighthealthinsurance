@@ -963,7 +963,8 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _fax_backend_status() -> Dict[str, Any]:
-        """Fax backend health, including a live Sonic login probe."""
+        """Fax backend health: a live Sonic login probe, and the last modem
+        check each HylaFAX backend recorded."""
         out: Dict[str, Any] = {
             "ok": True,
             "error": None,
