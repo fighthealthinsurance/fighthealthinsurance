@@ -22,7 +22,7 @@ class Command(BaseCommand):
             "--price", type=Decimal, default=Decimal("5"), help="Dollars per worker"
         )
         parser.add_argument(
-            "--reviews", type=int, default=8, help="Counted reviews per worker"
+            "--reviews", type=int, default=10, help="Counted reviews per worker"
         )
         parser.add_argument(
             "--title",

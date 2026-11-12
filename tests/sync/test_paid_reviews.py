@@ -260,6 +260,14 @@ class ProcessSubmissionTest(TestCase):
         self._submit("FHI-ABCD-EFGH")
         self.assertEqual(self.client_mock.review_submission.call_count, 1)
 
+    def test_already_reviewed_submission_is_not_answered_again(self):
+        paid_reviews.process_submission(
+            self.bounty,
+            {"id": "sub-1", "status": "redo_requested", "text": "no code"},
+            self.client_mock,
+        )
+        self.client_mock.review_submission.assert_not_called()
+
     def test_failed_approval_is_retried_on_the_next_sight(self):
         self.client_mock.review_submission.side_effect = [
             paid_reviews.RentAHumanError("down"),
@@ -341,6 +349,35 @@ class WebhookViewTest(TestCase):
         ) as review:
             self._post(self._event())
         self.assertEqual(review.call_args.args[2], "approve")
+
+    def test_submission_id_is_read_from_the_event_id_when_data_lacks_it(self):
+        event = {
+            "id": "submission.submitted:sub-7",
+            "type": "submission.submitted",
+            "data": {"bountyId": "bounty-1"},
+        }
+        with mock.patch.object(
+            paid_reviews.RentAHumanClient,
+            "get_submission",
+            return_value={"text": "FHI-ABCD-EFGH"},
+        ) as fetch, mock.patch.object(
+            paid_reviews.RentAHumanClient, "review_submission"
+        ):
+            self._post(event)
+        self.assertEqual(fetch.call_args.args, ("bounty-1", "sub-7"))
+
+    def test_resubmission_after_a_redo_is_checked_again(self):
+        answers = [{"id": "sub-1", "text": "no code"}, {"id": "sub-1", "text": "FHI-ABCD-EFGH"}]
+        with mock.patch.object(
+            paid_reviews.RentAHumanClient, "get_submission", side_effect=answers
+        ), mock.patch.object(
+            paid_reviews.RentAHumanClient, "review_submission"
+        ) as review:
+            self._post(self._event())
+            self._post(self._event())
+        self.assertEqual(
+            [c.args[2] for c in review.call_args_list], ["request_redo", "approve"]
+        )
 
     def test_other_events_are_acknowledged_and_ignored(self):
         response = self._post({"id": "evt-2", "type": "message.received", "data": {}})

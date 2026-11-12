@@ -34,7 +34,6 @@ from decimal import Decimal
 
 import requests
 from django.conf import settings
-from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.http import (
     HttpRequest,
@@ -76,6 +75,11 @@ def new_join_token() -> str:
 def new_completion_code() -> str:
     chars = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
     return f"FHI-{chars[:4]}-{chars[4:]}"
+
+
+def webhook_url() -> str:
+    origin = settings.PAID_REVIEW_SITE_ORIGIN.rstrip("/")
+    return f"{origin}/chooser/paid/webhook/rentahuman/"
 
 
 def join_url(bounty: PaidReviewBounty) -> str:
@@ -270,6 +274,43 @@ class RentAHumanClient:
             idempotency_key=f"fhi-{submission_id}-{action}",
         )
 
+    # Account setup (rentahuman_setup).
+
+    def wallet_balance(self) -> dict:
+        return _as_dict(self._call("GET", "/wallet/balance"))
+
+    def deposit_checkout(self, dollars: Decimal) -> dict:
+        """A Stripe Checkout link to top up the wallet; nothing is charged
+        until a person pays on that page."""
+        return _as_dict(
+            self._call(
+                "POST",
+                "/wallet/deposit",
+                {"amount": float(dollars)},
+                idempotency_key=str(uuid.uuid4()),
+            )
+        )
+
+    def webhook_endpoints(self) -> list:
+        return _as_list(self._call("GET", "/webhooks/endpoints"), "endpoints")
+
+    def create_webhook_endpoint(self, url: str, events: typing.List[str]) -> dict:
+        """Register ``url``; the answer holds the signing secret, once."""
+        return _as_dict(
+            self._call(
+                "POST",
+                "/webhooks/endpoints",
+                {
+                    "url": url,
+                    "events": events,
+                    "description": "Fight Health Insurance paid Arena reviews",
+                },
+            )
+        )
+
+    def test_webhook_endpoint(self, endpoint_id: str) -> dict:
+        return _as_dict(self._call("POST", f"/webhooks/endpoints/{endpoint_id}/test"))
+
 
 def _as_list(found: typing.Any, name: str) -> list:
     """A list endpoint's items, whether it answered with a bare list or
@@ -347,6 +388,9 @@ def bounty_payload(bounty: PaidReviewBounty, dry_run: bool) -> dict:
 
 # --- Checking submissions -------------------------------------------------
 
+# Submission statuses (GET /api/bounties/{id}/submissions) that need no answer.
+REVIEWED_STATUSES = frozenset({"approved", "rejected", "redo_requested"})
+
 
 def codes_in(submission: typing.Any) -> typing.List[str]:
     """Every completion code anywhere in a submission, normalized. Searched
@@ -369,6 +413,10 @@ def process_submission(
     submission_id = find_id(submission, "id", "submissionId", "_id")
     if not submission_id:
         return "skipped: no submission id"
+    # Answered already, here or on RentAHuman: a repeated delivery, or the
+    # webhook and the poll both seeing it, must not answer it twice.
+    if str(submission.get("status", "")) in REVIEWED_STATUSES:
+        return f"already reviewed ({submission['status']})"
 
     already = PaidReviewSession.objects.filter(rah_submission_id=submission_id).first()
     if already is not None:
@@ -490,7 +538,10 @@ def handle_event(event: dict) -> str:
         return "ignored"
     data = event.get("data") or {}
     bounty_id = find_id(data, "bountyId", "bounty_id")
-    submission_id = find_id(data, "submissionId", "submission_id", "id")
+    submission_id = find_id(data, "submissionId", "submission_id")
+    if not submission_id:
+        # Event ids are "<type>:<subject id>" (docs/webhooks).
+        _, _, submission_id = str(event.get("id", "")).partition(":")
     if not bounty_id or not submission_id:
         return "ignored: no bounty or submission id"
     bounty = PaidReviewBounty.objects.filter(rah_bounty_id=bounty_id).first()
@@ -525,10 +576,10 @@ class PaidReviewJoinView(View):
 
 class RentAHumanWebhookView(View):
     """RentAHuman's event deliveries (docs/webhooks): signed with the
-    endpoint's secret, retried on anything but a 2xx, deduplicated on the
-    event id."""
-
-    DEDUPE_SECONDS = 2 * 24 * 60 * 60
+    endpoint's secret and retried on anything but a 2xx. Not deduplicated
+    on the event id, which is "submission.submitted:<submission id>" and so
+    can come back when a worker resubmits after a redo: process_submission
+    reads the submission's own status instead."""
 
     def post(self, request: HttpRequest) -> HttpResponse:
         secret = settings.RENTAHUMAN_WEBHOOK_SECRET
@@ -543,16 +594,11 @@ class RentAHumanWebhookView(View):
             return HttpResponseBadRequest("not JSON")
         if not isinstance(event, dict):
             return HttpResponseBadRequest("not an event")
-        dedupe_key = f"rah_event:{event.get('id', '')}"
-        if event.get("id") and cache.get(dedupe_key):
-            return HttpResponse("duplicate")
         try:
             outcome = handle_event(event)
         except (RentAHumanError, requests.RequestException) as e:
             # A 5xx makes RentAHuman try again later.
             logger.warning(f"RentAHuman event {event.get('id')}: {e}")
             return HttpResponse("retry later", status=502)
-        if event.get("id"):
-            cache.set(dedupe_key, 1, self.DEDUPE_SECONDS)
         logger.info(f"RentAHuman event {event.get('id')}: {outcome}")
         return HttpResponse(outcome)
