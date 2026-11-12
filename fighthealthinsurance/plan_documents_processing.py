@@ -566,12 +566,13 @@ async def aretry_company_lookups(limit: int = MAX_LOOKUPS_PER_RUN) -> int:
     ids = [pk async for pk in _lookups_due().values_list("pk", flat=True)[:limit]]
     finished = 0
     for pk in ids:
-        if time.monotonic() - started >= LOOKUP_RUN_SECONDS:
-            logger.info("Company lookups hit the run's time bound; the rest wait")
-            break
         text = await ready_row(pk).values_list("cleaned_text", flat=True).afirst()
         if not text:
             continue
+        # Checked just before the lookup, so none starts past the bound.
+        if time.monotonic() - started >= LOOKUP_RUN_SECONDS:
+            logger.info("Company lookups hit the run's time bound; the rest wait")
+            break
         # The stored text is the cleaned one, so it is both.
         if not await alink_company(pk, text, text):
             logger.info("A company lookup did not finish; the rest wait")
