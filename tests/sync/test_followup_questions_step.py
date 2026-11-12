@@ -150,10 +150,10 @@ class FollowUpRoundTest(QuestionsStepTestBase):
             response = self._answer_first_round()
         self.assertTemplateUsed(response, "appeals.html")
 
-    def test_a_ticked_box_survives_the_follow_up_round(self):
-        """An unticked box posts nothing, so one the follow-up page dropped
-        would be saved as unticked (GenerateAppeal._unticked_checkbox_answers)."""
+    def test_a_yes_answer_survives_the_follow_up_round(self):
+        """A yes/no question the follow-up page dropped would post nothing,
+        which is saved as "Not sure" (GenerateAppeal._yes_no_answers)."""
         self.denial.denial_type.set(DenialTypes.objects.filter(pk=3))
-        first = self._answer_first_round(emergency="on")
+        first = self._answer_first_round(emergency="yes")
         self._post_follow_up_page(first, **{question_field_name(FOLLOW_UP): "Six weeks"})
-        self.assertEqual(self._qa()["emergency"], "on")
+        self.assertEqual(self._qa()["emergency"], "Yes")

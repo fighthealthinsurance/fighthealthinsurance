@@ -64,7 +64,13 @@ from fighthealthinsurance import (
     shared_plan_documents,
 )
 from fighthealthinsurance import forms as core_forms, models
-from fighthealthinsurance.form_utils import append_help_text, from_your_letter_hint
+from fighthealthinsurance.form_utils import (
+    YES_NO_STORED,
+    YesNoNotSureField,
+    append_help_text,
+    from_your_letter_hint,
+    yes_no_answer,
+)
 from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
 from fighthealthinsurance.structured_data import render_json_ld
@@ -2034,46 +2040,41 @@ class GenerateAppeal(View):
     """View for generating appeal letters using ML models."""
 
     @staticmethod
-    def _unticked_checkbox_answers(denial, posted: set[str]) -> dict[str, str]:
-        """Write False for a checkbox that was answered before and is not now.
+    def _yes_no_answers(
+        denial, posted: typing.Mapping[str, typing.Any]
+    ) -> dict[str, str]:
+        """What to store for each yes/no question the page rendered.
 
-        An unticked checkbox sends nothing at all and ``merge_qa`` keeps
-        what it already holds for a key nobody sent, so unticking a box
-        would otherwise never take. Only keys that already hold an answer,
-        or that the page offered pre-ticked, are written, so a box nobody
-        ever ticked adds no "False" noise to the prompt, which is read as
-        prose.
+        "Yes" or "No" for a question the person answered, and "" for "Not
+        sure" (or nothing posted at all, as an older page with checkboxes
+        sends for an unticked box). A blank is never stored: it withdraws
+        whatever was stored before, so an answer taken back to "Not sure"
+        stops reaching the appeal prompt, which reads ``qa_context`` as
+        prose. That is the fix for an unticked box being stored as "False"
+        and telling the model ``in_network:False`` for someone who did not
+        know.
 
         Nothing is excluded by name: the page itself is the ownership
         boundary. ``in_network`` is the one reserved key that is also a
-        checkbox here, and ``InsuranceQuestions.__init__`` removes that
+        question here, and ``InsuranceQuestions.__init__`` removes that
         field whenever the review step owns it (``prof_pov``).
         """
         try:
-            stored = load_qa(denial)
             question_forms = (
                 common_view_logic.FindNextStepsHelper._build_question_forms(denial)
             )
             answers: dict[str, str] = {}
             for question_form in question_forms:
                 for name, field in question_form.fields.items():
-                    if not isinstance(field, forms.BooleanField):
+                    if not isinstance(field, YesNoNotSureField):
                         continue
-                    if name in posted:
-                        continue
-                    # A box the page offered pre-ticked from the letter
-                    # (ml/denial_triage.suggestions) was answered too when
-                    # it comes back unticked: without the "False" the page
-                    # would tick it again on the way back.
-                    if name in stored or question_form.get_initial_for_field(
-                        field, name
-                    ):
-                        answers[name] = "False"
+                    answer = yes_no_answer(posted.get(name))
+                    answers[name] = "" if answer is None else YES_NO_STORED[answer]
             return answers
         except Exception as e:
             logger.opt(exception=True).warning(
-                f"Could not work out which checkboxes were unticked for "
-                f"denial {getattr(denial, 'denial_id', '?')}: {e}"
+                f"Could not read the yes/no answers for denial "
+                f"{getattr(denial, 'denial_id', '?')}: {e}"
             )
             return {}
 
@@ -2212,9 +2213,8 @@ class GenerateAppeal(View):
                 if key in restricted:
                     continue
                 updates[key] = v
-            updates.update(
-                self._unticked_checkbox_answers(denial, posted=set(elems.keys()))
-            )
+            yes_no = self._yes_no_answers(denial, posted=elems)
+            updates.update(yes_no)
             # This page posts every field it rendered, so a blank where an
             # answer was stored is the person clearing it. merge_qa drops
             # blanks on its own, which is right for the sparse posts other
@@ -2233,6 +2233,13 @@ class GenerateAppeal(View):
                 question = question_text_for_field(raw, generated_questions)
                 if question is not None and raw != qa_key_for_question(question):
                     withdrawn.append(raw)
+            # A yes or no taken back to "Not sure" takes the sentence it
+            # derived with it ("This is an urgent claim."). Nothing stored
+            # answers that question any more, so a background run would not
+            # know to withdraw the sentence; the next generation derives it
+            # again from whatever the remaining answers still support.
+            if any(k in yes_no for k in withdrawn):
+                withdrawn.append("medical_context")
             merge_qa(denial, updates, source="appeal_form_post", withdraw=withdrawn)
             denial.save(update_fields=["qa_context"])
         except Exception as e:

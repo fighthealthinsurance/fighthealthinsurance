@@ -48,7 +48,7 @@ from django.db import IntegrityError, close_old_connections, transaction
 
 from django.db.models import Case, F, Q, QuerySet, Value, When
 from django.db.models.functions import Length
-from django.forms import BooleanField, Form
+from django.forms import Form
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils.html import format_html, escape as html_escape
@@ -119,6 +119,7 @@ from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.ml.serving_registry import aserving_id_for
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
+from fighthealthinsurance.form_utils import YesNoNotSureField, yes_no_answer
 from fighthealthinsurance.ml.ml_models import error_kind_for_log
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.generate_appeal import backend_label
@@ -1783,11 +1784,11 @@ class FindNextStepsHelper:
         question_forms = []
         prof_pov = denial.professional_to_finish
 
-        # The urgent and pre-service boxes the letter's triage points to
-        # (ml/denial_triage.suggestions) start ticked and say so; a stored
-        # answer still wins (magic_combined_form), and GenerateAppeal saves
-        # an unticked one as an answer, so a box the person cleared stays
-        # clear.
+        # The urgent and pre-service questions the letter's triage points to
+        # (ml/denial_triage.suggestions) start on "Yes" and say so; a stored
+        # answer still wins (magic_combined_form), and "No" is stored like
+        # any answer, so a suggestion the person turned down stays turned
+        # down. "Not sure" stores nothing, so the suggestion is offered again.
         suggested = denial_triage.suggestions(
             denial, min_confidence=denial_triage.SUGGEST_CONFIDENCE
         )
@@ -6706,9 +6707,11 @@ class AppealsBackendHelper:
         main = []
         footer = []
         medical_context = set()
-        # Whether the answers hold a box of a form that derives the sentence
-        # (the site stores an unticked one as False): then what it derives
-        # now, even nothing, is the person's decision.
+        # Whether the answers say yes or no to a question of a form that
+        # derives the sentence: then what it derives now, even nothing, is
+        # the person's decision. "Not sure" is not an answer and is never
+        # stored, but "No" is, so a suggested box the person cleared stays
+        # cleared.
         answered_context_form = False
         plan_context = set()
         # Extract any medical context AND
@@ -6723,9 +6726,9 @@ class AppealsBackendHelper:
                     op = getattr(parsed, "medical_context", None)
                     if op is not None and callable(op):
                         if any(
-                            name in parameters
+                            yes_no_answer(parameters.get(name)) is not None
                             for name, field in parsed.fields.items()
-                            if isinstance(field, BooleanField)
+                            if isinstance(field, YesNoNotSureField)
                         ):
                             answered_context_form = True
                         try:

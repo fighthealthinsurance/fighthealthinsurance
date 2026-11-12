@@ -172,11 +172,17 @@ class QuestionsPageSuggestionsTest(TestCase):
         _forms, combined = self.combined()
         self.assertFalse(combined.fields["urgent"].initial)
 
-    def test_an_unticked_suggestion_is_saved_as_an_answer(self):
+    def test_a_suggestion_answered_no_is_saved_as_an_answer(self):
         triage(self.denial)
-        answers = GenerateAppeal._unticked_checkbox_answers(self.denial, {"pre_service"})
-        self.assertEqual(answers.get("urgent"), "False")
-        self.assertNotIn("pre_service", answers)
+        answers = GenerateAppeal._yes_no_answers(
+            self.denial, {"urgent": "no", "pre_service": "yes"}
+        )
+        self.assertEqual(answers.get("urgent"), "No")
+
+    def test_a_suggestion_answered_not_sure_is_left_unanswered(self):
+        triage(self.denial)
+        answers = GenerateAppeal._yes_no_answers(self.denial, {"urgent": "not_sure"})
+        self.assertEqual(answers.get("urgent"), "")
 
 
 @override_settings(**TRIAGE_ON)
