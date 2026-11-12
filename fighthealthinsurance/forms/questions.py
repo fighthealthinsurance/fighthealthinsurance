@@ -83,14 +83,12 @@ def wpath_version_in(texts: Iterable[str]) -> Optional[str]:
 class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
     """Insurance Questions"""
 
-    in_network = YesNoNotSureField(
-        required=False, label="Was this an in-network visit?"
-    )
+    in_network = YesNoNotSureField(required=False, label="In-network visit?")
     pre_service = YesNoNotSureField(
         required=False,
-        label="Is this a pre-service claim (made before the doctor's visit or service)?",
+        label="Pre-service claim (made before the service)?",
     )
-    urgent = YesNoNotSureField(required=False, label="Is this an urgent claim?")
+    urgent = YesNoNotSureField(required=False, label="Urgent claim?")
 
     def __init__(self, *args, prof_pov: bool = False, **kwargs):
         self.prof_pov = prof_pov

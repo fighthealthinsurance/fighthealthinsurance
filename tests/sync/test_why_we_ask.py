@@ -14,7 +14,11 @@ import inspect
 from bs4 import BeautifulSoup
 from django.test import TestCase
 
-from fighthealthinsurance.form_utils import field_why_we_ask, magic_combined_form
+from fighthealthinsurance.form_utils import (
+    YesNoNotSureField,
+    field_why_we_ask,
+    magic_combined_form,
+)
 from fighthealthinsurance.forms import questions as question_forms
 
 # Words the visible page may show for one denial type's questions.
@@ -54,8 +58,15 @@ def _rendered(form_class) -> BeautifulSoup:
 
 def _visible_words(form_class) -> int:
     """Words a person sees before opening any "Why we ask": labels, help
-    text, choices and the disclosure's own summary line."""
+    text, choices and the disclosure's own summary line.
+
+    Not the Yes / No / Not sure under each yes/no question: the same three
+    answers every time, read once and not again for each question.
+    """
     soup = _rendered(form_class)
+    for name, field in form_class.base_fields.items():
+        if isinstance(field, YesNoNotSureField):
+            soup.find(id=f"id_{name}").decompose()
     for details in soup.find_all("details"):
         for child in details.find_all(recursive=False):
             if child.name != "summary":
