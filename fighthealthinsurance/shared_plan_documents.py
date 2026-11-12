@@ -351,9 +351,14 @@ def _require_bucket_copy(doc: PolicyDocument) -> None:
     # would be lost on the next restart, quietly.
     if not getattr(settings, "SHARED_FILES_NEED_BUCKET_COPY", False):
         return
-    from fighthealthinsurance.storage_health import has_bucket_copy
+    from fighthealthinsurance.storage_health import bucket_backends, has_bucket_copy
 
     name = doc.document_enc.name
+    if not bucket_backends():
+        # A setup with no object store would refuse every share on the site;
+        # it saves as before, and says so loudly.
+        logger.error(f"No object store is configured; shared file {doc.pk} kept anyway")
+        return
     if not has_bucket_copy(name):
         logger.error(f"Shared file {doc.pk} has no bucket copy; not saved")
         _remove_bucket_copies(name)

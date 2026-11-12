@@ -180,6 +180,16 @@ class ASharedFileNeedsABucketCopyTest(_BucketTest):
             with self.assertRaises(NoBucketCopy):
                 self.share(PLAN_TEXT.encode())
 
+    @override_settings(SHARED_FILES_NEED_BUCKET_COPY=True)
+    def test_with_no_object_store_configured_it_saves_and_says_so(self):
+        with patch.object(_storage(), "backends", _storage().backends[:-1]), patch(
+            "fighthealthinsurance.shared_plan_documents.logger.error"
+        ) as error:
+            (doc,) = self.share(PLAN_TEXT.encode())
+        self.assertTrue(PolicyDocument.objects.filter(pk=doc.pk).exists())
+        error.assert_called_once()
+        self.assertIn("No object store is configured", error.call_args.args[0])
+
     def test_where_it_is_off_a_pod_disk_copy_is_enough(self):
         with patch.object(self.bucket, "exists", return_value=False):
             (doc,) = self.share(PLAN_TEXT.encode())
