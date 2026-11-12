@@ -525,6 +525,46 @@ at 1 however many rounds are judged, so the simplest case left comes first;
 counting as a 5. Both apply with the warm-up off too, since the judge asked;
 an unknown value is ignored. The choice is not stored with the vote.
 
+### Retiring a case once its votes say enough (`chooser_settlement.py`)
+
+Every review a case takes is one some other case didn't get. So once a
+case's votes show a **clear winner**, or show it is **clearly undecided**,
+it is *settled*: its status goes from READY to `EXHAUSTED` and
+`ChooserTask.settled_reason` (`clear_winner` or `undecided`, with
+`settled_at`) says why. The next-task endpoint serves READY tasks only, so
+it stops handing the case out, and the refill's pool counts stop counting
+it, so a fresh case is written in its place. Its votes stay and keep
+counting in the rankings and exports (`settled_reason` is in the staff
+export). A judge it was served to before it settled can still vote on it.
+
+The rules run after every vote and skip, over the case's votes (an all-bad
+one included: each is a *review*) and skips:
+
+- Each review's point is shared between its winners, as everywhere else; an
+  all-bad review's goes to "no usable draft", which is ranked like a draft,
+  so judges agreeing nothing is usable is an answer too.
+- Two outcomes are compared **head to head** over the reviews that showed
+  both: a review counts for the one it gave more of its point, and for
+  neither when it gave them the same (tied winners, or neither won).
+- **Clear winner**: at least `CHOOSER_SETTLE_MIN_REVIEWS` reviews, and the
+  leading outcome beats every other one head to head by a one-sided sign
+  test at p ≤ 0.05 (5-0, 6-1, 7-1 and so on against its closest rival).
+- **Clearly undecided**, when there is no clear winner, in any of three
+  ways: at least `CHOOSER_SETTLE_MIN_REVIEWS` judges saw it (reviews plus
+  skips) and at least `CHOOSER_UNDECIDED_SKIP_SHARE` of them skipped it;
+  or `CHOOSER_UNDECIDED_REVIEWS` reviews and the leader beats the
+  runner-up in no more than 60% of the reviews that tell them apart (an
+  even split at the top); or `CHOOSER_UNDECIDED_MAX_REVIEWS` reviews with
+  no clear winner at all.
+
+A vote or skip only ever settles a case, never reopens one.
+`python manage.py settle_chooser_tasks [--task-type appeal|chat] [--reopen]
+[--dry-run]` applies the rules to the whole READY pool (for cases voted on
+before settling existed, or after a change to the settings); `--reopen`
+also puts a settled case the rules no longer settle back to READY, and
+`-v 2` prints each case's reason. Nothing runs it on deploy.
+`CHOOSER_SETTLE_TASKS=false` turns settling off.
+
 ### Trying out a model, or choosing the pool (`CHOOSER_FORCE_MODEL`)
 
 To get a new model votes quickly, set `CHOOSER_FORCE_MODEL` to its
@@ -765,6 +805,11 @@ environment variables of the same name.
 | `CHOOSER_FORCE_MODEL` | DeepSeek 4.1 Flash, GLM-5.3, Claude Opus 5.5, GPT-6.1 Sol, DeepSeek V4 Pro (`""` in tests) | Registered model names seated in every new arena task; with more than `CHOOSER_NUM_CANDIDATES`, the pool every slot is drawn from |
 | `CHOOSER_WARMUP_ROUNDS_PER_LEVEL` | `1` | Votes a judge casts before the complexity of the cases served to them may rise a level; `0` turns the warm-up off |
 | `CHOOSER_WARMUP_SATURATION_VOTES` | `5` | Votes after which a case yields its place, in the warm-up or in the order a judge chose, to a less-judged one |
+| `CHOOSER_SETTLE_TASKS` | `True` | Stop serving a case once its votes show a clear winner or that it is clearly undecided |
+| `CHOOSER_SETTLE_MIN_REVIEWS` | `5` | Reviews before a clear winner is called, and judges (reviews plus skips) before a skip-heavy case is called undecided |
+| `CHOOSER_UNDECIDED_REVIEWS` | `10` | Reviews after which an even split between the top two counts as undecided |
+| `CHOOSER_UNDECIDED_MAX_REVIEWS` | `20` | Reviews after which a case with no clear winner counts as undecided |
+| `CHOOSER_UNDECIDED_SKIP_SHARE` | `0.5` | Share of the judges who saw a case skipping it that makes it undecided |
 | `CONDITION_RANKING_MIN_PEOPLE` | `5` | The k in k-anonymity: different people per term |
 | `CONDITION_RANKING_LOOKUP_BUDGET` | `30` | Outside lookups per refresh |
 | `CONDITION_RANKING_RECHECK_DAYS` | `365` | When a stored verdict is asked again |

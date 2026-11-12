@@ -4773,6 +4773,18 @@ class ChooserTask(ExportModelOperationsMixin("ChooserTask"), models.Model):  # t
         blank=True,
         validators=[MinValueValidator(1), MaxValueValidator(5)],
     )
+    # Why the task stopped being served once its votes said enough
+    # (chooser_settlement): it has a clear winner, or it is clearly
+    # undecided (judges split evenly, or keep skipping it). Set with status
+    # EXHAUSTED; blank for a task never settled. Its votes keep counting.
+    SETTLED_REASON_CHOICES = [
+        ("clear_winner", "Clear winner"),
+        ("undecided", "Clearly undecided"),
+    ]
+    settled_reason = models.CharField(
+        max_length=20, choices=SETTLED_REASON_CHOICES, blank=True, default=""
+    )
+    settled_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

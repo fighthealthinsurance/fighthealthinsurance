@@ -1654,6 +1654,7 @@ class ChooserTaskAdmin(admin.ModelAdmin):
         "source",
         "case_version",
         "complexity",
+        "settled_reason",
         "num_candidates_expected",
         "num_candidates_generated",
         "created_at",
@@ -1662,6 +1663,7 @@ class ChooserTaskAdmin(admin.ModelAdmin):
     list_filter = (
         "task_type",
         "status",
+        "settled_reason",
         "case_version",
         "complexity",
         HumanJudgeUploadedFilter,
