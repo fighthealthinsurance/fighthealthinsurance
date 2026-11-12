@@ -1215,6 +1215,11 @@ class Base(Configuration):
 
         return FileSystemStorage(location=self.LOCALISH_STORAGE_LOCATION)
 
+    # A shared plan document counts as saved only once an object store (the
+    # bucket) holds it: the other backends are pod disks, empty after a
+    # restart (shared_plan_documents.save_shared_documents). On in Prod.
+    SHARED_FILES_NEED_BUCKET_COPY = False
+
     @cached_property
     def COMBINED_STORAGE(self) -> Storage:
         return CombinedStorage(
@@ -1667,6 +1672,8 @@ class TestActor(_TestBase):
 
 
 class Prod(Base):
+    SHARED_FILES_NEED_BUCKET_COPY = True
+
     # Tighten up CORS
     CORS_ALLOWED_ORIGINS = [
         "https://www.fightpaperwork.com",

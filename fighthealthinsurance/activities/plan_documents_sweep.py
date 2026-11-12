@@ -97,3 +97,21 @@ async def send_plan_documents_staff_summary() -> bool:
         # level so a failed summary is seen; the sweep goes on.
         logger.error(f"The plan documents staff summary failed: {type(e).__name__}")
         raise _failure(e, "staff summary", retryable=False) from None
+
+
+@activity.defn
+async def check_shared_plan_document_files() -> bool:
+    """Run today's check that each shared file is still whole in the bucket,
+    unless it ran already today (shared_file_check.run_file_check_if_due).
+    True when it ran. Counts only; reads stored bytes, decrypts nothing and
+    changes no row."""
+    from channels.db import database_sync_to_async
+
+    from fighthealthinsurance.shared_file_check import run_file_check_if_due
+
+    await _aclose_old_connections()
+    try:
+        return bool(await database_sync_to_async(run_file_check_if_due)())
+    except Exception as e:
+        logger.error(f"The shared plan document file check failed: {type(e).__name__}")
+        raise _failure(e, "file check", retryable=False) from None

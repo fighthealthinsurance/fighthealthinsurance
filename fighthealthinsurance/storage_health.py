@@ -278,6 +278,44 @@ def _has_copy(backend: Storage, name: str) -> bool:
     return True
 
 
+def bucket_backends(storage: Optional[CombinedStorage] = None) -> List[Storage]:
+    """The object-store backends (placement OBJECT_STORE) the document file
+    fields write through: the copies that outlast every pod."""
+    storage = storage or stored_file_storage()
+    if storage is None:
+        return []
+    return [b for b in storage.backends if placement(b) == OBJECT_STORE]
+
+
+def has_bucket_copy(name: str, storage: Optional[CombinedStorage] = None) -> bool:
+    """Whether an object store holds ``name``. False when none is in the
+    write path, none holds it, or none can answer within EXISTS_TIMEOUT_S:
+    unsure counts as no."""
+    for backend in bucket_backends(storage):
+        try:
+            found, _ = _probe(
+                backend, EXISTS_TIMEOUT_S, lambda: _has_copy(backend, name)
+            )
+        except Exception as e:
+            logger.warning(
+                f"Could not check {file_tag(name)} on {backend}: {error_text(e)}"
+            )
+            continue
+        if found:
+            return True
+    return False
+
+
+def stored_copy(backend: Storage, name: str, max_bytes: int) -> Optional[bytes]:
+    """The first ``max_bytes`` of the backend's copy of ``name`` as stored
+    (encrypted: nothing is decrypted), or None when it holds no copy.
+    Raises when it cannot tell."""
+    if not _has_copy(backend, name):
+        return None
+    with backend.open(name, "rb") as stored:
+        return bytes(stored.read(max_bytes))
+
+
 def check_reachable(
     backend: Optional[Storage], timeout: float = REACH_TIMEOUT_S
 ) -> Dict[str, Any]:

@@ -61,8 +61,10 @@ class _Stubs:
         due_fails=False,
         summary=True,
         batches_fail=False,
+        files_checked=True,
     ):
         self.summary = summary
+        self.files_checked = files_checked
         self.batches_fail = batches_fail
         self.due = list(due)
         self.sent = sent or {}
@@ -104,11 +106,19 @@ class _Stubs:
                 raise stubs.summary
             return stubs.summary
 
+        @activity.defn(name="check_shared_plan_document_files")
+        async def check_shared_plan_document_files() -> bool:
+            stubs.calls.append(("file_check",))
+            if isinstance(stubs.files_checked, Exception):
+                raise stubs.files_checked
+            return stubs.files_checked
+
         return [
             find_due_plan_documents_reminders,
             send_plan_documents_reminder,
             find_waiting_share_batches,
             send_plan_documents_staff_summary,
+            check_shared_plan_document_files,
         ]
 
 
@@ -142,8 +152,9 @@ async def test_due_reminders_are_sent_then_waiting_shares_are_started():
         ("send", 2),
         ("batches", 15, 50),
         ("summary",),
+        ("file_check",),
     ]
-    assert result == {"reminders_sent": 2, "readings_started": 2, "summary_sent": 1}
+    assert result == {"reminders_sent": 2, "readings_started": 2, "summary_sent": 1, "files_checked": 1}
 
 
 @pytest.mark.asyncio
@@ -154,7 +165,12 @@ async def test_the_run_passes_its_numbers_on():
     )
     async with await WorkflowEnvironment.start_time_skipping() as env:
         await _run(env, stubs, request)
-    assert stubs.calls == [("due", 7), ("batches", 20, 3), ("summary",)]
+    assert stubs.calls == [
+        ("due", 7),
+        ("batches", 20, 3),
+        ("summary",),
+        ("file_check",),
+    ]
 
 
 @pytest.mark.asyncio
@@ -176,7 +192,7 @@ async def test_a_failed_send_is_not_tried_again_and_the_run_goes_on():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         _, result = await _run(env, stubs)
     assert [c for c in stubs.calls if c[0] == "send"] == [("send", 1), ("send", 2)]
-    assert result == {"reminders_sent": 1, "readings_started": 2, "summary_sent": 1}
+    assert result == {"reminders_sent": 1, "readings_started": 2, "summary_sent": 1, "files_checked": 1}
 
 
 @pytest.mark.asyncio
@@ -194,7 +210,7 @@ async def test_a_failed_reminder_lookup_still_starts_the_readings():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         _, result = await _run(env, stubs)
     assert [c for c in stubs.calls if c[0] == "send"] == []
-    assert result == {"reminders_sent": 0, "readings_started": 2, "summary_sent": 1}
+    assert result == {"reminders_sent": 0, "readings_started": 2, "summary_sent": 1, "files_checked": 1}
 
 
 @pytest.mark.asyncio
@@ -202,7 +218,18 @@ async def test_a_failed_lookup_of_waiting_shares_still_sends_the_summary():
     stubs = _Stubs(due=[], batches_fail=True)
     async with await WorkflowEnvironment.start_time_skipping() as env:
         _, result = await _run(env, stubs)
-    assert result == {"reminders_sent": 0, "readings_started": 0, "summary_sent": 1}
+    assert result == {"reminders_sent": 0, "readings_started": 0, "summary_sent": 1, "files_checked": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_file_check_is_not_retried_and_the_run_still_ends():
+    stubs = _Stubs(
+        due=[], batches=[], files_checked=ApplicationError("OSError for file check")
+    )
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        _, result = await _run(env, stubs)
+    assert [c for c in stubs.calls if c[0] == "file_check"] == [("file_check",)]
+    assert result["files_checked"] == 0
 
 
 @pytest.mark.asyncio
@@ -261,7 +288,7 @@ async def test_a_share_whose_reading_is_running_is_left_to_it():
         # No release afterwards: the time-skipping server can time the held
         # run out first, and a signal to a closed run fails the test.
         _, result = await _run(env, stubs, before=a_reading_already_running)
-    assert result == {"reminders_sent": 0, "readings_started": 1, "summary_sent": 1}
+    assert result == {"reminders_sent": 0, "readings_started": 1, "summary_sent": 1, "files_checked": 1}
 
 
 @pytest.mark.asyncio
@@ -282,7 +309,7 @@ async def test_a_share_whose_earlier_reading_has_closed_is_read_again():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         handle, result = await _run(env, stubs, before=an_earlier_reading_that_closed)
         history = await handle.fetch_history()
-    assert result == {"reminders_sent": 0, "readings_started": 1, "summary_sent": 1}
+    assert result == {"reminders_sent": 0, "readings_started": 1, "summary_sent": 1, "files_checked": 1}
     (start,) = _child_starts(history)
     assert start.workflow_id == f"shared-plan-documents-{BATCH_A}"
     assert (
@@ -338,8 +365,10 @@ async def test_history_holds_numbers_ids_shares_and_counts_and_nothing_else():
         ),
         # The summary takes nothing in and gives back true or false.
         ("activity_task_completed_event_attributes", True),
+        # So does the file check: counts stay in the database, never here.
+        ("activity_task_completed_event_attributes", True),
         (
             "workflow_execution_completed_event_attributes",
-            {"reminders_sent": 1, "readings_started": 1, "summary_sent": 1},
+            {"reminders_sent": 1, "readings_started": 1, "summary_sent": 1, "files_checked": 1},
         ),
     ]
