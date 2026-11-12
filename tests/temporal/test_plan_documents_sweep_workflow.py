@@ -60,8 +60,10 @@ class _Stubs:
         batches=(BATCH_A, BATCH_B),
         due_fails=False,
         summary=True,
+        batches_fail=False,
     ):
         self.summary = summary
+        self.batches_fail = batches_fail
         self.due = list(due)
         self.sent = sent or {}
         self.batches = list(batches)
@@ -91,6 +93,8 @@ class _Stubs:
             received_minutes: int, limit: int
         ) -> list[str]:
             stubs.calls.append(("batches", received_minutes, limit))
+            if stubs.batches_fail:
+                raise ApplicationError("OperationalError for waiting shares")
             return stubs.batches
 
         @activity.defn(name="send_plan_documents_staff_summary")
@@ -191,6 +195,14 @@ async def test_a_failed_reminder_lookup_still_starts_the_readings():
         _, result = await _run(env, stubs)
     assert [c for c in stubs.calls if c[0] == "send"] == []
     assert result == {"reminders_sent": 0, "readings_started": 2, "summary_sent": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_lookup_of_waiting_shares_still_sends_the_summary():
+    stubs = _Stubs(due=[], batches_fail=True)
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        _, result = await _run(env, stubs)
+    assert result == {"reminders_sent": 0, "readings_started": 0, "summary_sent": 1}
 
 
 @pytest.mark.asyncio
