@@ -4,6 +4,8 @@ from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from fighthealthinsurance.models import *
 from seleniumbase import BaseCase
 
+from .fhi_selenium_base import configure_test_browser
+
 BaseCase.main(__name__, __file__)
 
 PHONE = (390, 844)
@@ -70,15 +72,7 @@ class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
         super(BaseCase, cls).tearDownClass()
 
     def setUp(self):
-        # Prevent Chrome from routing localhost through an HTTP proxy,
-        # matching the pattern in FHISeleniumBase.
-        import seleniumbase.config as sb_config
-
-        existing = getattr(sb_config, "chromium_arg", None)
-        if not existing:
-            sb_config.chromium_arg = "--no-proxy-server"
-        elif "--no-proxy-server" not in existing:
-            sb_config.chromium_arg = existing + ";--no-proxy-server"
+        configure_test_browser()
         super().setUp()
         _restore_follow_up_types()
 
