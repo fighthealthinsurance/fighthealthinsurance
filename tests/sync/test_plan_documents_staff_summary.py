@@ -79,12 +79,13 @@ class TheCountsTest(TestCase):
         self.assertEqual(
             counts,
             {
+                **{key: 0 for key, _ in summary.FIELDS},
                 "received": 4,
                 "waiting": 1,
                 "read": 2,
                 "unreadable": 1,
+                "unreadable_no_reason": 1,
                 "no_company": 1,
-                "company_typed": 0,
                 "dropped": 2,
             },
         )
@@ -329,7 +330,6 @@ class TheEmailTest(TestCase):
                 summary.send_summary_if_due(WEDNESDAY)
         self.assertEqual(send.call_count, summary.MAX_TRIES_PER_DAY)
 
-
     def test_a_sweep_that_loses_the_claim_uses_none_of_the_days_tries(self):
         received(WEDNESDAY - datetime.timedelta(days=1))
         # Another sweep took the claim after this one first looked.
@@ -353,4 +353,161 @@ class AStuckReadingShowsTest(TestCase):
         counts = summary.summary_counts(WEDNESDAY)
         self.assertEqual((counts["day"]["waiting"], counts["week"]["waiting"]), (0, 1))
         body = summary.summary_text(WEDNESDAY, counts)
-        self.assertIn("Still waiting to be read (should be 0: reading is stuck)", body)
+        self.assertIn(
+            "Waiting for a first reading (should be 0: reading is stuck)", body
+        )
+
+
+class ReadingOutcomesShowTest(TestCase):
+    """The plan check's outcomes, why a file was not readable, and files
+    waiting to be read again each have their own row."""
+
+    def test_personal_papers_and_not_a_plan_are_their_own_rows(self):
+        yesterday = WEDNESDAY - datetime.timedelta(days=1)
+        received(yesterday, PolicyDocument.PROCESSING_PERSONAL, text="")
+        received(yesterday, PolicyDocument.PROCESSING_NOT_A_PLAN)
+        counts = summary.summary_counts(WEDNESDAY)["day"]
+        self.assertEqual(
+            (counts["received"], counts["personal"], counts["not_a_plan"]),
+            (2, 1, 1),
+        )
+        self.assertEqual((counts["read"], counts["unreadable"]), (0, 0))
+
+    def test_each_reason_a_file_was_not_readable_is_counted(self):
+        yesterday = WEDNESDAY - datetime.timedelta(days=1)
+        for reason in (
+            PolicyDocument.UNREADABLE_GARBLED,
+            PolicyDocument.UNREADABLE_GARBLED,
+            PolicyDocument.UNREADABLE_CANNOT_OPEN,
+            "",
+        ):
+            received(
+                yesterday,
+                PolicyDocument.PROCESSING_UNREADABLE,
+                text="",
+                unreadable_reason=reason,
+            )
+        counts = summary.summary_counts(WEDNESDAY)["day"]
+        self.assertEqual(counts["unreadable"], 4)
+        self.assertEqual(counts["unreadable_garbled_text"], 2)
+        self.assertEqual(counts["unreadable_cannot_open"], 1)
+        self.assertEqual(counts["unreadable_no_reason"], 1)
+        self.assertEqual(counts["unreadable_ocr_unavailable"], 0)
+
+    def test_a_file_waiting_to_be_read_again_is_not_a_stuck_reading(self):
+        received(
+            WEDNESDAY - datetime.timedelta(days=1),
+            PolicyDocument.PROCESSING_RECEIVED,
+            text="",
+            read_attempts=2,
+            unreadable_reason=PolicyDocument.UNREADABLE_DID_NOT_FINISH,
+        )
+        counts = summary.summary_counts(WEDNESDAY)["day"]
+        self.assertEqual((counts["waiting"], counts["waiting_again"]), (0, 1))
+        # Still waiting, so not counted as not readable, whatever its reason.
+        self.assertEqual(counts["unreadable"], 0)
+
+
+class StorageCountsShowTest(TestCase):
+    def test_files_refused_for_want_of_storage_are_summed_over_the_days(self):
+        for days_ago, name, count in (
+            (1, SharedPlanDocumentsDay.NO_BUCKET_SHARE_PAGE, 2),
+            (3, SharedPlanDocumentsDay.NO_BUCKET_SHARE_PAGE, 1),
+            (1, SharedPlanDocumentsDay.NO_BUCKET_OPT_IN, 4),
+        ):
+            dropped(WEDNESDAY - datetime.timedelta(days=days_ago), name, count)
+        counts = summary.summary_counts(WEDNESDAY)
+        self.assertEqual(
+            (
+                counts["day"]["no_bucket_share_page"],
+                counts["week"]["no_bucket_share_page"],
+            ),
+            (2, 3),
+        )
+        self.assertEqual(counts["week"]["no_bucket_opt_in"], 4)
+
+    def test_the_last_file_check_is_shown_as_it_stood(self):
+        older = WEDNESDAY - datetime.timedelta(days=2)
+        latest = WEDNESDAY - datetime.timedelta(days=1)
+        dropped(older, SharedPlanDocumentsDay.FILE_CHECK_MISSING, 9)
+        dropped(latest, SharedPlanDocumentsDay.FILE_CHECK_WHOLE, 40)
+        dropped(latest, SharedPlanDocumentsDay.FILE_CHECK_MISSING, 1)
+        check = summary.summary_counts(WEDNESDAY)["now"]["file_check"]
+        self.assertEqual(check["day"], latest)
+        self.assertEqual(check["counts"][SharedPlanDocumentsDay.FILE_CHECK_WHOLE], 40)
+        self.assertEqual(check["counts"][SharedPlanDocumentsDay.FILE_CHECK_MISSING], 1)
+        self.assertEqual(
+            check["counts"][SharedPlanDocumentsDay.FILE_CHECK_CUT_SHORT], 0
+        )
+        body = summary.summary_text(WEDNESDAY, summary.summary_counts(WEDNESDAY))
+        self.assertIn(f"Nightly file check of {latest}:", body)
+
+    def test_with_no_file_check_on_record_it_says_so(self):
+        counts = summary.summary_counts(WEDNESDAY)
+        self.assertIsNone(counts["now"]["file_check"])
+        self.assertIn(
+            "Nightly file check: none on record",
+            summary.summary_text(WEDNESDAY, counts),
+        )
+
+    def test_copies_waiting_are_shown(self):
+        with mock.patch(
+            "fighthealthinsurance.shared_copy_retries.copies_waiting", return_value=3
+        ):
+            counts = summary.summary_counts(WEDNESDAY)
+        self.assertEqual(counts["now"]["copies_waiting"], 3)
+        self.assertIn(
+            "Copies waiting to be made again now: 3",
+            summary.summary_text(WEDNESDAY, counts),
+        )
+
+
+@override_settings(PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS=STAFF)
+class AQuietWeekWithStorageTroubleStillSendsTest(TestCase):
+    def test_a_missing_file_in_the_last_check_sends_the_summary(self):
+        dropped(
+            WEDNESDAY - datetime.timedelta(days=1),
+            SharedPlanDocumentsDay.FILE_CHECK_MISSING,
+            1,
+        )
+        self.assertTrue(summary.send_summary_if_due(WEDNESDAY))
+        self.assertEqual(mail.outbox[0].subject, summary.SUBJECT)
+
+    def test_a_whole_check_leaves_the_week_quiet(self):
+        dropped(
+            WEDNESDAY - datetime.timedelta(days=1),
+            SharedPlanDocumentsDay.FILE_CHECK_WHOLE,
+            12,
+        )
+        self.assertFalse(summary.send_summary_if_due(WEDNESDAY))
+
+    def test_a_file_refused_for_want_of_storage_sends_the_summary(self):
+        dropped(
+            WEDNESDAY - datetime.timedelta(days=2),
+            SharedPlanDocumentsDay.NO_BUCKET_OPT_IN,
+            1,
+        )
+        self.assertTrue(summary.send_summary_if_due(WEDNESDAY))
+
+    def test_copies_waiting_send_the_summary(self):
+        with mock.patch(
+            "fighthealthinsurance.shared_copy_retries.copies_waiting", return_value=1
+        ):
+            self.assertTrue(summary.send_summary_if_due(WEDNESDAY))
+
+
+class TheDashboardReadingTableTest(TestCase):
+    def test_new_outcomes_and_files_read_again_have_rows(self):
+        day = WEDNESDAY - datetime.timedelta(days=1)
+        received(day, PolicyDocument.PROCESSING_PERSONAL, text="")
+        received(day, PolicyDocument.PROCESSING_NOT_A_PLAN)
+        received(day, PolicyDocument.PROCESSING_RECEIVED, text="")
+        received(day, PolicyDocument.PROCESSING_RECEIVED, text="", read_attempts=1)
+        counts = shared_plan_documents.dashboard_counts(WEDNESDAY)
+        reading = [(row["status"], row["files"]) for row in counts["reading"]]
+        self.assertEqual(reading[0], (PolicyDocument.PROCESSING_RECEIVED, 2))
+        # Right under "received": the part of it waiting to be read again.
+        self.assertEqual(reading[1], (shared_plan_documents.READ_AGAIN, 1))
+        found = dict(reading)
+        self.assertEqual(found[PolicyDocument.PROCESSING_PERSONAL], 1)
+        self.assertEqual(found[PolicyDocument.PROCESSING_NOT_A_PLAN], 1)

@@ -1034,6 +1034,11 @@ def is_document(status: str, cleaned_text: Optional[str]) -> bool:
 #: Where a shared file's reading ends when it found no text to use.
 UNREADABLE_STATUSES = (PolicyDocument.PROCESSING_UNREADABLE,)
 
+#: The reading table's row for files received and waiting to be read again
+#: after a failed reading, counted inside "Received, not read yet".
+READ_AGAIN = "read_again"
+READ_AGAIN_LABEL = "Of those, waiting to be read again after a failed reading"
+
 
 def is_unreadable(status: str, cleaned_text: Optional[str]) -> bool:
     """Whether a shared file was received but its reading found no text to
@@ -1407,10 +1412,26 @@ def dashboard_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
             PolicyDocument.PROCESSING_RECEIVED,
             PolicyDocument.PROCESSING_READY,
             PolicyDocument.PROCESSING_UNREADABLE,
+            PolicyDocument.PROCESSING_PERSONAL,
+            PolicyDocument.PROCESSING_NOT_A_PLAN,
             PolicyDocument.PROCESSING_REMOVED,
             PolicyDocument.PROCESSING_SPAM,
         )
     ]
+    # Of the files received and not read yet, those whose earlier reading
+    # failed: the sweep reads them again later (read_attempts).
+    counts["reading"].insert(
+        1,
+        {
+            "status": READ_AGAIN,
+            "label": READ_AGAIN_LABEL,
+            "files": PolicyDocument.objects.filter(
+                source__in=PolicyDocument.SHARED_FILE_SOURCES,
+                processing_status=PolicyDocument.PROCESSING_RECEIVED,
+                read_attempts__gt=0,
+            ).count(),
+        },
+    )
 
     counts["budgets"] = [
         {
