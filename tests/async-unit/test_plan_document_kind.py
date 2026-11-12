@@ -1,6 +1,8 @@
 """A shared file's text is judged a plan document, a person's own papers, or
 neither (plan_document_kind). Made-up text: no real plan or person."""
 
+import time
+
 import pytest
 
 from fighthealthinsurance.plan_document_kind import (
@@ -138,3 +140,59 @@ def test_a_denial_letter_that_mentions_the_plan_documents_is_personal():
     )
     assert "plan documents" in letter
     assert document_kind(letter) == PERSONAL
+
+
+def test_a_plan_description_with_a_members_id_on_it_stays_a_plan():
+    assert document_kind("Member ID: W123456789\n" + SPD) == PLAN
+
+
+def test_a_contents_line_naming_eobs_is_not_a_heading():
+    contents = (
+        "Summary Plan Description\nContents\n"
+        "Explanation of Benefits ........................ 45\n"
+        "Member ID: W123456789\n"
+    )
+    assert document_kind(contents + CONTRACT_TEXT + PLAN_TEXT) == PLAN
+
+
+def test_a_spanish_bill_with_each_value_under_its_label_is_personal():
+    bill = (
+        "Factura médica\nNombre del paciente:\nRebecca Lee Crumpler\n"
+        "Número de cuenta:\n55012-77\nFecha de nacimiento:\n02/08/1931\n"
+        "Total a pagar: $60\n"
+    )
+    assert document_kind(bill) == PERSONAL
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Member name:\n[removed]\nMember ID:\n[removed]\nAmount due $60\n",
+        "Cardholder Name: [removed]\nCardholder ID: [removed]\nRx BIN 610014\n",
+        "Name: [removed]\nID\n[removed]\nGroup 1234567\n",
+    ],
+    ids=["under_labels", "cardholder", "bare_labels"],
+)
+def test_cleaned_papers_with_their_details_removed_are_personal(text):
+    assert document_kind(text) == PERSONAL
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Fecha de nacimiento",
+        "Nombre del paciente",
+        "Número de cuenta",
+        "Estimada",
+        "Member",
+        "Member name",
+        "Date of birth",
+        "Social security",
+        "Explanation of",
+        "has been",
+    ],
+)
+def test_a_long_run_of_spaces_after_a_label_is_read_quickly(label):
+    started = time.monotonic()
+    document_kind(label + " " * 99_000 + "!")
+    assert time.monotonic() - started < 2

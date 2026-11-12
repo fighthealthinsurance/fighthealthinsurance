@@ -307,7 +307,9 @@ def clean(text: str) -> str:
     return scrub(text.strip())[:MAX_CHARS].strip()
 
 
-async def _astore(document_id: str, status: str, cleaned_text: str) -> str:
+async def _astore(
+    document_id: str, status: str, cleaned_text: str, **cleared: str
+) -> str:
     """Store a reading on a row still waiting; report the row's status."""
     stored = await (
         _shared_rows()
@@ -316,6 +318,7 @@ async def _astore(document_id: str, status: str, cleaned_text: str) -> str:
             processing_status=status,
             processed_at=timezone.now(),
             cleaned_text=cleaned_text,
+            **cleared,
         )
     )
     return status if stored else await _status_now(document_id)
@@ -346,9 +349,12 @@ async def aprocess_document(document_id: str) -> str:
     if text and not doc.staff_says_plan:
         kind = await loop.run_in_executor(_READERS, document_kind, text)
         logger.info(f"Shared plan document {document_id} reads as {kind}")
+    cleared: dict[str, str] = {}
     if kind == PERSONAL:
-        # A person's own papers: the file stays, encrypted; no text is kept.
+        # A person's own papers: the file stays, encrypted; no text is kept,
+        # nor a line an earlier reading quoted for its company.
         status, cleaned = PolicyDocument.PROCESSING_PERSONAL, ""
+        cleared["plan_sponsor_evidence"] = ""
     else:
         cleaned = await loop.run_in_executor(_READERS, clean, text) if text else ""
         if not cleaned:
@@ -357,7 +363,7 @@ async def aprocess_document(document_id: str) -> str:
             status = PolicyDocument.PROCESSING_NOT_A_PLAN
         else:
             status = PolicyDocument.PROCESSING_READY
-    stored = await _astore(document_id, status, cleaned)
+    stored = await _astore(document_id, status, cleaned, **cleared)
     if stored == PolicyDocument.PROCESSING_READY and text:
         # The company is read from the text before cleaning, which may have
         # taken a line that looked personal.

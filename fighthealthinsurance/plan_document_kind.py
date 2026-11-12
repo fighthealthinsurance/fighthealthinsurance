@@ -11,13 +11,13 @@ Rules only, no model, in English and Spanish:
 
 - A person's details: an ID, a birth date, a name (a "Dear" greeting
   counts as one) or a Social Security number (plan_document_scrub).
-- A person's own papers have a title such as "Explanation of Benefits" or
+- A person's own papers have an "Explanation of Benefits" heading or
   "This is not a bill" near the top; or denial wording there ("has been
   denied") and one of their details; or two kinds of their details.
 - A plan document's title near the top ("Summary of Benefits and
   Coverage", "Evidence of Coverage" and so on) keeps it a plan, even with
-  a member's name and ID on it, unless a personal title or denial wording
-  comes with those details.
+  a member's name and ID on it, unless it also has a personal heading and
+  one of those details, or denial wording and two kinds of them.
 - Neither: at least OTHER_MIN_WORDS words in the Latin alphabet with at
   most OTHER_MAX_PLAN_WORDS different health plan words.
 
@@ -44,13 +44,22 @@ OTHER_MIN_WORDS = 80
 OTHER_MAX_PLAN_WORDS = 1
 
 _FLAGS = re.IGNORECASE
-_S = r"\s+"
+# Every run of spaces has one possessive quantifier, so a long run can't
+# make a pattern backtrack.
+_S = r"\s++"
+# Spaces or tabs, never a line break.
+_SP = r"[^\S\n]"
+# Between a label and its value: spaces, at most one of : # . -, and the
+# value may start the next line.
+_SEP = rf"{_SP}*+(?:[:#.-]{_SP}*+)?(?:\n{_SP}*+)?"
 
+# A heading (a line that starts with it, never a contents line with dot
+# leaders), or the line an EOB prints anywhere.
 _PERSONAL_TITLE = re.compile(
-    rf"\bexplanation{_S}of{_S}benefits\b|\bthis{_S}is{_S}not{_S}a{_S}bill\b"
-    rf"|\bexplicaci[oó]n{_S}de{_S}(?:los{_S})?beneficios\b"
-    rf"|\besto{_S}no{_S}es{_S}una{_S}factura\b",
-    _FLAGS,
+    rf"^{_SP}*+(?:explanation{_S}of{_S}benefits"
+    rf"|explicaci[oó]n{_S}de{_S}(?:los{_S})?beneficios)\b(?![^\n]*\.{{4}})"
+    rf"|\bthis{_S}is{_S}not{_S}a{_S}bill\b|\besto{_S}no{_S}es{_S}una{_S}factura\b",
+    _FLAGS | re.MULTILINE,
 )
 # Weaker than a title: plan documents explain denials too.
 _DENIAL = re.compile(
@@ -76,42 +85,51 @@ _PLAN_TITLE = re.compile(
 
 # A person's details in Spanish, which plan_document_scrub doesn't know:
 # a label, then a value with a digit (or a capital letter for a name).
-_SP = r"[^\S\n]"
-_SEP = rf"{_SP}*[:#.-]?{_SP}*"
 _SPANISH_DETAILS = {
     "id": re.compile(
-        rf"\b(?:n[uú]mero|no\.?|n[º°]){_SP}*de{_SP}+(?:miembro|afiliado|socio"
+        rf"\b(?:n[uú]mero|no\.?|n[º°]){_SP}*+de{_SP}++(?:miembro|afiliado|socio"
         rf"|reclamo|reclamaci[oó]n|paciente|cuenta|asegurado){_SEP}"
         rf"[a-z0-9-]{{0,20}}\d",
         _FLAGS,
     ),
-    "birth_date": re.compile(rf"\bfecha{_SP}+de{_SP}+nacimiento{_SEP}\d", _FLAGS),
+    "birth_date": re.compile(rf"\bfecha{_SP}++de{_SP}++nacimiento{_SEP}\d", _FLAGS),
     "name": re.compile(
-        rf"(?i:\bnombre{_SP}+del?{_SP}+(?:paciente|miembro|afiliado|asegurado)"
+        rf"(?i:\bnombre{_SP}++del?{_SP}++(?:paciente|miembro|afiliado|asegurado)"
         rf"{_SEP})[A-ZÁÉÍÓÚÑ]"
-        rf"|^{_SP}*(?i:estimad[oa]s?){_SP}+(?!(?i:miembros?|afiliados?|clientes?"
+        rf"|^{_SP}*+(?i:estimad[oa]s?){_SP}++(?!(?i:miembros?|afiliados?|clientes?"
         rf"|asegurados?|pacientes?|participantes?|socios?)\b)[A-ZÁÉÍÓÚÑ]",
         re.MULTILINE,
     ),
 }
 
-# In text already cleaned: a person's label with "[removed]" after it.
-_REMOVED_VALUE = rf"[^\n]{{0,30}}?{re.escape(REMOVED)}"
+# In text already cleaned: a person's label with "[removed]" after it, on
+# its line or the next, the labels plan_document_scrub reads.
+_GONE = re.escape(REMOVED)
+_PEOPLE = (
+    rf"(?:member|patient|subscriber|insured|enrollee|cardholder|beneficiary"
+    rf"|dependents?|recipient|guarantor|policy{_SP}?holder)"
+)
 _REMOVED_DETAILS = {
     "id": re.compile(
-        rf"\b(?:member|subscriber|patient|claim|account|enrollee|insured|medicare"
-        rf"|medicaid){_SP}*(?:id|identification|number|no\b\.?|#){_REMOVED_VALUE}",
-        _FLAGS,
+        rf"(?:\b(?:{_PEOPLE}|claim|account|case|medicare|medicaid)(?:'s)?{_SP}*+"
+        rf"(?:id(?:entification)?|identifier|number|no\b\.?|#)"
+        rf"|\b(?:mbi|mrn|cin)\b|^{_SP}*+id\b){_SEP}{_GONE}",
+        _FLAGS | re.MULTILINE,
     ),
     "birth_date": re.compile(
-        rf"\b(?:date{_SP}+of{_SP}+birth|birth{_SP}*date|d\.?o\.?b\b){_REMOVED_VALUE}",
+        rf"(?:\bdate{_SP}++of{_SP}++birth|\bbirth{_SP}*+date|\bd\.?o\.?b\b\.?)"
+        rf"(?:{_SP}*+\([^()\n]{{0,20}}\))?{_SEP}{_GONE}",
         _FLAGS,
     ),
-    "ssn": re.compile(rf"\b(?:ssn|social{_SP}+security){_REMOVED_VALUE}", _FLAGS),
+    "ssn": re.compile(
+        rf"\b(?:ssn|ss#|social{_SP}++security(?:{_SP}++(?:number|no\b\.?|#))?)"
+        rf"{_SEP}{_GONE}",
+        _FLAGS,
+    ),
     "name": re.compile(
-        rf"\b(?:(?:member|patient|subscriber|insured|enrollee){_SP}+name"
-        rf"|patient|member|subscriber){_SP}*:?{_SP}*{re.escape(REMOVED)}"
-        rf"|^{_SP}*dear{_SP}+{re.escape(REMOVED)}",
+        rf"(?:\b{_PEOPLE}(?:'s)?{_SP}++name{_SP}*+:?|\b{_PEOPLE}{_SP}*+:"
+        rf"|^{_SP}*+name{_SP}*+:){_SP}*+(?:\n{_SP}*+)?{_GONE}"
+        rf"|^{_SP}*+dear{_SP}++{_GONE}",
         _FLAGS | re.MULTILINE,
     ),
 }
@@ -159,7 +177,7 @@ def document_kind(text: str) -> str:
     details = _detail_kinds(sample)
     if personal_title and (details or not plan_title):
         return PERSONAL
-    if denial and details:
+    if denial and details and (not plan_title or len(details) >= 2):
         return PERSONAL
     if not plan_title and len(details) >= 2:
         return PERSONAL

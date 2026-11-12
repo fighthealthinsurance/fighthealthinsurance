@@ -9,8 +9,9 @@ This judges each such row's stored, cleaned text. It counts them unless
     python manage.py check_shared_document_kinds
     python manage.py check_shared_document_kinds --apply
 
-Applied, a person's own papers lose their stored text and are marked
-personal, their encrypted file kept; a file with no plan words is marked
+Applied, a person's own papers lose their stored text, and the line
+quoted for their company, and are marked personal, their encrypted file
+kept; a file with no plan words is marked
 not a plan, its text kept. Neither is counted as a plan. Rows staff said
 are plans are left alone, and so is a row read again between the count and
 the change.
@@ -63,7 +64,9 @@ class Command(BaseCommand):
         for kind, listed in found.items():
             changes: dict[str, Any] = {"processing_status": _STATUS_FOR[kind]}
             if kind == PERSONAL:
+                # The company's quoted line is the document's text too.
                 changes["cleaned_text"] = ""
+                changes["plan_sponsor_evidence"] = ""
             updated = 0
             for pk, processed_at in listed:
                 # Only a row still as it was counted.

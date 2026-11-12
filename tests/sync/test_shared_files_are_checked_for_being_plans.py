@@ -21,7 +21,9 @@ from django.utils import timezone
 
 from fighthealthinsurance import plan_documents_processing as processing
 from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.plan_sponsors import identify_sponsor, link_sponsor
 from tests.plan_text_samples import EOB, PLAN_TEXT, RECIPE
+from tests.sync.test_shared_plans_are_counted_by_company import SPD_WITH_EIN
 from tests.sync.test_shared_plan_documents_are_read_and_cleaned import (
     _ReadingTest,
     share,
@@ -114,6 +116,12 @@ class StaffMarkPersonalPapersTest(_AdminTestCase):
             (doc.processing_status, doc.cleaned_text), (PERSONAL, "")
         )
 
+    def test_the_line_quoted_for_its_company_goes_too(self):
+        doc = shared_row(plan_sponsor_evidence="Plan sponsor: Crumpler Mutual")
+        self.act("mark_personal", doc)
+        doc.refresh_from_db()
+        self.assertEqual(doc.plan_sponsor_evidence, "")
+
     def test_a_row_still_waiting_is_left_alone(self):
         doc = shared_row(status=RECEIVED, cleaned_text="")
         self.act("mark_personal", doc)
@@ -204,6 +212,12 @@ class CheckingRowsReadBeforeTest(TestCase):
         doc.refresh_from_db()
         self.assertEqual((doc.processing_status, doc.cleaned_text), (PERSONAL, ""))
 
+    def test_applied_personal_papers_lose_the_line_quoted_for_their_company(self):
+        doc = shared_row(cleaned_text=EOB, plan_sponsor_evidence="Plan: Crumpler Mutual")
+        self.run_command("--apply")
+        doc.refresh_from_db()
+        self.assertEqual(doc.plan_sponsor_evidence, "")
+
     def test_applied_a_file_with_no_plan_words_keeps_its_text(self):
         doc = shared_row(cleaned_text=RECIPE)
         self.run_command("--apply")
@@ -227,3 +241,11 @@ class CheckingRowsReadBeforeTest(TestCase):
         self.run_command("--apply")
         doc.refresh_from_db()
         self.assertEqual((doc.processing_status, doc.cleaned_text), (READY, EOB))
+
+
+class TheCompanyLookupSkipsPersonalPapersTest(TestCase):
+    def test_a_company_found_after_a_row_was_marked_personal_is_not_linked(self):
+        doc = shared_row(status=PERSONAL, cleaned_text="")
+        link_sponsor(doc.pk, identify_sponsor(SPD_WITH_EIN))
+        doc.refresh_from_db()
+        self.assertEqual((doc.plan_sponsor_id, doc.plan_sponsor_evidence), (None, ""))

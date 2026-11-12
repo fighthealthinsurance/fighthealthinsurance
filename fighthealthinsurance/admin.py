@@ -2170,6 +2170,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         ).update(
             processing_status=PolicyDocument.PROCESSING_PERSONAL,
             cleaned_text="",
+            plan_sponsor_evidence="",
             staff_says_plan=False,
         )
         logger.info(
