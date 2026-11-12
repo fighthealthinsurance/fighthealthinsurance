@@ -1,7 +1,7 @@
 """Check now that each shared plan document still has its file, whole, in
 the object store (shared_file_check), as the nightly sweep does. Prints the
-counts by verdict; reads stored bytes, decrypts nothing, changes no row and
-keeps nothing::
+counts by verdict; reads each copy's size and last bytes, decrypts nothing,
+changes no row and keeps nothing::
 
     python manage.py check_shared_files
 """

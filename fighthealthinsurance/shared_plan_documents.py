@@ -351,9 +351,27 @@ def _require_bucket_copy(doc: PolicyDocument) -> None:
         return
     from fighthealthinsurance.storage_health import has_bucket_copy
 
-    if not has_bucket_copy(doc.document_enc.name):
+    name = doc.document_enc.name
+    if not has_bucket_copy(name):
         logger.error(f"Shared file {doc.pk} has no bucket copy; not saved")
+        _remove_bucket_copies(name)
         raise NoBucketCopy()
+
+
+def _remove_bucket_copies(name: str) -> None:
+    # The rollback's cleanup deletes only where a store says it has the file,
+    # and an object store says no when it can't answer, so a copy written
+    # before it stopped answering is removed outright here.
+    from stopit import ThreadingTimeout as Timeout
+
+    from fighthealthinsurance.storage_health import bucket_backends
+
+    for backend in bucket_backends():
+        try:
+            with Timeout(5.0):
+                backend.delete(name)
+        except Exception as e:
+            logger.warning(f"Could not remove a bucket copy: {type(e).__name__}")
 
 
 def save_shared_documents(

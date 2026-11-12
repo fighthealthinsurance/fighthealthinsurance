@@ -116,6 +116,22 @@ class ASharedFileNeedsABucketCopyTest(_BucketTest):
         self.assertFalse(PolicyDocument.objects.exists())
 
     @override_settings(SHARED_FILES_NEED_BUCKET_COPY=True)
+    def test_a_copy_written_before_the_bucket_stopped_answering_is_removed(self):
+        written = []
+        save = self.bucket.save
+
+        def save_and_note(name, content, max_length=None):
+            written.append(save(name, content, max_length=max_length))
+            return written[-1]
+
+        with patch.object(self.bucket, "save", side_effect=save_and_note), patch.object(
+            self.bucket, "exists", return_value=False
+        ), patch("fighthealthinsurance.shared_plan_documents.logger.error"):
+            with self.assertRaises(NoBucketCopy):
+                self.share(PLAN_TEXT.encode())
+        self.assertFalse(any(self.bucket.exists(name) for name in written))
+
+    @override_settings(SHARED_FILES_NEED_BUCKET_COPY=True)
     def test_a_bucket_that_cannot_answer_counts_as_no_copy(self):
         with patch.object(self.bucket, "exists", side_effect=OSError("down")), patch(
             "fighthealthinsurance.shared_plan_documents.logger.error"
@@ -219,6 +235,18 @@ class TheNightlyFileCheckTest(_BucketTest):
             self.assertFalse(shared_file_check.run_file_check_if_due(today))
         self.assertTrue(shared_file_check.run_file_check_if_due(today))
 
+    def test_a_stalled_look_is_unknown_and_the_check_goes_on(self):
+        import threading
+
+        self.share(PLAN_TEXT.encode())
+        release = threading.Event()
+        self.addCleanup(release.set)
+        with patch.object(shared_file_check, "SECONDS_PER_FILE", 0.2), patch(
+            "fighthealthinsurance.storage_health.stored_length_and_tail",
+            side_effect=lambda backend, name: release.wait(5),
+        ):
+            self.assertEqual(self.counts()[Day.FILE_CHECK_UNKNOWN], 1)
+
     def test_the_counts_outlive_the_daily_prune(self):
         from fighthealthinsurance.shared_plan_documents import _drop_past_address_rows
 
@@ -235,3 +263,58 @@ class TheNightlyFileCheckTest(_BucketTest):
         call_command("check_shared_files", stdout=out)
         self.assertIn("whole: 1", out.getvalue())
         self.assertIn("cut short: 0", out.getvalue())
+
+
+class AnObjectStoreIsAskedForTheEndOnlyTest(TransactionTestCase):
+    """storage_health.stored_length_and_tail asks an object store for the
+    copy's size and a ranged read of its last bytes, never the whole file."""
+
+    def test_it_reads_four_bytes_from_the_end(self):
+        from unittest.mock import MagicMock
+
+        from fighthealthinsurance.storage_health import stored_length_and_tail
+
+        token = Cryptographer.encrypted(PLAN_TEXT.encode())
+        client = MagicMock()
+        client.stat_object.return_value.size = len(token)
+        client.get_object.return_value.read.return_value = token[-4:]
+        backend = MagicMock(spec=["client", "bucket_name", "open", "exists"])
+        backend.client, backend.bucket_name = client, "plans"
+        self.assertEqual(
+            stored_length_and_tail(backend, "shared-x.txt"), (len(token), token[-4:])
+        )
+        client.get_object.assert_called_once_with(
+            bucket_name="plans",
+            object_name="shared-x.txt",
+            offset=len(token) - 4,
+            length=4,
+        )
+        backend.open.assert_not_called()
+
+    def test_a_missing_object_is_none(self):
+        from unittest.mock import MagicMock
+
+        from fighthealthinsurance.storage_health import stored_length_and_tail
+
+        missing = Exception("no such key")
+        missing.code = "NoSuchKey"  # type: ignore[attr-defined]
+        client = MagicMock()
+        client.stat_object.side_effect = missing
+        backend = MagicMock(spec=["client", "bucket_name"])
+        backend.client, backend.bucket_name = client, "plans"
+        self.assertIsNone(stored_length_and_tail(backend, "shared-x.txt"))
+
+    def test_the_shape_from_the_end_matches_the_shape_of_the_whole(self):
+        from fighthealthinsurance.ml.ml_document_extraction import (
+            encrypted_shape_is_whole,
+        )
+
+        token = Cryptographer.encrypted(PLAN_TEXT.encode() * 3)
+        for cut in range(1, len(token) + 1):
+            copy = token[:cut]
+            with self.subTest(cut=cut):
+                self.assertEqual(
+                    encrypted_shape_is_whole(len(copy), copy[-4:]),
+                    encrypted_copy_looks_whole(copy),
+                )
+

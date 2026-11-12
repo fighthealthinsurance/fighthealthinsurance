@@ -103,15 +103,18 @@ async def send_plan_documents_staff_summary() -> bool:
 async def check_shared_plan_document_files() -> bool:
     """Run today's check that each shared file is still whole in the bucket,
     unless it ran already today (shared_file_check.run_file_check_if_due).
-    True when it ran. Counts only; reads stored bytes, decrypts nothing and
-    changes no row."""
+    True when it ran. Counts only; reads each copy's size and last bytes,
+    decrypts nothing and changes no row."""
     from channels.db import database_sync_to_async
 
     from fighthealthinsurance.shared_file_check import run_file_check_if_due
 
     await _aclose_old_connections()
     try:
-        return bool(await database_sync_to_async(run_file_check_if_due)())
+        # A thread of its own: the check takes minutes, and the shared one
+        # carries every other activity's database work on this worker.
+        check = database_sync_to_async(run_file_check_if_due, thread_sensitive=False)
+        return bool(await check())
     except Exception as e:
         logger.error(f"The shared plan document file check failed: {type(e).__name__}")
         raise _failure(e, "file check", retryable=False) from None

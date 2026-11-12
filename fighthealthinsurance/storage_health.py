@@ -306,14 +306,44 @@ def has_bucket_copy(name: str, storage: Optional[CombinedStorage] = None) -> boo
     return False
 
 
-def stored_copy(backend: Storage, name: str, max_bytes: int) -> Optional[bytes]:
-    """The first ``max_bytes`` of the backend's copy of ``name`` as stored
-    (encrypted: nothing is decrypted), or None when it holds no copy.
-    Raises when it cannot tell."""
-    if not _has_copy(backend, name):
-        return None
-    with backend.open(name, "rb") as stored:
-        return bytes(stored.read(max_bytes))
+def stored_length_and_tail(
+    backend: Storage, name: str, tail_bytes: int = 4
+) -> Optional[Tuple[int, bytes]]:
+    """The stored copy's length in bytes and its last ``tail_bytes``, as
+    stored (encrypted: nothing is decrypted), or None when the backend holds
+    no copy. An object store answers with its size and a ranged read of the
+    end, never the whole file. Raises when it cannot tell."""
+    store = _object_store(backend)
+    if store is None:
+        if not backend.exists(name):
+            return None
+        size = int(backend.size(name))
+        with backend.open(name, "rb") as stored:
+            stored.seek(max(0, size - tail_bytes))
+            return size, bytes(stored.read(tail_bytes))
+    client, bucket = store
+    sanitize = getattr(backend, "_sanitize_path", None)
+    key = sanitize(name) if callable(sanitize) else name
+    try:
+        stat = client.stat_object(bucket_name=bucket, object_name=key)
+    except Exception as e:
+        if getattr(e, "code", None) == "NoSuchKey":
+            return None
+        raise
+    size = int(stat.size or 0)
+    if not size:
+        return 0, b""
+    response = client.get_object(
+        bucket_name=bucket,
+        object_name=key,
+        offset=max(0, size - tail_bytes),
+        length=min(tail_bytes, size),
+    )
+    try:
+        return size, bytes(response.read())
+    finally:
+        response.close()
+        response.release_conn()
 
 
 def check_reachable(

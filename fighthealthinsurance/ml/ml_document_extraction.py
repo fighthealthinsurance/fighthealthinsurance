@@ -50,22 +50,32 @@ def _encryption_key() -> bytes:
     return _fernet_key[16:]
 
 
+def encrypted_shape_is_whole(length: int, tail: bytes) -> bool:
+    """Whether a stored encrypted copy of ``length`` bytes ending in ``tail``
+    (its last few bytes) has a whole token's length: base64 of 57 + 16k
+    bytes (Fernet's header, AES blocks and MAC), padded with "=" exactly
+    where that length calls for it. Needs no key and decrypts nothing. A
+    copy cut short at a random point passes about one time in 64 (a cut on
+    a 4-character boundary whose length fits 57 + 16k)."""
+    if length <= 0 or length % 4:
+        return False
+    padding = len(tail) - len(tail.rstrip(b"="))
+    if padding > 2:
+        return False
+    body = length * 3 // 4 - padding - _FERNET_HEADER_BYTES - _FERNET_MAC_BYTES
+    return body > 0 and body % 16 == 0
+
+
 def encrypted_copy_looks_whole(raw_bytes: bytes) -> bool:
-    """Whether a stored encrypted copy has a whole token's shape: base64 of
-    57 + 16k bytes (Fernet's header, AES blocks and MAC), padded with "="
-    exactly where that length calls for it. Needs no key and decrypts
-    nothing. A copy cut short at a random point passes about one time in
-    64 (a cut on a 4-character boundary whose length fits 57 + 16k), so
-    this flags most cut copies without the file's own size."""
+    """encrypted_shape_is_whole for a copy in hand, which must also decode."""
     text = raw_bytes.strip()
-    if not text or len(text) % 4:
+    if not encrypted_shape_is_whole(len(text), text[-4:]):
         return False
     try:
-        token = base64.urlsafe_b64decode(text)
+        base64.urlsafe_b64decode(text)
     except (binascii.Error, ValueError):
         return False
-    body_bytes = len(token) - _FERNET_HEADER_BYTES - _FERNET_MAC_BYTES
-    return body_bytes > 0 and body_bytes % 16 == 0
+    return True
 
 
 def encrypted_size(plain_size: int) -> int:

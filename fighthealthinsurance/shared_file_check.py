@@ -2,8 +2,9 @@
 
 Each shared file that should have a stored copy (shared from a file, not
 removed) is looked for in the object store, the backend that outlasts the
-pods (storage_health.bucket_backends), and its stored bytes are read, at
-most MAX_STORED_BYTES + 1 a file, with no key: nothing is decrypted, no
+pods (storage_health.bucket_backends): the store is asked for the copy's
+size and its last few bytes (a ranged read, never the whole file), each
+look bounded by SECONDS_PER_FILE, with no key: nothing is decrypted, no
 text is looked at, and no row is changed. Each file is counted as one of:
 
 - whole: a whole encrypted token, the size its recorded upload size gives;
@@ -22,6 +23,7 @@ UTC day (run_file_check_if_due); check_shared_files runs it by hand.
 """
 
 import datetime
+import functools
 import time
 from typing import Optional
 
@@ -34,6 +36,9 @@ from fighthealthinsurance.models import PolicyDocument, SharedPlanDocumentsDay
 #: the rest are counted as not checked.
 MAX_FILES = 1000
 MAX_SECONDS = 600
+#: The longest one file's look in the object store may take; a stalled one
+#: is counted unknown and the check goes on.
+SECONDS_PER_FILE = 20.0
 
 Day = SharedPlanDocumentsDay
 
@@ -51,29 +56,35 @@ def _files_to_check():
     )
 
 
-def _verdict(backends: list, name: str, stored_size: Optional[int]) -> str:
+def _verdict(
+    backends: list, name: str, stored_size: Optional[int], seconds: float
+) -> str:
     from fighthealthinsurance.ml.ml_document_extraction import (
-        encrypted_copy_looks_whole,
+        encrypted_shape_is_whole,
         encrypted_size,
     )
-    from fighthealthinsurance.storage_health import stored_copy
-    from fighthealthinsurance.upload_limits import MAX_STORED_POLICY_DOCUMENT_BYTES
+    from fighthealthinsurance.storage_health import _probe, stored_length_and_tail
 
     unsure = False
     for backend in backends:
         try:
-            raw = stored_copy(backend, name, MAX_STORED_POLICY_DOCUMENT_BYTES + 1)
+            found, _ = _probe(
+                backend,
+                seconds,
+                functools.partial(stored_length_and_tail, backend, name),
+            )
         except Exception as e:
             logger.warning(f"File check could not read a copy: {type(e).__name__}")
             unsure = True
             continue
-        if raw is None:
+        if found is None:
             continue
-        if not encrypted_copy_looks_whole(raw):
+        length, tail = found
+        if not encrypted_shape_is_whole(length, tail):
             return Day.FILE_CHECK_CUT_SHORT
         if stored_size is None:
             return Day.FILE_CHECK_NO_SIZE
-        if len(raw.strip()) != encrypted_size(stored_size):
+        if length != encrypted_size(stored_size):
             return Day.FILE_CHECK_WRONG_SIZE
         return Day.FILE_CHECK_WHOLE
     return Day.FILE_CHECK_UNKNOWN if unsure else Day.FILE_CHECK_MISSING
@@ -89,14 +100,16 @@ def check_shared_files() -> dict[str, int]:
     started = time.monotonic()
     checked = 0
     for pk, name, stored_size in _files_to_check().iterator(chunk_size=200):
-        if checked >= MAX_FILES or time.monotonic() - started > MAX_SECONDS:
+        left = MAX_SECONDS - (time.monotonic() - started)
+        if checked >= MAX_FILES or left <= 0:
             counts[Day.FILE_CHECK_NOT_CHECKED] += 1
             continue
         checked += 1
         if not backends:
             counts[Day.FILE_CHECK_UNKNOWN] += 1
             continue
-        counts[_verdict(backends, name, stored_size)] += 1
+        seconds = min(SECONDS_PER_FILE, left)
+        counts[_verdict(backends, name, stored_size, seconds)] += 1
     if not backends:
         logger.error("File check: no object store is in the write path")
     logger.info(
