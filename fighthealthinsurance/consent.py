@@ -52,7 +52,7 @@ SERVER_OCR_SESSION_KEY = "server_ocr_agreements"
 # The agreement to share plan documents for research, on the share page and
 # as the opt-in box on Explain Policy and the appeal's plan documents step.
 # Give SHARING_VERSION a new date whenever any of these words change.
-SHARING_VERSION = datetime.date(2026, 10, 28)
+SHARING_VERSION = datetime.date(2026, 11, 11)
 _SHARING_BODY = (
     "We combine them with documents from other people to learn how plans "
     "work, and we share what we learn publicly. AI models read them, including "
@@ -81,6 +81,17 @@ SHARING_DETAILS = (
     "the plan stays, because it describes the plan, not you.",
 )
 SHARING_CHECKBOX = "I agree to share these documents this way."
+# The share page's email box, and only it: a copy shared from another page
+# keeps no email. One short line shows; the rest folds under it. These are
+# part of what SHARING_VERSION dates.
+SHARING_EMAIL_HINT = "Optional. We may email you about your files."
+SHARING_EMAIL_FOLD = "How we use your email"
+SHARING_EMAIL_DETAILS = (
+    "We keep it, stored encrypted, so we can write to you about the files you "
+    "shared and find them if you ask us to delete them.",
+    "What we've learned about the plan, like what it costs, stays, because it "
+    "describes the plan, not you.",
+)
 # Where uploading is for something else, only the tick shares a copy.
 SHARING_OPT_IN_TERMS = (
     "If you tick the box, you agree to share a copy of these documents, and "

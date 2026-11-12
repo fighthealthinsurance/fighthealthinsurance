@@ -69,6 +69,7 @@ from fighthealthinsurance.denial_context import health_history_digest
 from fighthealthinsurance.denial_history_consent import history_may_be_used
 from fighthealthinsurance.structured_data import render_json_ld
 from fighthealthinsurance.chat_forms import (
+    SCAN_MESSAGE,
     PlanDocumentsReminderForm,
     SharePlanDocumentsForm,
     UnderstandPolicyForm,
@@ -4621,14 +4622,22 @@ class SharePlanDocumentsView(FormView):
     # What the thank-you note was for: files ("1", as before links), links or both.
     SHARED_FILES, SHARED_LINKS, SHARED_BOTH = "1", "links", "both"
 
+    # The names of files saved with no text to read, for the next page only.
+    SCANS_SESSION_KEY = "shared_plan_documents_scans"
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["sharing_terms"] = consent.SHARING_TERMS
         context["sharing_details"] = consent.SHARING_DETAILS
+        context["email_fold"] = consent.SHARING_EMAIL_FOLD
+        context["email_details"] = consent.SHARING_EMAIL_DETAILS
         shared = self.request.GET.get("shared")
         context["shared_files"] = shared in (self.SHARED_FILES, self.SHARED_BOTH)
         context["shared_links"] = shared in (self.SHARED_LINKS, self.SHARED_BOTH)
         context["shared"] = context["shared_files"] or context["shared_links"]
+        scans = self.request.session.pop(self.SCANS_SESSION_KEY, [])
+        context["scans"] = scans if context["shared_files"] else []
+        context["scan_message"] = SCAN_MESSAGE
         context["rendered"] = shared_plan_documents.render_token()
         context["max_files"] = SharePlanDocumentsForm.MAX_FILES
         context["max_total_bytes"] = SharePlanDocumentsForm.MAX_TOTAL_BYTES
@@ -4722,6 +4731,7 @@ class SharePlanDocumentsView(FormView):
                 details=details,
                 hashed_email=data.get("hashed_email"),
                 links=links,
+                contact_email=data.get("contact_email") or "",
             )
         except shared_plan_documents.OverDailyBudget:
             shared_plan_documents.give_back_share_place(place)
@@ -4732,6 +4742,8 @@ class SharePlanDocumentsView(FormView):
             form.add_error(None, "We couldn't save your files. Please try again.")
             return self.form_invalid(form)
         shared_plan_documents.note_shared(self.request, files)
+        # Shown once on the thank-you page: the files saved with no text to read.
+        self.request.session[self.SCANS_SESSION_KEY] = form.scans
         return redirect(self.get_success_url(files=bool(files), links=bool(links)))
 
 

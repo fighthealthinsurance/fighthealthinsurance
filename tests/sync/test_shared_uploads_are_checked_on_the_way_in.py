@@ -331,7 +331,7 @@ class EveryFileGetsACloserLookTest(_ShareTestCase):
 
 
 class TheEmailIsHashedInTheFormTest(TestCase):
-    def test_the_cleaned_form_holds_only_the_hash(self):
+    def test_the_cleaned_form_holds_the_hash_and_the_address_to_keep(self):
         form = SharePlanDocumentsForm(
             data={"agree": "on", "email": " Rebecca.Crumpler@Test-FHI.com "},
             files={"plan_documents": txt()},
@@ -339,7 +339,10 @@ class TheEmailIsHashedInTheFormTest(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
         self.assertNotIn("email", form.cleaned_data)
         self.assertEqual(len(form.cleaned_data["hashed_email"]), 128)
-        self.assertNotIn("rebecca", repr(form.cleaned_data).lower())
+        # Kept, encrypted, with the share (consent.SHARING_TERMS).
+        self.assertEqual(
+            form.cleaned_data["contact_email"], "rebecca.crumpler@test-fhi.com"
+        )
 
 
 class DailyBudgetsTest(_ShareTestCase):
@@ -568,7 +571,9 @@ class StaffReadSharedFilesAsTextTest(_ShareTestCase):
         self.assertIn("Summary Plan Description for the Crumpler Cooperative", text)
 
     def test_markup_in_a_file_is_shown_as_text_that_runs_nothing(self):
-        doc = self.shared(txt(content=b"<script>alert('Crumpler')</script>" + b" " * 1024))
+        doc = self.shared(
+            txt(content=b"<script>alert('Crumpler')</script>" + b" " * 1024)
+        )
         response = self.read_as_text(doc, self.staff())
         self.assertEqual(response["Content-Type"], "text/plain; charset=utf-8")
         self.assertEqual(response["X-Content-Type-Options"], "nosniff")

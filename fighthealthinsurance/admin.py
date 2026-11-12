@@ -1806,8 +1806,10 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     )
     # Staff reach the file and its cleaned text through the links below,
     # never the raw fields; the cleaned text runs long. A shared link is
-    # shown, never edited.
-    exclude = ("document_enc", "cleaned_text", "shared_link")
+    # shown, never edited. The email a person gave on the share page is
+    # shown on the row's own page (contact_email_shown), never in the list,
+    # a search or a form that could write it back.
+    exclude = ("document_enc", "cleaned_text", "shared_link", "contact_email")
     # The company is set by the reading; staff can fix it.
     autocomplete_fields = ("plan_sponsor",)
     readonly_fields = (
@@ -1827,6 +1829,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "plan_sponsor_evidence",
         "plan_sponsor_checked_at",
         "plan_sponsor_checked_by",
+        "contact_email_shown",
     )
     actions = (
         "read_again",
@@ -1834,6 +1837,11 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "not_spam",
         "confirm_company",
     )
+
+    @admin.display(description="email to write to (kept encrypted)")
+    def contact_email_shown(self, obj):
+        # Staff only, on this page alone: decrypted here for reading.
+        return obj.contact_email or "-"
 
     @admin.display(boolean=True, description="checked")
     def company_checked(self, obj):

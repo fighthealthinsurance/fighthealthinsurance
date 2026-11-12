@@ -53,6 +53,8 @@ SHARING_WORDS_SHA256 = {
     "2026-10-27": "976263b9b1f1d3c98d77d4da8237de17ae0defd254da2d843362f3959537f7e9",
     # From here the share page's folded details are part of the words.
     "2026-10-28": "4bd9edc25d22114e3057439d8d3e931f8fb52cd281610589388a8948a726d273",
+    # From here the share page's email box and its fold are part of the words.
+    "2026-11-11": "49c597a7138392ed26b75668754e611f1bbbe6c2fd451e95a9fc006b94d9b12d",
 }
 
 EM_DASH = "\u2014"
@@ -126,7 +128,13 @@ class SharePlanDocumentsPageTest(TestCase):
 
     def test_the_terms_promise_no_privacy_and_no_deletion(self):
         words = " ".join([consent.SHARING_TERMS, *consent.SHARING_DETAILS]).lower()
-        for word in ("private", "anonymous", "confidential", "we delete", "we will delete"):
+        for word in (
+            "private",
+            "anonymous",
+            "confidential",
+            "we delete",
+            "we will delete",
+        ):
             with self.subTest(word=word):
                 self.assertNotIn(word, words)
 
@@ -170,8 +178,15 @@ class SharePlanDocumentsPageTest(TestCase):
         goal = self.soup.find(id="share-goal")
         self.assertEqual(goal.find_next("label")["for"], files["id"])
         cards = self.soup.find(id="most-useful")
-        self.assertIs(cards.find_previous("input", attrs={"name": "plan_documents"}), files)
-        for part in ("most-useful", "which-versions", "other-plans", "no-documents-yet"):
+        self.assertIs(
+            cards.find_previous("input", attrs={"name": "plan_documents"}), files
+        )
+        for part in (
+            "most-useful",
+            "which-versions",
+            "other-plans",
+            "no-documents-yet",
+        ):
             with self.subTest(part=part):
                 self.assertIsNotNone(files.find_next(id=part))
         form = self.soup.find("form", id="share-plan-documents-form")
@@ -202,7 +217,9 @@ class SharePlanDocumentsPageTest(TestCase):
         # A fold's summary counts as a heading; "Name: more" reads as "Name".
         headings = [
             tag.get_text(" ", strip=True).lower().split(":")[0]
-            for tag in self.soup.find("main").find_all(["h1", "h2", "h3", "h4", "summary"])
+            for tag in self.soup.find("main").find_all(
+                ["h1", "h2", "h3", "h4", "summary"]
+            )
         ]
         self.assertEqual(len(headings), len(set(headings)), headings)
 
@@ -382,6 +399,35 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertIsNotNone(soup.find("section", id="get-your-plan-documents"))
 
 
+class TheEmailBoxSaysLittleAndFoldsTheRestTest(TestCase):
+    def setUp(self):
+        response = self.client.get(reverse("share_plan_documents"))
+        self.soup = BeautifulSoup(response.content, "html.parser")
+
+    def test_one_short_line_shows_beside_the_box(self):
+        box = self.soup.find("input", attrs={"name": "email"})
+        hint = self.soup.find(id=box["aria-describedby"].split()[0])
+        self.assertEqual(hint.get_text(strip=True), consent.SHARING_EMAIL_HINT)
+        self.assertLess(len(consent.SHARING_EMAIL_HINT), 60)
+
+    def test_the_rest_folds_closed_under_it(self):
+        fold = self.soup.find("details", id="email-use")
+        self.assertFalse(fold.has_attr("open"))
+        self.assertEqual(
+            fold.find("summary").get_text(strip=True), consent.SHARING_EMAIL_FOLD
+        )
+        self.assertEqual(
+            [li.get_text(" ", strip=True) for li in fold.find_all("li")],
+            list(consent.SHARING_EMAIL_DETAILS),
+        )
+        box = self.soup.find("input", attrs={"name": "email"})
+        self.assertIs(fold.find_previous("input", attrs={"name": "email"}), box)
+
+    def test_no_word_of_it_says_we_cannot_write(self):
+        page = self.soup.get_text(" ", strip=True)
+        self.assertNotIn("We can't use it to write to you", page)
+
+
 class SharingTermsVersionTest(TestCase):
     def test_the_words_match_the_version_they_are_dated(self):
         words = "\n".join(
@@ -391,6 +437,9 @@ class SharingTermsVersionTest(TestCase):
                 consent.SHARING_CHECKBOX,
                 consent.SHARING_OPT_IN_TERMS,
                 consent.SHARING_OPT_IN_CHECKBOX,
+                consent.SHARING_EMAIL_HINT,
+                consent.SHARING_EMAIL_FOLD,
+                *consent.SHARING_EMAIL_DETAILS,
             ]
         )
         digest = hashlib.sha256(words.encode()).hexdigest()

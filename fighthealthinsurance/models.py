@@ -5171,9 +5171,11 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         related_name="policy_documents",
     )
     # How the company was found: our model ("model"), the fixed patterns
-    # ("rules") or staff ("staff"); and the document's own line that names
-    # it, so staff can check it without opening the file. A company counts
-    # as soon as it's linked; a check is optional and never holds it up.
+    # ("rules"), staff ("staff"), or the employer the person typed on the
+    # share page ("person"); and the document's own line that names it, so
+    # staff can check it without opening the file. A company counts as soon
+    # as it's linked, except one the person typed, which counts once a
+    # reading or staff confirms it; a check is optional and never holds it up.
     plan_sponsor_source = models.CharField(
         max_length=10,
         blank=True,
@@ -5183,6 +5185,7 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
             ("model", "Our model"),
             ("rules", "Fixed patterns"),
             ("staff", "Staff"),
+            ("person", "The person who shared it (not confirmed)"),
         ),
         verbose_name="company found by",
     )
@@ -5221,6 +5224,10 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
     )
     processed_at = models.DateTimeField(null=True, blank=True)
     cleaned_text = EncryptedTextField(db_default="", blank=True, default="")
+    # Share page only: the email the person gave, kept encrypted so we can
+    # write to them about the files they shared (consent.SHARING_TERMS).
+    # Never kept for a copy shared from another page. A removal clears it.
+    contact_email = EncryptedTextField(db_default="", blank=True, default="")
 
     class Meta:
         indexes = [

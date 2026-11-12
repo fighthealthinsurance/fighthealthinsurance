@@ -344,6 +344,7 @@ def save_shared_documents(
     hashed_email: Optional[str],
     document_type: str = "other",
     links: Sequence[str] = (),
+    contact_email: str = "",
 ) -> list[PolicyDocument]:
     """One encrypted PolicyDocument per file, each marked received, and one
     per link (checked by the form), marked a link and stored encrypted with
@@ -359,6 +360,11 @@ def save_shared_documents(
     insurance_plan_obj, each optional. Raises OverDailyBudget, storing
     nothing, when today's budget for everyone from ``source`` has no room
     for the files, or the links' budget has none for the links.
+
+    ``contact_email`` is kept, encrypted, only for a share from the share
+    page itself, never for a copy shared from another page. A typed
+    employer_name that matches a company on the list links it, marked as
+    the person's (plan_sponsors.link_typed_employer).
     """
     shared = {
         "source": source,
@@ -378,6 +384,11 @@ def save_shared_documents(
         "insurance_company_obj": details.get("insurance_company_obj"),
         "insurance_plan_obj": details.get("insurance_plan_obj"),
         "processing_status": PolicyDocument.PROCESSING_RECEIVED,
+        "contact_email": (
+            contact_email.strip()[:300]
+            if source == PolicyDocument.SOURCE_SHARED
+            else ""
+        ),
     }
     budget, limit = _budget(source)
     day = reserve(budget, len(files), limit) if files else None
@@ -417,6 +428,11 @@ def save_shared_documents(
                 )
                 saved.append(doc)
                 doc.save()
+            typed_employer = str(shared["employer_name"])
+            if source == PolicyDocument.SOURCE_SHARED and typed_employer:
+                from fighthealthinsurance.plan_sponsors import link_typed_employer
+
+                link_typed_employer([doc.pk for doc in saved], typed_employer)
     except Exception:
         if day is not None:
             give_back(budget, len(files), day)
@@ -744,6 +760,7 @@ REMOVED_VALUES: dict[str, Any] = {
     "session_key": None,
     "fingerprint": "",
     "cleaned_text": "",
+    "contact_email": "",
     "plan_sponsor_evidence": "",
     "processing_status": PolicyDocument.PROCESSING_REMOVED,
 }
@@ -801,6 +818,9 @@ def remove_shared_documents(hashed_email: str) -> None:
 
 
 # ---- Counting plans ---------------------------------------------------------
+
+#: plan_sponsors.SOURCE_PERSON, here so counting imports nothing more.
+SOURCE_PERSON = "person"
 
 #: The share page's goal, in employer plans, shown through its day. It counts
 #: companies: a plan counts once a shared document names its sponsor
@@ -871,6 +891,24 @@ def unreadable_files() -> QuerySet[PolicyDocument]:
     ).exclude(processing_status__in=NOT_COUNTED)
 
 
+def typed_employer_disagreements() -> int:
+    """How many shared rows, not removed or spam, name a company the reading
+    or staff found that is not the employer the person typed: the typed
+    name is kept, for staff to compare."""
+    from fighthealthinsurance.plan_sponsors import normalize_name
+
+    rows = (
+        PolicyDocument.objects.filter(
+            source__in=PolicyDocument.SHARED_SOURCES, plan_sponsor__isnull=False
+        )
+        .exclude(employer_name="")
+        .exclude(plan_sponsor_source=SOURCE_PERSON)
+        .exclude(processing_status__in=NOT_COUNTED)
+        .values_list("employer_name", "plan_sponsor__normalized_name")
+    )
+    return sum(1 for typed, found in rows if normalize_name(typed) != found)
+
+
 def unreadable_file_count() -> int:
     """How many shared files were received but could not be read."""
     return unreadable_files().count()
@@ -902,6 +940,7 @@ def plan_shares() -> list[Share]:
             "processing_status",
             "cleaned_text",
             "plan_sponsor_id",
+            "plan_sponsor_source",
         )
     )
     batches: dict[Any, dict[str, Any]] = {}
@@ -919,6 +958,7 @@ def plan_shares() -> list[Share]:
         status,
         cleaned_text,
         sponsor_id,
+        sponsor_source,
     ) in rows:
         found = batches.setdefault(
             batch or pk,
@@ -939,7 +979,8 @@ def plan_shares() -> list[Share]:
         found["link_count" if is_link else "file_count"] += 1
         if not is_link and not is_document(status, cleaned_text):
             continue
-        if sponsor_id is not None:
+        # A company the person typed counts once a reading or staff confirms it.
+        if sponsor_id is not None and sponsor_source != SOURCE_PERSON:
             found["companies"].add(sponsor_id)
         digest = link_hash if is_link else file_hash
         if digest:
@@ -1081,6 +1122,8 @@ def share_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
         "premium_answered": sum(1 for share in plans if share.premium_answered),
         # Received but not readable: shown to staff on its own, never a plan.
         "unreadable_files": unreadable_file_count(),
+        # The employer the person typed is not the company found.
+        "typed_employer_disagreements": typed_employer_disagreements(),
     }
 
 

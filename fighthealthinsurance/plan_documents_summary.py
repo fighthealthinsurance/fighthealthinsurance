@@ -9,8 +9,9 @@ to the staff list the professional signup notifications use
 It covers yesterday and the 7 days up to and including yesterday, UTC: files
 received, still waiting to be read (a stuck reading: anything from yesterday
 or before has outlived many hourly sweeps), read as a document, received but
-not readable, read but naming no company, and opted-in copies left out
-(dropped). Counts only: never a file
+not readable, read but naming no company, read with only the company the
+person typed (not confirmed), and opted-in copies left out (dropped). Counts
+only: never a file
 name, its text, a company or an address.
 
 With nothing received or dropped in those 7 days, it sends one line on
@@ -29,6 +30,7 @@ from loguru import logger
 from fighthealthinsurance.models import PolicyDocument, SharedPlanDocumentsDay
 from fighthealthinsurance.shared_plan_documents import (
     is_document,
+    SOURCE_PERSON,
     give_back,
     is_unreadable,
     reserve,
@@ -41,6 +43,7 @@ FIELDS = (
     ("read", "Read as a document"),
     ("unreadable", "Received but not readable"),
     ("no_company", "Read, but naming no company"),
+    ("company_typed", "Read, company typed by the person, not confirmed"),
     ("dropped", "Opted-in copies left out (refused, over budget or not saved)"),
 )
 
@@ -73,9 +76,14 @@ def window_counts(first: datetime.date, last: datetime.date) -> dict[str, int]:
                 PolicyDocument.PROCESSING_SPAM,
             )
         )
-        .values_list("processing_status", "cleaned_text", "plan_sponsor_id")
+        .values_list(
+            "processing_status",
+            "cleaned_text",
+            "plan_sponsor_id",
+            "plan_sponsor_source",
+        )
     )
-    for status, text, sponsor_id in rows:
+    for status, text, sponsor_id, sponsor_source in rows:
         counts["received"] += 1
         if status == PolicyDocument.PROCESSING_RECEIVED:
             # From yesterday or before, so many hourly sweeps have passed it.
@@ -84,6 +92,8 @@ def window_counts(first: datetime.date, last: datetime.date) -> dict[str, int]:
             counts["read"] += 1
             if sponsor_id is None:
                 counts["no_company"] += 1
+            elif sponsor_source == SOURCE_PERSON:
+                counts["company_typed"] += 1
         elif is_unreadable(status, text):
             counts["unreadable"] += 1
     dropped = SharedPlanDocumentsDay.objects.filter(
