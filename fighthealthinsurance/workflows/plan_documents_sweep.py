@@ -20,6 +20,8 @@ A run does three things, and a failure in one never stops the next:
 4. Asks for the daily check that each shared file is still whole in the
    bucket (shared_file_check): the first run of each UTC day runs it.
    Counts only; run once, never retried.
+5. Makes again the copies ticked for research whose save failed and are
+   due (shared_copy_retries), a few a run. Run once, never retried.
 
 History holds the run's numbers, the reminders' row ids, true or false for
 each, the shares' uuids, the counts and whether the summary went.
@@ -70,7 +72,20 @@ class PlanDocumentsSweepWorkflow:
             result["summary_sent"] = int(await self._send_summary())
         if workflow.patched("plan-documents-file-check"):
             result["files_checked"] = int(await self._check_files())
+        if workflow.patched("plan-documents-copy-retries"):
+            result["copies_saved"] = await self._retry_copies()
         return result
+
+    async def _retry_copies(self) -> int:
+        try:
+            return await workflow.execute_activity(
+                sweep_activities.retry_shared_copies,
+                start_to_close_timeout=timedelta(minutes=10),
+                retry_policy=SEND_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("shared copy retries failed; next run tries")
+            return 0
 
     async def _check_files(self) -> bool:
         try:

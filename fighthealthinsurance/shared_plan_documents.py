@@ -26,7 +26,7 @@ import hmac
 import time
 import uuid
 from collections import Counter
-from typing import Any, Mapping, NamedTuple, Optional, Sequence
+from typing import Any, Callable, Mapping, NamedTuple, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
@@ -390,6 +390,7 @@ def save_shared_documents(
     document_type: str = "other",
     links: Sequence[str] = (),
     contact_email: str = "",
+    consent_version: Optional[datetime.date] = None,
 ) -> list[PolicyDocument]:
     """One encrypted PolicyDocument per file, each marked received, and one
     per link (checked by the form), marked a link and stored encrypted with
@@ -422,7 +423,8 @@ def save_shared_documents(
         "document_type": document_type,
         "plan_category": details.get("plan_category") or "unknown",
         "hashed_email": hashed_email or None,
-        "shared_consent_version": consent.SHARING_VERSION,
+        # A retried copy keeps the version its box was ticked under.
+        "shared_consent_version": consent_version or consent.SHARING_VERSION,
         "shared_at": timezone.now(),
         "share_batch": uuid.uuid4(),
         "plan_year": details.get("plan_year"),
@@ -593,9 +595,14 @@ def share_opt_in_copies(
     hashed_email: Optional[str],
     document_type: str = "other",
     already_shared: Optional[set[str]] = None,
+    origin_of: Optional[Callable[[UploadedFile], Any]] = None,
 ) -> list[PolicyDocument]:
     """Shared copies of files a person also ticked the box to share, made
     once the page's own work is saved, as rows of their own.
+
+    With ``origin_of`` (a file's own row on the page it came from), a copy
+    whose save fails is held to be made again later from that row
+    (shared_copy_retries) rather than dropped.
 
     Only files that pass validate_shared_document are shared, within today's
     budgets; the rest are left out without a word, since the page they came
@@ -660,13 +667,32 @@ def share_opt_in_copies(
             logger.info(f"Left opted-in files from {source} unshared: over budget")
             note_dropped(SharedPlanDocumentsDay.DROPPED_OVER_BUDGET, pending)
             return []
-        saved = save_shared_documents(
-            passing,
-            source=source,
-            details=details,
-            hashed_email=hashed_email,
-            document_type=document_type,
-        )
+        try:
+            saved = save_shared_documents(
+                passing,
+                source=source,
+                details=details,
+                hashed_email=hashed_email,
+                document_type=document_type,
+            )
+        except OverDailyBudget:
+            raise
+        except Exception as e:
+            from fighthealthinsurance.shared_copy_retries import hold_for_retry
+
+            logger.error(
+                f"Failed to save opted-in shared copies from {source}: "
+                f"{type(e).__name__}"
+            )
+            held = (
+                hold_for_retry(
+                    passing, origin_of, source=source, hashed_email=hashed_email
+                )
+                if origin_of is not None
+                else 0
+            )
+            note_dropped(SharedPlanDocumentsDay.DROPPED_NOT_SAVED, pending - held)
+            return []
         note_shared(request, passing)
         return saved
     except OverDailyBudget:
@@ -694,6 +720,7 @@ def share_explain_policy_copy(
         details={"plan_category": policy_doc.plan_category},
         hashed_email=policy_doc.hashed_email or None,
         document_type=policy_doc.document_type,
+        origin_of=lambda _uploaded: policy_doc,
     )
 
 
@@ -752,7 +779,20 @@ def share_appeal_plan_documents(
         details=details,
         hashed_email=denial.hashed_email,
         already_shared=already_shared,
+        origin_of=lambda uploaded: _appeal_copy_of(denial, uploaded),
     )
+
+
+def _appeal_copy_of(denial: Any, uploaded: UploadedFile) -> Any:
+    """The appeal's own row for ``uploaded``, found by the appeal's keyed
+    fingerprint (which matches no shared copy's), or None."""
+    from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+    from fighthealthinsurance.models import PlanDocuments
+
+    digest = file_fingerprint(
+        uploaded, DenialCreatorHelper.PLAN_DOCUMENT_FINGERPRINT_LABEL
+    )
+    return PlanDocuments.objects.filter(denial=denial, fingerprint=digest).first()
 
 
 # A plan source names the kind of plan only for these. "Employer -- Private"
@@ -881,12 +921,17 @@ def remove_shared_documents(hashed_email: str) -> None:
     """Remove-my-data for the plan documents shared with this scrambled email.
 
     Each file and link is deleted, with a file's cleaned text, its
-    fingerprint and the scrambled email. A row that holds facts about the
+    fingerprint and the scrambled email, and any copy still waiting to be
+    made again (SharedCopyRetry). A row that holds facts about the
     plan (PLAN_FACT_FIELDS) keeps them and is marked removed, so no reading
     writes to it again; a row with none is deleted whole. Rows shared with no email, or another
     email, are untouched.
     """
+    from fighthealthinsurance.models import SharedCopyRetry
+
     with transaction.atomic():
+        # A copy still waiting to be made is never made after a removal.
+        SharedCopyRetry.objects.filter(hashed_email=hashed_email).delete()
         rows = list(
             PolicyDocument.objects.filter(
                 hashed_email=hashed_email,
