@@ -43,8 +43,9 @@ class Command(BaseCommand):
             if not closed:
                 raise CommandError(f"No bounty {options['close']}")
             self.stdout.write(
-                f"Closed bounty {options['close']}'s join link. Close it on "
-                "RentAHuman too if it still has open spots."
+                f"Closed bounty {options['close']}'s join link to new workers; "
+                "runs already started can still finish. Close it on RentAHuman "
+                "too if it still has open spots."
             )
             return
 

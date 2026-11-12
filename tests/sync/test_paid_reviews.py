@@ -487,12 +487,12 @@ class ReviewFollowUpTest(TestCase):
         request = mock.Mock(session={paid_reviews.SESSION_KEY: self.run.id})
         self.assertEqual(paid_reviews.session_for(request), self.run)
 
-    def test_unfinished_run_is_dropped_when_the_bounty_closes(self):
+    def test_unfinished_run_keeps_going_after_the_bounty_closes(self):
         self.bounty.status = "closed"
         self.bounty.save()
         unfinished = PaidReviewSession.objects.create(bounty=self.bounty, session_key="s2")
         request = mock.Mock(session={paid_reviews.SESSION_KEY: unfinished.id})
-        self.assertIsNone(paid_reviews.session_for(request))
+        self.assertEqual(paid_reviews.session_for(request), unfinished)
 
     def test_non_json_answer_is_a_rentahuman_error(self):
         http = mock.Mock()

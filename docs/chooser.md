@@ -177,7 +177,9 @@ RentAHuman bounty (`PaidReviewBounty`):
 5. **Paying.** Approving moves no money. Release the escrow on RentAHuman
    (its guidance is that agents release payment only when the account
    owner says so). Close a batch's join link with
-   `post_paid_review_bounty --close <id>` or in the admin.
+   `post_paid_review_bounty --close <id>` or in the admin. That only stops
+   new workers joining: runs already started keep counting votes, keep
+   showing an earned code, and are still answered by `sync_paid_reviews`.
 
 Setting up the account: create an API key at
 rentahuman.ai/account/api-keys and set `RENTAHUMAN_API_KEY`. Then

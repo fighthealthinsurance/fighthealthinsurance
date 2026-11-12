@@ -35,7 +35,6 @@ from decimal import Decimal
 import requests
 from django.conf import settings
 from django.db import IntegrityError, transaction
-from django.db.models import Q
 from django.http import (
     HttpRequest,
     HttpResponse,
@@ -97,18 +96,13 @@ def total_cost(price: Decimal, spots: int) -> Decimal:
 
 
 def session_for(request) -> typing.Optional[PaidReviewSession]:
-    """The paid run this browser session is in: while its bounty is open,
-    and after it closes too if the run earned its code, so a worker who has
-    not pasted it yet can still see it."""
+    """The paid run this browser session is in. Closing a bounty closes its
+    join link to new workers (PaidReviewJoinView), not the runs already
+    under way: their votes keep counting and an earned code stays shown."""
     run_id = request.session.get(SESSION_KEY)
     if not run_id:
         return None
-    return (
-        PaidReviewSession.objects.select_related("bounty")
-        .filter(id=run_id)
-        .filter(Q(bounty__status="open") | Q(completion_code__isnull=False))
-        .first()
-    )
+    return PaidReviewSession.objects.select_related("bounty").filter(id=run_id).first()
 
 
 def join(request, bounty: PaidReviewBounty) -> PaidReviewSession:
