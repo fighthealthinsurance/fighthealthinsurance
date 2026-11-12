@@ -33,8 +33,12 @@ from fighthealthinsurance.fax_views import (
     FAX_FOLLOWUPS_KEPT,
     FAX_SENT_SESSION_KEY,
 )
-from fighthealthinsurance.helpers.fax_helpers import FAX_RESEND_WINDOW
-from fighthealthinsurance.models import Denial, FaxesToSend
+from fighthealthinsurance.helpers.fax_helpers import (
+    FAX_RESEND_WINDOW,
+    MAX_RESENDS_PER_NUMBER,
+    SendFaxHelper,
+)
+from fighthealthinsurance.models import Denial, FaxesToSend, KnownNonFaxNumber
 
 EMAIL = "patient@example.com"
 LETTER = "Dear Insurer, please cover my treatment. Signed, Pat Example."
@@ -139,10 +143,10 @@ class FaxLinkPageTestCase(TestCase):
             f"to {fax.destination}."
         )
 
-    def resend(self, fax_phone=NEW_NUMBER, ref=None):
+    def resend(self, fax_phone=NEW_NUMBER, ref=None, **extra):
         """Submit the re-send form, by default the one on the page opened
         last."""
-        data = {"fax_phone": fax_phone}
+        data = {"fax_phone": fax_phone, **extra}
         if ref or self.shown_ref:
             data["fax_ref"] = ref or self.shown_ref
         with patch(DISPATCH) as dispatch:
@@ -495,6 +499,70 @@ class FaxFollowUpPageTest(FaxLinkPageTestCase):
         self.assertIn("We couldn't find your fax", response.content.decode())
 
 
+class FaxFollowUpResendCapTest(FaxLinkPageTestCase):
+    """The page re-sends one fax to the same number at most
+    MAX_RESENDS_PER_NUMBER times, then asks for a different number."""
+
+    def use_up(self, number):
+        key = SendFaxHelper.resend_number_key(number)
+        FaxesToSend.objects.filter(pk=self.fax.pk).update(
+            resends_by_number={key: MAX_RESENDS_PER_NUMBER}
+        )
+
+    def test_a_used_up_number_is_a_form_error(self):
+        self.use_up(NEW_NUMBER)
+        self.open_followup()
+        response, _ = self.resend()
+        self.assertIn("fax_phone", response.context["form"].errors)
+
+    def test_a_used_up_number_sends_nothing(self):
+        self.use_up(NEW_NUMBER)
+        self.open_followup()
+        _, dispatch = self.resend()
+        dispatch.assert_not_called()
+        self.assertUnchanged()
+
+    def test_the_form_error_says_why_and_where_to_get_help(self):
+        self.use_up(NEW_NUMBER)
+        self.open_followup()
+        response, _ = self.resend()
+        html = response.content.decode()
+        self.assertIn(f"{MAX_RESENDS_PER_NUMBER} times", html)
+        self.assertIn("support42@fighthealthinsurance.com", html)
+
+    def test_a_different_number_is_still_sent(self):
+        self.use_up(ON_FILE)
+        self.open_followup()
+        _, dispatch = self.resend(fax_phone=NEW_NUMBER)
+        dispatch.assert_called_once()
+
+    def test_a_used_up_number_on_file_is_not_put_in_the_box(self):
+        self.use_up(ON_FILE)
+        self.assertEqual(self.number_in_box(self.open_followup()), "")
+
+    def test_a_used_up_number_on_file_is_explained_on_the_page(self):
+        self.use_up(ON_FILE)
+        html = self.open_followup().content.decode()
+        self.assertIn(
+            f"We've already re-sent this fax to {ON_FILE} "
+            f"{MAX_RESENDS_PER_NUMBER} times",
+            html,
+        )
+
+    def test_the_fifth_submit_to_one_number_is_refused(self):
+        self.open_followup()
+        for _ in range(MAX_RESENDS_PER_NUMBER):
+            _, dispatch = self.resend()
+            dispatch.assert_called_once()
+            # That send failed, as the next try would find it.
+            FaxesToSend.objects.filter(pk=self.fax.pk).update(
+                sent=True, fax_success=False, attempting_to_send_as_of=None
+            )
+        response, dispatch = self.resend()
+        dispatch.assert_not_called()
+        self.assertIn("fax_phone", response.context["form"].errors)
+
+
 class FaxAddressMatchingNoRouteTest(FaxLinkPageTestCase):
     """An address under the fax links' paths that no route takes, such as
     one a mail client changed, still carries the pair."""
@@ -598,3 +666,37 @@ class SendFaxLinkTest(FaxLinkPageTestCase):
         self.assertIn("We couldn't find your fax", html)
         self.assertIn("support42@fighthealthinsurance.com", html)
         self.assertNotIn("Thank you!", html)
+
+    def test_the_followup_page_asks_to_double_check_the_fax_number(self):
+        response = self.open_followup()
+        self.assertIn(
+            "is the fax number for appeals, not the phone number",
+            response.content.decode(),
+        )
+
+    def test_the_followup_page_says_a_known_voice_line_is_one(self):
+        KnownNonFaxNumber.objects.create(number=ON_FILE, label="Acme member services")
+        response = self.open_followup()
+        self.assertIn(
+            "the Acme member services phone line, not a fax line",
+            response.content.decode(),
+        )
+
+    def test_a_resend_to_a_known_voice_line_is_turned_back(self):
+        KnownNonFaxNumber.objects.create(number=NEW_NUMBER)
+        self.open_followup()
+        response, dispatch = self.resend()
+        dispatch.assert_not_called()
+        self.assertIn("I&#x27;ve checked", response.content.decode())
+
+    def test_a_resend_to_a_known_voice_line_goes_once_the_box_is_ticked(self):
+        KnownNonFaxNumber.objects.create(number=NEW_NUMBER)
+        self.open_followup()
+        _response, dispatch = self.resend(fax_number_is_right="on")
+        dispatch.assert_called_once()
+
+    def test_the_followup_page_says_why_the_last_send_failed(self):
+        FaxesToSend.objects.filter(pk=self.fax.pk).update(failure_reason="our_side")
+        html = self.open_followup().content.decode()
+        self.assertIn("a problem with our fax system*", html)
+        self.assertIn("we could be wrong", html)

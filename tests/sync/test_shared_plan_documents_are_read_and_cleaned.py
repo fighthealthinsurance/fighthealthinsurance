@@ -14,6 +14,7 @@ import datetime
 import time
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from asgiref.sync import async_to_sync, sync_to_async
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.forms.models import model_to_dict
@@ -32,7 +33,9 @@ from fighthealthinsurance.shared_plan_documents import (
     render_token,
     save_shared_documents,
 )
-from tests.pdf_fixtures import make_pdf_bytes
+from tests.conftest import skip_if_no_tesseract
+from tests.pdf_fixtures import make_pdf_bytes, make_scanned_pdf_bytes
+from tests.plan_text_samples import PLAN_TEXT, TABLE_TEXT, dots_and_symbols, shifted
 from tests.sync.test_word_text import paragraph, word_file
 
 EMAIL = "rebecca.crumpler@example.com"
@@ -218,6 +221,215 @@ class SharedRowsAreReadAndCleanedTest(_ReadingTest):
         )
         self.assertFalse(any(secret in line for line in lines))
         self.assertTrue(any("ValueError" in line for line in lines))
+
+
+def ocr_reads(texts, stopped_at=None):
+    """Stands in for aocr_pdf_pages: page -> text for the pages it reads."""
+    return patch(
+        "fighthealthinsurance.pdf_text.aocr_pdf_pages",
+        new=AsyncMock(
+            return_value={"texts": [[n, t] for n, t in texts.items()], "stopped_at": stopped_at}
+        ),
+    )
+
+
+class ScansAndGarbledTextAreReadWithOcrTest(_ReadingTest):
+    def test_a_scanned_pdf_is_read_with_ocr(self):
+        with ocr_reads({0: PLAN_TEXT, 1: ""}) as read:
+            status, doc = self.read("scan.pdf", make_pdf_bytes(["", ""]))
+        self.assertEqual(status, READY)
+        self.assertEqual(read.await_args.args[1], [0, 1])
+        self.assertIn("[Page 1]\nSummary of Benefits", doc.cleaned_text)
+        # A blank page is left out quietly, as before.
+        self.assertNotIn("could not be read", doc.cleaned_text)
+
+    def test_a_pdf_whose_text_reads_as_garbage_is_read_with_ocr_instead(self):
+        content = make_pdf_bytes([shifted(PLAN_TEXT, 3)])
+        with ocr_reads({0: PLAN_TEXT}):
+            status, doc = self.read("plan.pdf", content)
+        self.assertEqual(status, READY)
+        self.assertIn("deductible", doc.cleaned_text)
+        self.assertNotIn(shifted("deductible", 3), doc.cleaned_text)
+
+    def test_only_the_garbled_pages_are_read_with_ocr(self):
+        content = make_pdf_bytes([PLAN_TEXT[:200], "", PLAN_TEXT[:200]])
+        with ocr_reads({1: TABLE_TEXT}) as read:
+            status, doc = self.read("plan.pdf", content)
+        self.assertEqual(read.await_args.args[1], [1])
+        self.assertIn("[Page 2]\nPrimary care visit", doc.cleaned_text)
+
+    def test_garbage_ocr_cannot_fix_is_unreadable_never_ready(self):
+        content = make_pdf_bytes([shifted(PLAN_TEXT, 3)])
+        with ocr_reads({0: shifted(PLAN_TEXT, 3)}):
+            status, doc = self.read("plan.pdf", content)
+        self.assertEqual(status, UNREADABLE)
+        self.assertEqual(doc.cleaned_text, "")
+
+    def test_a_text_file_of_dots_and_symbols_is_unreadable(self):
+        status, doc = self.read("plan.txt", dots_and_symbols().encode())
+        self.assertEqual(status, UNREADABLE)
+        self.assertEqual(doc.cleaned_text, "")
+
+    def test_pages_ocr_did_not_reach_are_counted_in_a_note(self):
+        with ocr_reads({0: PLAN_TEXT}, stopped_at=1):
+            status, doc = self.read("scan.pdf", make_pdf_bytes(["", "", ""]))
+        self.assertEqual(status, READY)
+        self.assertIn(
+            "[2 of 3 pages could not be read: reading scanned "
+            "pages stops after 40 pages or 2 minutes.]",
+            doc.cleaned_text,
+        )
+
+    def test_ocr_reads_at_most_its_page_limit(self):
+        with patch.object(processing, "OCR_MAX_PAGES", 2), ocr_reads(
+            {0: PLAN_TEXT, 1: PLAN_TEXT}
+        ) as read:
+            status, doc = self.read("scan.pdf", make_pdf_bytes(["", "", ""]))
+        self.assertEqual(read.await_args.args[1], [0, 1])
+        self.assertIn("[1 of 3 pages could not be read", doc.cleaned_text)
+
+    def test_ocr_that_fails_leaves_a_scan_unreadable_and_logs_only_the_error_class(self):
+        lines = []
+        sink = logger.add(lambda message: lines.append(str(message)), level="DEBUG")
+        try:
+            with patch(
+                "fighthealthinsurance.pdf_text.aocr_pdf_pages",
+                new=AsyncMock(side_effect=ValueError("Rebecca Lee Crumpler W123456789")),
+            ):
+                status, doc = self.read("scan.pdf", make_pdf_bytes(["", ""]))
+        finally:
+            logger.remove(sink)
+        self.assertEqual(status, UNREADABLE)
+        self.assertTrue(any("OCR could not open a shared plan document: ValueError" in l for l in lines))
+        for gone in PERSONAL:
+            self.assertFalse(any(gone in l for l in lines))
+
+    def test_an_ocr_that_times_out_or_cannot_run_is_tried_again(self):
+        for error in (TimeoutError("PDF OCR did not finish"), OSError("no child")):
+            with self.subTest(type(error).__name__):
+                (doc,) = share(upload("scan.pdf", make_pdf_bytes(["", ""])))
+                with patch(
+                    "fighthealthinsurance.pdf_text.aocr_pdf_pages",
+                    new=AsyncMock(side_effect=error),
+                ):
+                    with self.assertRaises(ApplicationError) as raised:
+                        self.process(doc)
+                self.assertFalse(raised.exception.non_retryable)
+                doc.refresh_from_db()
+                self.assertEqual(doc.processing_status, RECEIVED)
+
+    def test_pages_of_a_garbled_text_layer_ocr_did_not_reach_are_not_kept(self):
+        # Short pages, each too short to judge, that are garbage together.
+        pages = [shifted("Your plan covers this service", 3)] * 6
+        with patch.object(processing, "OCR_MAX_PAGES", 2), ocr_reads(
+            {0: PLAN_TEXT, 1: PLAN_TEXT}
+        ):
+            status, doc = self.read("plan.pdf", make_pdf_bytes(pages))
+        self.assertEqual(status, READY)
+        self.assertNotIn(shifted("covers", 3), doc.cleaned_text)
+        self.assertIn("[4 of 6 pages could not be read", doc.cleaned_text)
+
+    def test_without_tesseract_it_logs_an_error_and_says_so_in_the_note(self):
+        from fighthealthinsurance.pdf_text import TESSERACT_MISSING
+
+        lines = []
+        sink = logger.add(lambda message: lines.append(str(message)), level="DEBUG")
+        try:
+            with patch(
+                "fighthealthinsurance.pdf_text.aocr_pdf_pages",
+                new=AsyncMock(side_effect=ValueError(TESSERACT_MISSING)),
+            ):
+                status, doc = self.read("plan.pdf", make_pdf_bytes([PLAN_TEXT[:300], ""]))
+        finally:
+            logger.remove(sink)
+        self.assertEqual(status, READY)
+        self.assertIn("[1 of 2 pages could not be read: OCR could not run.]", doc.cleaned_text)
+        self.assertTrue(any("ERROR" in l and "tesseract is not installed" in l for l in lines))
+
+    def test_a_page_ocr_failed_on_is_counted_in_the_note(self):
+        with ocr_reads({0: PLAN_TEXT, 1: None}):
+            status, doc = self.read("scan.pdf", make_pdf_bytes(["", ""]))
+        self.assertEqual(status, READY)
+        self.assertIn("[1 of 2 pages could not be read.]", doc.cleaned_text)
+
+    def test_an_ocr_that_times_out_keeps_the_pages_the_text_layer_read(self):
+        with patch(
+            "fighthealthinsurance.pdf_text.aocr_pdf_pages",
+            new=AsyncMock(side_effect=TimeoutError("PDF OCR did not finish")),
+        ):
+            status, doc = self.read("plan.pdf", make_pdf_bytes([PLAN_TEXT[:300], ""]))
+        self.assertEqual(status, READY)
+        self.assertIn("[Page 1]\nSummary of Benefits", doc.cleaned_text)
+        self.assertIn("could not be read: OCR did not finish.]", doc.cleaned_text)
+
+    def test_a_readable_page_past_the_ocr_limit_is_kept_when_the_rest_is_garbled(self):
+        pages = [shifted("Your plan covers this service in full", 3)] * 40 + [PLAN_TEXT]
+        with patch.object(processing, "OCR_MAX_PAGES", 2), ocr_reads(
+            {0: PLAN_TEXT, 1: PLAN_TEXT}
+        ) as read:
+            status, doc = self.read("plan.pdf", make_pdf_bytes(pages))
+        self.assertEqual(status, READY)
+        self.assertNotIn(40, read.await_args.args[1])
+        self.assertIn("[Page 41]\nSummary of Benefits", doc.cleaned_text)
+        self.assertIn("[38 of 41 pages could not be read", doc.cleaned_text)
+
+    def test_a_stamped_scan_is_read_with_ocr(self):
+        # A scanner's stamp is the only text layer; the page is a picture.
+        with ocr_reads({0: PLAN_TEXT, 1: TABLE_TEXT}) as read:
+            status, doc = self.read("scan.pdf", make_pdf_bytes(["Page 1", "Page 2"]))
+        self.assertEqual(status, READY)
+        self.assertEqual(read.await_args.args[1], [0, 1])
+        self.assertIn("[Page 1]\nSummary of Benefits", doc.cleaned_text)
+        self.assertIn("[Page 2]\nPrimary care visit", doc.cleaned_text)
+        self.assertNotIn("could not be read", doc.cleaned_text)
+
+    def test_a_short_cover_page_is_kept_when_ocr_reads_less(self):
+        cover = "Evidence of Coverage 2027, Crumpler Mutual Health Gold PPO"
+        with ocr_reads({0: "Evidence"}):
+            status, doc = self.read("plan.pdf", make_pdf_bytes([cover]))
+        self.assertEqual(status, READY)
+        self.assertIn(f"[Page 1]\n{cover}", doc.cleaned_text)
+        self.assertNotIn("could not be read", doc.cleaned_text)
+
+    def test_a_stamped_scan_ocr_cannot_read_says_so(self):
+        from fighthealthinsurance.pdf_text import TESSERACT_MISSING
+
+        with patch(
+            "fighthealthinsurance.pdf_text.aocr_pdf_pages",
+            new=AsyncMock(side_effect=ValueError(TESSERACT_MISSING)),
+        ):
+            _, doc = self.read("scan.pdf", make_pdf_bytes(["Page 1", "Page 2"]))
+        self.assertIn("[2 of 2 pages could not be read: OCR could not run.]", doc.cleaned_text)
+
+    @skip_if_no_tesseract
+    @pytest.mark.real_ocr
+    def test_a_real_stamped_scan_is_read(self):
+        content = make_scanned_pdf_bytes([PLAN_TEXT], hidden_texts=["Page 1"])
+        status, doc = self.read("scan.pdf", content)
+        self.assertEqual(status, READY)
+        self.assertIn("deductible", doc.cleaned_text.lower())
+
+    def test_a_pdf_with_good_text_never_runs_ocr(self):
+        with ocr_reads({}) as read:
+            status, _ = self.read("plan.pdf", make_pdf_bytes([PLAN_TEXT[:300]]))
+        self.assertEqual(status, READY)
+        read.assert_not_awaited()
+
+    @skip_if_no_tesseract
+    @pytest.mark.real_ocr
+    def test_a_real_scan_is_read(self):
+        status, doc = self.read("scan.pdf", make_scanned_pdf_bytes([PLAN_TEXT]))
+        self.assertEqual(status, READY)
+        self.assertIn("deductible", doc.cleaned_text.lower())
+
+    @skip_if_no_tesseract
+    @pytest.mark.real_ocr
+    def test_a_page_that_shows_real_text_over_a_garbled_text_layer_is_read_from_the_picture(self):
+        content = make_scanned_pdf_bytes([PLAN_TEXT], hidden_texts=[shifted(PLAN_TEXT, 3)])
+        status, doc = self.read("plan.pdf", content)
+        self.assertEqual(status, READY)
+        self.assertIn("deductible", doc.cleaned_text.lower())
+        self.assertNotIn(shifted("deductible", 3), doc.cleaned_text)
 
 
 class RemovedRowsStayRemovedTest(_ReadingTest):
@@ -418,3 +630,18 @@ class ReadingStartsOnceTheRowsCommitTest(TestCase):
             share(upload("plan.txt", b"$1,500"))
         connect.assert_not_awaited()
         self.assertEqual(PolicyDocument.objects.count(), 1)
+
+
+def test_sync_tests_read_nothing_with_ocr_unless_they_ask():
+    from fighthealthinsurance import pdf_text
+
+    assert pdf_text.aocr_pdf_pages.__name__ == "nothing_read"
+
+
+@pytest.mark.real_ocr
+def test_the_real_ocr_marker_reaches_the_real_ocr():
+    # A change to the stand-in must never silently stub the real-tesseract tests.
+    from fighthealthinsurance import pdf_text
+
+    assert pdf_text.aocr_pdf_pages.__name__ == "aocr_pdf_pages"
+    assert pdf_text.aocr_pdf_pages.__module__ == "fighthealthinsurance.pdf_text"

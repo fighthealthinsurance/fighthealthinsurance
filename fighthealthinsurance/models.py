@@ -2280,6 +2280,58 @@ class ExtraLinkFetchLog(models.Model):
         return f"FetchLog {self.id}: {self.status} at {self.timestamp}"
 
 
+class KnownNonFaxNumber(models.Model):
+    """A number people try to fax their appeal to that does not take faxes.
+
+    Mostly insurers' member-services voice lines, which are printed on denial
+    letters next to (or instead of) the appeals fax and get typed into the fax
+    box. A fax to one rings a phone menu and fails, so the fax form asks the
+    person to check the number, and the failed-fax emails (to the person and
+    to support) say we think it is a voice line rather than a fax problem.
+
+    The appeal_phone_number of every InsuranceCompany and InsurancePlan counts
+    too (fax_number_check.lookup_non_fax_number); this table is for numbers
+    that are not on file there. Fixture: known_non_fax_numbers.
+    """
+
+    KIND_VOICE = "voice"
+    KIND_DISCONNECTED = "disconnected"
+    KIND_CHOICES = [
+        (KIND_VOICE, "Voice line (does not take faxes)"),
+        (KIND_DISCONNECTED, "Disconnected / out of service"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    number = models.CharField(
+        max_length=20,
+        unique=True,
+        help_text="10-digit US number; punctuation and a leading 1 are dropped on save",
+    )
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default=KIND_VOICE)
+    label = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text=(
+            "Shown to the person, e.g. 'Aetna member services'. Leave blank "
+            "when we don't know whose line it is."
+        ),
+    )
+    insurance_company = models.ForeignKey(
+        "InsuranceCompany", null=True, blank=True, on_delete=models.SET_NULL
+    )
+    notes = models.TextField(blank=True, help_text="Internal: how we found out")
+    created = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        from fighthealthinsurance.fax_number_check import normalize_phone_digits
+
+        self.number = normalize_phone_digits(self.number) or self.number
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.number} ({self.get_kind_display()}) {self.label}".strip()
+
+
 class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # type: ignore
     """
     Queues faxes to be sent with appeal documents.
@@ -2328,11 +2380,22 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     delivery_counted = models.BooleanField(
         default=False, db_default=False, editable=False
     )
+    # How many times the follow-up link has re-sent this fax to each number,
+    # keyed by the number's digits (SendFaxHelper.resend_number_key). The
+    # link stops re-sending to a number after MAX_RESENDS_PER_NUMBER. Null
+    # means none yet. Staff can clear it here to let the link try again.
+    resends_by_number = models.JSONField(null=True, blank=True)
     # Professional we may use different backends.
     professional = models.BooleanField(default=False)
     for_appeal = models.ForeignKey(
         "Appeal", on_delete=models.SET_NULL, null=True, blank=True
     )
+    # Why the latest attempt failed, as best the fax backends could tell
+    # (fax_status.FAILURE_*; None when it went through or nothing was
+    # recognised), and the backend's own words for it, for support.
+    # Written by fax_send_core.send_fax_via_vendor, read by finalize_fax.
+    failure_reason = models.CharField(max_length=40, null=True, blank=True)
+    failure_detail = models.TextField(null=True, blank=True)
 
     def _get_filename(self) -> str:
         if self.combined_document:
@@ -4844,6 +4907,15 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
         related_name="+",
     )
     client_key = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    # The paid run (RentAHuman) this vote was cast in, if any, so paid votes
+    # can be told from volunteers' (see paid_reviews.py). Null for volunteers.
+    paid_review = models.ForeignKey(
+        "PaidReviewSession",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="votes",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -4954,6 +5026,178 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
             str: A string in the form "Skip of Task {task_id} by {session_key}".
         """
         return f"Skip of Task {self.task_id} by {self.session_key}"
+
+
+class HumanJudgeSubmission(ExportModelOperationsMixin("HumanJudgeSubmission"), models.Model):  # type: ignore
+    """One Arena draft sent to HumanJudge (humanjudge.com) for outside human
+    review (see chooser_humanjudge). Only synthetic Arena appeal drafts are
+    ever sent: HumanJudge shows what it is sent to its reviewers. The
+    inference id is made once and reused on every retry, so a resend after a
+    lost response is idempotent on their side."""
+
+    STATUS_CHOICES = [
+        ("PENDING", "Pending"),
+        ("SENT", "Sent"),
+        ("FAILED", "Failed"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    task = models.ForeignKey(
+        ChooserTask, on_delete=models.CASCADE, related_name="humanjudge_submissions"
+    )
+    candidate = models.OneToOneField(
+        ChooserCandidate,
+        on_delete=models.CASCADE,
+        related_name="humanjudge_submission",
+    )
+    # Our gj_inference_id for the trace: how HumanJudge's votes are matched
+    # back to the draft.
+    inference_id = models.CharField(max_length=100, unique=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="PENDING")
+    attempts = models.PositiveSmallIntegerField(default=0)
+    # Status code or exception class only, never a response body.
+    last_error = models.CharField(max_length=200, blank=True, default="")
+    sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "created_at"])]
+        verbose_name = "HumanJudge Submission"
+        verbose_name_plural = "HumanJudge Submissions"
+
+    def __str__(self):
+        return f"HumanJudge {self.status} for Candidate {self.candidate_id}"
+
+
+class HumanJudgeVerdict(ExportModelOperationsMixin("HumanJudgeVerdict"), models.Model):  # type: ignore
+    """One HumanJudge reviewer's verdict on one Arena draft.
+
+    Kept apart from ChooserVote on purpose: these are an outside judge's
+    pass/flag verdicts on single drafts, not our voters' side-by-side picks,
+    so they never count toward the Arena's vote tallies or public rankings.
+    They feed only the "humanjudge" pick in ChooserTask.scoring_json, next to
+    Jev's and fhi-local's."""
+
+    VERDICT_CHOICES = [
+        ("pass", "Pass"),
+        ("flag", "Flag"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    submission = models.ForeignKey(
+        HumanJudgeSubmission, on_delete=models.CASCADE, related_name="verdicts"
+    )
+    # Denormalized from the submission for direct queries.
+    task = models.ForeignKey(
+        ChooserTask, on_delete=models.CASCADE, related_name="humanjudge_verdicts"
+    )
+    candidate = models.ForeignKey(
+        ChooserCandidate, on_delete=models.CASCADE, related_name="humanjudge_verdicts"
+    )
+    # Their vote id when the record carries one, else a digest of the trace,
+    # reviewer and time, so re-fetching the same vote never adds a row.
+    external_key = models.CharField(max_length=128, unique=True)
+    verdict = models.CharField(max_length=10, choices=VERDICT_CHOICES)
+    # HumanJudge's category for a flag (Wrong, Incomplete, Missed Point,
+    # Harmful, Impractical); blank on a pass.
+    flag_category = models.CharField(max_length=100, blank=True, default="")
+    feedback = models.TextField(blank=True, default="")
+    # HumanJudge's opaque reviewer id, not one of our users.
+    evaluator_id = models.CharField(max_length=128, blank=True, default="")
+    voted_at = models.DateTimeField(null=True, blank=True)
+    raw = models.JSONField(default=dict, blank=True)
+    fetched_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["task"]),
+            models.Index(fields=["candidate", "verdict"]),
+        ]
+        verbose_name = "HumanJudge Verdict"
+        verbose_name_plural = "HumanJudge Verdicts"
+
+    def __str__(self):
+        return f"HumanJudge {self.verdict} on Candidate {self.candidate_id}"
+
+
+class PaidReviewBounty(ExportModelOperationsMixin("PaidReviewBounty"), models.Model):  # type: ignore
+    """One batch of paid Arena reviewers, posted as a RentAHuman bounty.
+
+    Each worker opens the bounty's join link (``join_token``), judges
+    ``reviews_required`` cases that clear the quality floor, and is shown a
+    completion code to submit as their evidence (see paid_reviews.py and
+    docs/chooser.md, "Paid reviewers")."""
+
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("open", "Open"),
+        ("closed", "Closed"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    # The secret in the join link. Anyone holding it can judge for the
+    # bounty, but only an accepted worker's submission gets paid.
+    join_token = models.CharField(max_length=64, unique=True)
+    # RentAHuman's id for the bounty; blank until it is posted.
+    rah_bounty_id = models.CharField(max_length=100, blank=True, default="")
+    title = models.CharField(max_length=200)
+    price_dollars = models.DecimalField(max_digits=8, decimal_places=2)
+    spots = models.PositiveIntegerField()
+    reviews_required = models.PositiveIntegerField()
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="draft")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["rah_bounty_id"],
+                condition=~models.Q(rah_bounty_id=""),
+                name="paid_review_bounty_unique_rah_id",
+            )
+        ]
+        verbose_name = "Paid Review Bounty"
+        verbose_name_plural = "Paid Review Bounties"
+
+    def __str__(self):
+        return f"{self.title} ({self.status}, {self.rah_bounty_id or 'unposted'})"
+
+
+class PaidReviewSession(ExportModelOperationsMixin("PaidReviewSession"), models.Model):  # type: ignore
+    """One worker's run at a paid bounty: the browser session that opened
+    the join link, the votes it cast (ChooserVote.paid_review), and the
+    completion code it earned and the submission that claimed it."""
+
+    STATUS_CHOICES = [
+        ("working", "Working"),
+        ("code_issued", "Code issued"),
+        # Claimed by a submission, but RentAHuman has not taken the approval yet.
+        ("verified", "Verified"),
+        ("approved", "Approved"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    bounty = models.ForeignKey(
+        PaidReviewBounty, on_delete=models.CASCADE, related_name="sessions"
+    )
+    session_key = models.CharField(max_length=100, db_index=True)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="working")
+    completion_code = models.CharField(
+        max_length=20, null=True, blank=True, unique=True
+    )
+    code_issued_at = models.DateTimeField(null=True, blank=True)
+    # The RentAHuman submission that claimed the code: one each way.
+    rah_submission_id = models.CharField(
+        max_length=100, null=True, blank=True, unique=True
+    )
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Paid Review Session"
+        verbose_name_plural = "Paid Review Sessions"
+
+    def __str__(self):
+        return f"Paid review {self.id} for bounty {self.bounty_id} ({self.status})"
 
 
 class EvaluatorLoginThrottle(models.Model):

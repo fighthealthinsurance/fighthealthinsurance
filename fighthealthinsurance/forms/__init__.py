@@ -505,7 +505,81 @@ class ChooseEscalationLetterForm(DenialRefForm):
     )
 
 
-class FaxForm(DenialRefForm):
+class FaxNumberCheckMixin:
+    """Asks the person to check a fax number we know is not a fax line.
+
+    The number people most often type into the fax box is their insurer's
+    member-services phone number: it is the one printed biggest on a denial
+    letter. A fax to it rings a phone menu and fails a day later, so when
+    ``fax_phone`` is a number we know does not take faxes
+    (fax_number_check.lookup_non_fax_number) the form is turned back with a
+    note saying so, and a box to tick for someone who has checked and wants
+    to send it anyway: our list can be wrong.
+
+    The box is off the form (``_hold_fax_number_box`` in ``__init__``) until
+    the number calls for it, like FaxForm's "Send it as it is" box, so no
+    other page shows it. Once ticked it stays ticked while the number is
+    still on the list, so another error on the page does not ask again.
+    """
+
+    FAX_NUMBER_BOX = "fax_number_is_right"
+
+    @staticmethod
+    def fax_number_box() -> forms.BooleanField:
+        """The box; each form declares it as ``fax_number_is_right``."""
+        return forms.BooleanField(
+            required=False,
+            label="I've checked: this is the fax number for appeals",
+            label_suffix="",
+            template_name="partials/check_row_field.html",
+        )
+
+    fields: dict
+    data: typing.Any
+    files: typing.Any
+    cleaned_data: dict
+
+    def _hold_fax_number_box(self) -> None:
+        self._fax_number_box = self.fields.pop(self.FAX_NUMBER_BOX)
+
+    def _check_fax_number(self) -> None:
+        from fighthealthinsurance.fax_number_check import lookup_non_fax_number
+
+        number = self.cleaned_data.get("fax_phone")
+        if not number:
+            return
+        try:
+            non_fax = lookup_non_fax_number(number)
+        except Exception:
+            # Only the warning rides on this; never stop a fax over it.
+            logger.opt(exception=True).warning("Known non-fax number lookup failed")
+            return
+        if non_fax is None:
+            return
+        box = self._fax_number_box
+        name = self.add_prefix(self.FAX_NUMBER_BOX)  # type: ignore[attr-defined]
+        confirmed = bool(box.widget.value_from_datadict(self.data, self.files, name))
+        fields = list(self.fields.items())
+        names = [n for n, _ in fields]
+        at = names.index("fax_phone") + 1 if "fax_phone" in names else len(fields)
+        fields.insert(at, (self.FAX_NUMBER_BOX, box))
+        self.fields = dict(fields)
+        if confirmed:
+            return
+        self.add_error(  # type: ignore[attr-defined]
+            "fax_phone",
+            forms.ValidationError(
+                f"We think {number} is {non_fax.description}, so a fax to it "
+                "won't go through. Please check your denial letter or your "
+                "insurance company's website for the fax number for appeals. "
+                "If you're sure this is the right fax number, tick the box "
+                "under it and send again.",
+                code="known_non_fax_number",
+            ),
+        )
+
+
+class FaxForm(DenialRefForm, FaxNumberCheckMixin):
     name = forms.CharField(
         required=True,
         label="Your full name",
@@ -526,6 +600,7 @@ class FaxForm(DenialRefForm):
             attrs={"placeholder": "e.g., 1-800-555-1234", "type": "tel"}
         ),
     )
+    fax_number_is_right = FaxNumberCheckMixin.fax_number_box()
     completed_appeal_text = forms.CharField(
         widget=forms.Textarea(attrs={"class": "appeal_text"}),
         required=True,
@@ -564,6 +639,7 @@ class FaxForm(DenialRefForm):
     def __init__(self, *args: typing.Any, **kwargs: typing.Any) -> None:
         super().__init__(*args, **kwargs)
         self._send_as_it_is_box = self.fields.pop("approved_placeholders")
+        self._hold_fax_number_box()
 
     def _approved_placeholders(self) -> set[str]:
         """Every blank on a list posted as approved: by the ticked box, by
@@ -619,6 +695,7 @@ class FaxForm(DenialRefForm):
         The same pattern list drives both.
         """
         cleaned_data = super().clean()
+        self._check_fax_number()
         text = self.cleaned_data.get("completed_appeal_text")
         if not text:
             return cleaned_data
@@ -654,7 +731,7 @@ class EntityExtractForm(DenialRefForm):
     """Entity Extraction form."""
 
 
-class FaxResendForm(forms.Form):
+class FaxResendForm(forms.Form, FaxNumberCheckMixin):
     """The fax follow-up page's form. fax_ref says which of the faxes the
     session holds the form is for (fax_views.FaxFollowUpView): a random ref
     that means nothing outside the session, so the form holds no fax ids."""
@@ -662,7 +739,17 @@ class FaxResendForm(forms.Form):
     # No longer than FaxesToSend.destination, which it is saved into. The
     # page fills it with the number on file.
     fax_phone = forms.CharField(required=True, max_length=20, label="Fax number")
+    fax_number_is_right = FaxNumberCheckMixin.fax_number_box()
     fax_ref = forms.CharField(required=True, widget=forms.HiddenInput)
+
+    def __init__(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._hold_fax_number_box()
+
+    def clean(self) -> typing.Optional[dict[str, typing.Any]]:
+        cleaned_data = super().clean()
+        self._check_fax_number()
+        return cleaned_data
 
 
 class BasePostInferedForm(DenialRefForm):

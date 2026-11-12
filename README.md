@@ -401,6 +401,18 @@ details and `ENABLED_REMOTE_MODELS` are in
 [docs/ml-backends.md](docs/ml-backends.md); the deploy-time health check is in
 [docs/model-backend-health.md](docs/model-backend-health.md).
 
+### HumanJudge (Appeal Arena)
+
+Staff can send the Appeal Arena's synthetic appeal drafts to
+[HumanJudge](https://humanjudge.com)'s human reviewers, and bring their
+verdicts back, from the admin. It needs `HUMANJUDGE_API_KEY` (the HumanJudge
+model's `gj_sk_` key), and may need `HUMANJUDGE_TOKEN` (a `gj_pat_` personal
+access token, for reading verdicts) and `HUMANJUDGE_MODEL_ID` (when the
+account has more than one model). In production they go in the
+`fight-health-insurance-secret` Secret. Sign-up and setup steps:
+[API_KEYS_SETUP.md](API_KEYS_SETUP.md#humanjudge-humanjudge_api_key--_token--_model_id);
+how it works: [docs/chooser.md](docs/chooser.md).
+
 ### GeoIP
 
 The chat's US-state guess and ASN tracking need a geoip2fast city database,

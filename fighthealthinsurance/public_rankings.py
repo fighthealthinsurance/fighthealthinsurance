@@ -20,6 +20,13 @@ Everything on it is either synthetic or aggregate:
   medical term (a name, say) ever slip past those filters, since a string
   only reaches the top few by being something a great many people typed.
 
+HumanJudge's outside reviewers (``humanjudge_reports``) are shown beside
+our voters, never mixed in: each appeal-letter row carries ``humanjudge``,
+their pass rate on that model's drafts, and the order stays our voters'
+alone. Their verdicts are aggregate counts here; their written feedback
+stays on the staff breakdown. They are blind by design, so they are not
+held to the blind-voting cut-off below.
+
 Models are shown by model name alone (``public_model_label``): a
 "provider/model" label is cut to "model", and every provider serving the same
 model counts as one row, on the broad assumption that they serve the same
@@ -125,10 +132,29 @@ def public_model_label(raw: Optional[str]) -> Optional[str]:
     return label.rsplit("/", 1)[-1].strip() or label
 
 
-def _model_rows(kind: str, since: Optional[datetime.datetime]) -> List[Dict[str, Any]]:
+def _humanjudge(stats: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """A row's HumanJudge column: None with no reviews; a pass rate shown
+    once there are PUBLIC_RANKINGS_MIN_SHOWN reviews, like a win rate."""
+    if not stats or not stats["reviews"]:
+        return None
+    return {
+        "reviews": stats["reviews"],
+        "passes": stats["passes"],
+        "pass_rate": stats["pass_rate"],
+        "warming_up": stats["reviews"] < PUBLIC_RANKINGS_MIN_SHOWN,
+    }
+
+
+def _model_rows(
+    kind: str,
+    since: Optional[datetime.datetime],
+    humanjudge: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
     """The leaderboard rows for ``kind`` since ``since``: synthetic votes
     only, models with a denominator only, best win rate first among those
-    past PUBLIC_RANKINGS_MIN_SHOWN, then the rest by votes shown."""
+    past PUBLIC_RANKINGS_MIN_SHOWN, then the rest by votes shown. With
+    ``humanjudge`` (model_verdict_stats by public label), each row also
+    carries that model's HumanJudge column; it never changes the order."""
     rows = ModelUsageDashboardView._chooser_stats(
         kind, since, None, source=SYNTHETIC_SOURCE, label_for=public_model_label
     )
@@ -145,6 +171,11 @@ def _model_rows(kind: str, since: Optional[datetime.datetime]) -> List[Dict[str,
                 "flagged": r["flagged"],
                 "flag_rate": r["flag_rate"],
                 "warming_up": r["presented"] < PUBLIC_RANKINGS_MIN_SHOWN,
+                "humanjudge": (
+                    _humanjudge(humanjudge.get(r["model_name"]))
+                    if humanjudge is not None
+                    else None
+                ),
             }
         )
     out.sort(
@@ -171,14 +202,25 @@ def _leader(rows: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
 
 
 def _table(
-    kind: str, kind_label: str, since: Optional[datetime.datetime]
+    kind: str,
+    kind_label: str,
+    since: Optional[datetime.datetime],
+    humanjudge_since: Optional[datetime.datetime] = None,
 ) -> Dict[str, Any]:
     """One leaderboard: its rows, how many of them are ranked (past warming
-    up, so the ones a leader is ahead of), and its leader."""
-    rows = _model_rows(kind, since)
+    up, so the ones a leader is ahead of), and its leader. Appeal letters
+    also carry HumanJudge's verdicts since ``humanjudge_since`` (only appeal
+    drafts go to HumanJudge)."""
+    humanjudge = None
+    if kind == "appeal_letter":
+        from fighthealthinsurance.humanjudge_reports import model_verdict_stats
+
+        humanjudge = model_verdict_stats(humanjudge_since, public_model_label)
+    rows = _model_rows(kind, since, humanjudge)
     return {
         "kind": kind,
         "label": kind_label,
+        "has_humanjudge": bool(humanjudge),
         "rows": rows,
         "ranked": sum(1 for r in rows if not r["warming_up"]),
         "leader": _leader(rows),
@@ -222,13 +264,15 @@ def compute_rankings(now: Optional[datetime.datetime] = None) -> Dict[str, Any]:
     floor = blind_since()
     windows: List[Dict[str, Any]] = []
     for slug, label, days in WINDOWS:
-        since = _later(now - datetime.timedelta(days=days) if days else None, floor)
+        window_start = now - datetime.timedelta(days=days) if days else None
+        since = _later(window_start, floor)
         windows.append(
             {
                 "slug": slug,
                 "label": label,
                 "tables": [
-                    _table(kind, kind_label, since) for kind, kind_label in KINDS
+                    _table(kind, kind_label, since, window_start)
+                    for kind, kind_label in KINDS
                 ],
             }
         )

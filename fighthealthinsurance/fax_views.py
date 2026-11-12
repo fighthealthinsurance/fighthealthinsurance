@@ -20,6 +20,7 @@ from fighthealthinsurance.exceptions import AppealAssemblyError
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.helpers.fax_helpers import (
     FAX_RESEND_WINDOW,
+    MAX_RESENDS_PER_NUMBER,
     RESEND_DELIVERED,
     RESEND_IN_PROGRESS,
     SendFaxHelper,
@@ -128,7 +129,9 @@ class FaxFollowUpView(generic.FormView):
     hold sends nothing. With no fax, the page says how to open it. A fax
     that went through, one staged more than FAX_RESEND_WINDOW ago, or one
     with a send still under way gets a page that says so in place of the
-    form, and a POST for it sends nothing.
+    form, and a POST for it sends nothing. A number the fax was already
+    re-sent to MAX_RESENDS_PER_NUMBER times is a form error, so the person
+    can try a different number.
     """
 
     template_name = "faxfollowup.html"
@@ -176,33 +179,74 @@ class FaxFollowUpView(generic.FormView):
             status=200 if delivered or in_progress else 404,
         )
 
+    def on_file_number_used_up(self) -> bool:
+        """Whether the number on file was already re-sent to
+        MAX_RESENDS_PER_NUMBER times."""
+        return bool(self.fax.destination) and SendFaxHelper.resend_limit_reached(
+            self.fax, self.fax.destination
+        )
+
     def get_initial(self):
         # The number on file fills the fax number box, so a form for some
         # other fax than the one the person has in mind shows a number they
-        # don't expect.
-        return {"fax_ref": self.fax_ref, "fax_phone": self.fax.destination}
+        # don't expect. Not once it can't be re-sent to: then the box asks
+        # for a different one.
+        fax_phone = None if self.on_file_number_used_up() else self.fax.destination
+        return {"fax_ref": self.fax_ref, "fax_phone": fax_phone}
 
     def get_context_data(self, **kwargs):
         # Which fax the form is for, in the person's own details: the day
         # they sent it and the number on file. Nothing from the letter.
+        # And, when the number on file is one we know is a voice line, a
+        # word saying so: that is the usual reason a fax lands here.
+        from fighthealthinsurance.fax_send_core import known_non_fax_number
+
         return super().get_context_data(
-            fax_date=self.fax.date, fax_number=self.fax.destination, **kwargs
+            fax_date=self.fax.date,
+            fax_number=self.fax.destination,
+            number_used_up=self.on_file_number_used_up(),
+            max_resends=MAX_RESENDS_PER_NUMBER,
+            known_non_fax=known_non_fax_number(self.fax),
+            # Why the last send failed, as the fax line told us; only for a
+            # send that did fail.
+            failure_reason=(
+                self.fax.failure_reason
+                if self.fax.sent and not self.fax.fax_success
+                else None
+            ),
+            **kwargs,
         )
+
+    def number_used_up(self, form):
+        form.add_error(
+            "fax_phone",
+            f"We've already re-sent this fax to that number "
+            f"{MAX_RESENDS_PER_NUMBER} times, so we can't send it there again. "
+            "Please check the number with your insurance company and enter a "
+            "different one, or email support42@fighthealthinsurance.com.",
+        )
+        return self.form_invalid(form)
 
     def form_valid(self, form):
         fax_phone = form.cleaned_data["fax_phone"]
+        if SendFaxHelper.resend_limit_reached(self.fax, fax_phone):
+            return self.number_used_up(form)
         sent = SendFaxHelper.resend(
             fax_phone=fax_phone,
             uuid=str(self.fax.uuid),
             hashed_email=self.fax.hashed_email,
         )
         if not sent:
-            # Delivered, past the window, or a send under way since dispatch
-            # looked. No refusal now means that send has just finished.
+            # Delivered, past the window, a send under way since dispatch
+            # looked, or another submit used up the number's last try. No
+            # refusal now means that send has just finished.
             self.fax.refresh_from_db()
-            return self.refused(
-                SendFaxHelper.resend_refusal(self.fax) or RESEND_IN_PROGRESS
-            )
+            refusal = SendFaxHelper.resend_refusal(self.fax)
+            if refusal is None and SendFaxHelper.resend_limit_reached(
+                self.fax, fax_phone
+            ):
+                return self.number_used_up(form)
+            return self.refused(refusal or RESEND_IN_PROGRESS)
         return render(
             self.request,
             "fax_followup_thankyou.html",

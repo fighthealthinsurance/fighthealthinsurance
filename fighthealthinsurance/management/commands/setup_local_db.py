@@ -24,6 +24,7 @@ class Command(BaseCommand):
         # insurance_companies must come after plan_source because the
         # InsurancePlan rows reference PlanSource pks (100/300/700/1100/...).
         call_command("loaddata", "insurance_companies")
+        call_command("loaddata", "known_non_fax_numbers")
         # pa_requirements rows reference InsuranceCompany pks; load after.
         call_command("loaddata", "pa_requirements")
 

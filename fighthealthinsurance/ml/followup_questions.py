@@ -65,7 +65,9 @@ LOCAL_GATE_TIMEOUT_SECONDS = 8.0
 _NOT_ANSWERS = frozenset(
     {"medical_context", "denial date", "date of service", "date_of_service"}
 )
-# What GenerateAppeal._unticked_checkbox_answers stores for an unticked box.
+# What GenerateAppeal stored for a box unticked after it was answered, when
+# the yes/no questions were checkboxes. A "No" picked now is an answer; this
+# older value is still read as saying nothing.
 _UNTICKED = "False"
 
 

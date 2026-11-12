@@ -25,13 +25,21 @@ from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance.fax_status import (
+    FAILURE_BUSY,
+    FAILURE_DISCONNECTED,
+    FAILURE_INVALID_NUMBER,
+    FAILURE_NO_ANSWER,
+    FAILURE_OUR_SIDE,
+    FAILURE_VOICE,
+    REMOTE_LINE_FAILURES,
     STATUS_ALREADY_SENT,
     STATUS_MISSING_DENIAL,
     STATUS_MISSING_DESTINATION,
     STATUS_NOT_FOUND,
     STATUS_OK,
 )
-from fighthealthinsurance.fax_utils import flexible_fax_magic
+from fighthealthinsurance.fax_number_check import NonFaxNumber, lookup_non_fax_number
+from fighthealthinsurance.fax_utils import FaxSendReport, flexible_fax_magic
 from fighthealthinsurance.utils import build_fallback_email, get_env_variable
 
 if TYPE_CHECKING:
@@ -48,8 +56,64 @@ def fax_followup_subject(fax_success: bool, missing_destination: bool) -> str:
     return "There may have been a problem sending your appeal fax"
 
 
+# What support reads about a failure reason (fax_status.FAILURE_*).
+FAILURE_REASON_SUMMARIES = {
+    FAILURE_VOICE: "answered by a person or phone menu, not a fax machine (likely a voice line)",
+    FAILURE_DISCONNECTED: "number disconnected / not in service",
+    FAILURE_INVALID_NUMBER: "number refused as invalid before dialing",
+    FAILURE_BUSY: "line busy",
+    FAILURE_NO_ANSWER: "no answer",
+    FAILURE_OUR_SIDE: "our fax system (backend login / modem / document / timeout)",
+}
+
+
+def known_non_fax_number(fax) -> Optional[NonFaxNumber]:
+    """The known voice line / dead number this fax is going to, or None.
+
+    Best-effort: a lookup error only costs the note, never the send."""
+    try:
+        return lookup_non_fax_number(fax.destination)
+    except Exception:
+        logger.opt(exception=True).warning("Known non-fax number lookup failed")
+        return None
+
+
+def failure_note(fax, non_fax: Optional[NonFaxNumber]) -> tuple[str, str]:
+    """(status label, one line for support) saying whose problem a failed
+    fax most likely is: the number, the far end's line, or our fax system.
+    ("", "") when nothing points either way."""
+    if non_fax is not None:
+        return (
+            "likely wrong number",
+            f"{fax.destination} is a known {non_fax.kind} number"
+            + (f" ({non_fax.label})" if non_fax.label else "")
+            + ": almost certainly a wrong number, not a fax problem to investigate.",
+        )
+    reason = getattr(fax, "failure_reason", None)
+    if reason in (FAILURE_VOICE, FAILURE_DISCONNECTED, FAILURE_INVALID_NUMBER):
+        return (
+            "likely wrong number",
+            f"The fax line reported: {FAILURE_REASON_SUMMARIES[reason]}. Probably "
+            "a wrong number, not our fax system; consider adding it in the "
+            "admin under Known non fax numbers if it keeps coming up.",
+        )
+    if reason in REMOTE_LINE_FAILURES:
+        return (
+            "remote line",
+            f"The fax line reported: {FAILURE_REASON_SUMMARIES[reason]}. Probably "
+            "the other end, not our fax system; a resend usually works.",
+        )
+    if reason == FAILURE_OUR_SIDE:
+        return (
+            "likely OUR fax system",
+            "This looks like a problem on our side, not the number: worth "
+            "investigating (see what the backend said).",
+        )
+    return ("", "")
+
+
 def send_fax_status_notification(
-    fax, fax_success, missing_destination, missing_denial=False
+    fax, fax_success, missing_destination, missing_denial=False, non_fax=None
 ):
     """Send internal notification email about fax status to support."""
     notify = get_env_variable("FAX_STATUS_NOTIFICATIONS", "true").lower() == "true"
@@ -60,6 +124,9 @@ def send_fax_status_notification(
         status = "FAILED (missing destination)"
     if missing_denial:
         status = "FAILED (missing denial)"
+    label, note = ("", "") if fax_success else failure_note(fax, non_fax)
+    if label and not (missing_destination or missing_denial):
+        status = f"FAILED ({label})"
     denial_id = getattr(fax.denial_id, "pk", None)
     body = (
         f"Fax Status: {status}\n"
@@ -69,6 +136,15 @@ def send_fax_status_notification(
         f"Denial ID: {denial_id}\n"
         f"Professional: {fax.professional}\n"
     )
+    if not fax_success:
+        reason = getattr(fax, "failure_reason", None)
+        detail = getattr(fax, "failure_detail", None)
+        if reason:
+            body += f"Failure reason: {FAILURE_REASON_SUMMARIES.get(reason, reason)}\n"
+        if detail:
+            body += f"Backend said: {detail}\n"
+        if note:
+            body += f"Note: {note}\n"
     try:
         send_mail(
             f"Fax {status} - ID {fax.fax_id}",
@@ -139,10 +215,37 @@ def precheck_fax(fax: "FaxesToSend") -> str:
         logger.warning(f"Fax uuid={fax.uuid} has no destination")
         return STATUS_MISSING_DESTINATION
     fax.attempting_to_send_as_of = timezone.now()
-    # Only this field: a full save would write back a claim, number or
+    # A new attempt starts with no failure reason, so a send that dies
+    # before recording one (a worker killed mid-send, say) never reports
+    # the last attempt's reason as this one's.
+    fax.failure_reason = None
+    fax.failure_detail = None
+    # Only these fields: a full save would write back a claim, number or
     # sent flag another sender or a resend changed since this row loaded.
-    fax.save(update_fields=["attempting_to_send_as_of"])
+    fax.save(
+        update_fields=["attempting_to_send_as_of", "failure_reason", "failure_detail"]
+    )
     return STATUS_OK
+
+
+def record_send_outcome(fax: "FaxesToSend", report: Optional[FaxSendReport]) -> None:
+    """Keep why the send failed (or clear it after a success) on the row,
+    for finalize_fax, which may run in another process (Temporal)."""
+    from fighthealthinsurance.models import FaxesToSend
+
+    reason = report.failure_reason if report is not None else None
+    detail = (report.detail or None) if report is not None else None
+    fax.failure_reason = reason
+    fax.failure_detail = detail
+    try:
+        FaxesToSend.objects.filter(pk=fax.pk).update(
+            failure_reason=reason, failure_detail=detail
+        )
+    except Exception:
+        # Only the note in the follow-up emails rides on this.
+        logger.opt(exception=True).warning(
+            f"Could not record the failure reason for fax uuid={fax.uuid}"
+        )
 
 
 # send_fax_via_vendor outcomes. NOT_OWNER means another sender holds the
@@ -201,7 +304,14 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> str:
     # guarantees only one transmits.
     # get_temporary_document_path leaves cleanup to the caller (delete=False),
     # so remove the temp file on both success and failure paths.
-    document_path = fax.get_temporary_document_path()
+    report = FaxSendReport()
+    try:
+        document_path = fax.get_temporary_document_path()
+    except Exception as e:
+        # The document could not be read or rebuilt: our end, not the number.
+        report.note(f"{type(e).__name__}: {e}", FAILURE_OUR_SIDE, classify=False)
+        record_send_outcome(fax, report)
+        raise
     try:
         claimed = FaxesToSend.objects.filter(
             pk=fax.pk, vendor_send_completed=False
@@ -236,13 +346,17 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> str:
                 destination=destination,
                 blocking=True,
                 professional=fax.professional,
+                report=report,
             )
         )
-    except Exception:
+    except Exception as e:
         # The send genuinely failed before completing: release the claim so a
         # legitimate retry (the Temporal retry policy, or a Ray re-send) can send
         # again instead of short-circuiting on a marker for a fax that never
-        # went out.
+        # went out. Nothing a backend dialed raises out here (FlexibleFaxMagic
+        # catches those), so this is our end: building the document, say.
+        report.note(f"{type(e).__name__}: {e}", FAILURE_OUR_SIDE, classify=False)
+        record_send_outcome(fax, report)
         release_send_claim(fax)
         raise
     finally:
@@ -250,6 +364,7 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> str:
             os.unlink(document_path)
         except OSError:
             pass
+    record_send_outcome(fax, None if result else report)
     if not result:
         # Vendor reported failure without raising -- release the claim too so the
         # failed send can be retried.
@@ -318,7 +433,8 @@ def finalize_fax(
             logger.warning(f"No appeal found for professional fax uuid={fax.uuid}")
     # Best-effort side effects: state is durable now, so these run once and must
     # never raise (a flaky email must not trigger a finalize retry / re-send).
-    send_fax_status_notification(fax, fax_success, missing_destination)
+    non_fax = None if fax_success else known_non_fax_number(fax)
+    send_fax_status_notification(fax, fax_success, missing_destination, non_fax=non_fax)
     logger.debug(
         f"Fax uuid={fax.uuid} sent (success={fax_success}); checking user notification"
     )
@@ -341,6 +457,11 @@ def finalize_fax(
             "success": fax_success,
             "fax_redo_link": fax_redo_link,
             "missing_destination": missing_destination,
+            "fax_number": fax.destination,
+            # A number we know is a voice line, or one the fax line said a
+            # person / phone menu answered, or that is out of service.
+            "known_non_fax": non_fax,
+            "failure_reason": getattr(fax, "failure_reason", None),
         }
         build_fallback_email(
             fax_followup_subject(fax_success, missing_destination),

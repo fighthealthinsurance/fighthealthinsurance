@@ -130,6 +130,69 @@ login goes straight to `/chooser/`, where the account's review count includes
 all of its previous votes. The login grants no extra privileges and does not
 change the Arena's existing captcha requirement.
 
+## Paid reviewers (RentAHuman)
+
+Volunteers come and go, so the Arena can also hire judges by the batch
+through [RentAHuman](https://rentahuman.ai), a marketplace where software
+posts paid tasks for people (`paid_reviews.py`). The cases are synthetic,
+so a stranger sees no one's health information. One batch is one
+RentAHuman bounty (`PaidReviewBounty`):
+
+1. **Post it.** `python manage.py post_paid_review_bounty --spots 10
+   --price 5 --reviews 10` (the defaults) prints the cost (workers' pay
+   plus RentAHuman's 18% fee: $59 for 100 reviews, about $0.59 a review,
+   or about $10 an hour for the worker at three minutes a review) and
+   RentAHuman's dry-run preview. Add `--post` to post it for real; $5 a
+   worker is RentAHuman's minimum. The bounty is a remote "computer gig"
+   with text evidence and RentAHuman's AI screening on (`autoAccept`:
+   qualified applicants are accepted, clear mismatches declined, the rest
+   left for you), and its description links the join URL,
+   `/chooser/paid/<join_token>/`. If RentAHuman holds it as
+   `pending_deposit`, top up the wallet there.
+2. **The worker judges.** The join link ties their browser session to a
+   `PaidReviewSession` and opens the Arena, which is unchanged except for a
+   progress banner. Each vote that session casts is tagged
+   (`ChooserVote.paid_review`), so paid votes can be studied or weighted
+   apart from volunteers'. A paid vote counts toward the run when it was
+   timed by the server at `PAID_REVIEW_MIN_SECONDS` or more, carries a
+   reason of `PAID_REVIEW_MIN_RATIONALE_CHARS` or more, and did not come
+   from an automated browser; the vote answer says why one did not count.
+   Any outcome counts (a winner, a tie, all bad): the floor stops
+   click-through, not disagreement. Every vote, counted or not, is recorded
+   like any other.
+3. **The code.** After `reviews_required` counted votes the banner shows a
+   completion code (`FHI-XXXX-XXXX`, single use), which the worker pastes
+   as their submission.
+4. **Checking it.** RentAHuman's `submission.submitted` event, at
+   `/chooser/paid/webhook/rentahuman/` (signed with
+   `RENTAHUMAN_WEBHOOK_SECRET`), has the submission fetched from the API
+   and checked. A submission RentAHuman already shows as reviewed is left
+   alone, so repeated deliveries are harmless; the event id is not used to
+   deduplicate, since a resubmission after a redo can carry the same one.
+   A code issued for that
+   bounty and not yet claimed is claimed and the submission approved;
+   anything else gets a redo request saying what was wrong.
+   `python manage.py sync_paid_reviews` does the same for every pending
+   submission, as a poll behind the webhook or instead of it.
+5. **Paying.** Approving moves no money. Release the escrow on RentAHuman
+   (its guidance is that agents release payment only when the account
+   owner says so). Close a batch's join link with
+   `post_paid_review_bounty --close <id>` or in the admin. That only stops
+   new workers joining: runs already started keep counting votes, keep
+   showing an earned code, and are still answered by `sync_paid_reviews`.
+
+Setting up the account: create an API key at
+rentahuman.ai/account/api-keys and set `RENTAHUMAN_API_KEY`. Then
+`python manage.py rentahuman_setup` shows the wallet and webhooks;
+`--deposit 60` prints a Stripe Checkout link to fund the wallet (nothing is
+charged until someone pays there); `--webhook` registers this site's
+webhook for `submission.submitted` and prints the `whsec_...` secret once,
+for `RENTAHUMAN_WEBHOOK_SECRET` (register it after the route is deployed);
+`--test-webhook <endpoint id>` sends RentAHuman's test event. Settings: `RENTAHUMAN_API_KEY`, `RENTAHUMAN_WEBHOOK_SECRET`,
+`RENTAHUMAN_API_BASE`, `PAID_REVIEW_SITE_ORIGIN` (where the join link
+points), `PAID_REVIEW_MIN_SECONDS` (60) and
+`PAID_REVIEW_MIN_RATIONALE_CHARS` (25). Tests blank the key and secret.
+
 ## The door: "I'm not a robot"
 
 The Arena starts with the same reCAPTCHA checkbox as the site's other
@@ -544,6 +607,78 @@ Four things write tasks, all under one generation claim per type
   current process (a dev machine without Ray); `--count` and `--min-votes`
   override the settings.
 
+## HumanJudge, an outside human judge (`chooser_humanjudge.py`)
+
+[HumanJudge](https://humanjudge.com) has its own volunteer and expert
+reviewers give AI outputs a blind pass or flag. The Arena uses it as one
+more judge of which appeal draft is best, beside Jev and fhi-local. It is
+off unless `HUMANJUDGE_API_KEY` (the HumanJudge model's `gj_sk_` key) is
+set; `CHOOSER_HUMANJUDGE=false` turns it off with the key in place.
+
+Staff run it from the admin; nothing goes out or comes back on a timer:
+
+- **Upload.** Select cases on the Chooser Task list (the **HumanJudge**
+  filter shows which have gone) and run **Upload to HumanJudge**. Up to 25
+  cases at a time (`MAX_TASKS_PER_UPLOAD`). Drafts already sent are skipped,
+  so uploading a case again sends only what failed. Failures are listed under
+  HumanJudge Submissions with their status code, where **Upload again**
+  retries them.
+- **Only the Arena, only synthetic appeals.** HumanJudge's reviewers read
+  what they are sent, so only the active drafts of `source="synthetic"`,
+  `task_type="appeal"` cases that have reached voters (READY, IN_USE or
+  EXHAUSTED) ever go. Any other selected case is skipped, and the message
+  says how many. Never a real denial or appeal, and never a chat case.
+- **What is sent.** Each draft is one trace (`POST /api/v1/traces/ingest`):
+  the input is a brief saying the case is made up and what to pass or flag,
+  then the case (treatment, diagnosis, insurer, denial reason, facts, the
+  simulated interview and the evidence titles and summaries); the output is
+  the draft. The trace's name and model are both `fhi-appeal-arena`, and its
+  metadata only our task and candidate ids, so nothing says which model
+  wrote it. Each draft's `gj_inference_id` is made once
+  (`HumanJudgeSubmission`) and reused on every retry, so a resend is
+  idempotent on HumanJudge's side. A refused key stops the upload without
+  counting an attempt.
+- **Download.** **Download verdicts from HumanJudge**, on the HumanJudge
+  Verdict list, reads the votes
+  (`GET /api/v1/models/{id}/evaluations?detail=votes`, with
+  `HUMANJUDGE_TOKEN`, a `gj_pat_` personal access token, when set, else the
+  key) from two days before the newest stored, matches them to drafts by
+  inference id, and updates the picks of the cases that got one. Votes that
+  match no draft we uploaded are counted in the message and left out.
+- **Verdicts are stored apart.** Each lands in `HumanJudgeVerdict`
+  (verdict, flag category, feedback, HumanJudge's reviewer id, time, and the
+  raw record), never in `ChooserVote`, so they never count toward the
+  Arena's tallies, the staff dashboard's win rates or the public rankings.
+  Downloading a vote again does not add a row. **Export selected verdicts as
+  CSV** on that list gives them with the model behind each draft.
+- **The pick.** HumanJudge rates drafts one at a time, not side by side, so
+  once every active draft of a case has `CHOOSER_HUMANJUDGE_MIN_VERDICTS`
+  verdicts the case's pick is the draft with the best smoothed pass rate,
+  (passes + 1) / (verdicts + 2). It goes into the task's `scoring_json` under
+  `humanjudge`, in the same shape as Jev's and fhi-local's picks plus
+  `passes` and `verdicts`, with scorer `humanjudge/pass-rate-1`. A tie for
+  best records no pick.
+- **On the public rankings.** Each appeal-letter row carries the model's
+  HumanJudge pass rate (`humanjudge` in the JSON: reviews, passes,
+  pass rate, warming up) in its own "Outside reviewers passed" column, shown
+  as a rate from `PUBLIC_RANKINGS_MIN_SHOWN` reviews; the leader's card
+  repeats it. It never changes the order, which stays our voters' alone.
+  Only aggregate counts reach the public page, never reviewers' feedback.
+  HumanJudge reviews blind, so its verdicts are not held to the
+  blind-voting cut-off; the 30-day window counts them by when they were cast
+  (`humanjudge_reports.model_verdict_stats`).
+- **Staff breakdown.** **Breakdown by model** on the HumanJudge Verdict
+  list (`.../humanjudgeverdict/breakdown/`, `?format=json` for the data)
+  shows each model's uploads, verdicts, pass rate and flags by category
+  beside its Arena record, how often HumanJudge's pick is the same draft as
+  the Arena voters', Jev's and fhi-local's, and the latest written feedback.
+  It is an admin view: anyone not signed in as staff is sent to the admin
+  login, and staff without view permission on HumanJudge verdicts get a 403,
+  the JSON included (`humanjudge_reports.breakdown`).
+- **The account.** One HumanJudge model, standalone (not enrolled in a
+  public benchmark), holds every Arena draft. With more than one model on
+  the account, set `HUMANJUDGE_MODEL_ID` to it.
+
 ## Rankings and privacy (`condition_rankings.py`, `public_rankings.py`)
 
 The public page shows two things, both safe to publish:
@@ -617,6 +752,9 @@ environment variables of the same name.
 | `CHOOSER_SIMULATED_QA` | `True` (`False` in tests) | Give appeal cases a simulated interview |
 | `CHOOSER_JUDGE_EVIDENCE` | `True` (`False` in tests) | Judge a case's evidence as it is built: Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on, our own model for whatever Jev does not judge. Off also hides our own model's stored verdicts |
 | `CHOOSER_SCORE_CANDIDATES` | `True` (`False` in tests) | Ask Jev and fhi-local for their highest-scoring candidate during generation and store the picks in backend-only task metadata |
+| `CHOOSER_HUMANJUDGE` | `True` when `HUMANJUDGE_API_KEY` is set (`False` in tests) | Allow the admin's HumanJudge upload and download (see above) |
+| `HUMANJUDGE_API_KEY` / `HUMANJUDGE_TOKEN` / `HUMANJUDGE_MODEL_ID` | unset | HumanJudge's model key, an optional personal access token for reading votes, and the model id when the account has several |
+| `CHOOSER_HUMANJUDGE_MIN_VERDICTS` | `1` | HumanJudge verdicts every draft of a case needs before its pick is recorded |
 | `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` | `60` | Seconds a case waits for those verdicts, Jev's and our own model's together |
 | `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |
 | `CHOOSER_QA_TIMEOUT` | `60` | Seconds each question generator may take |
@@ -658,7 +796,8 @@ reviews, `chosen_candidate` is null and `vote_count` is zero rather than the
 task disappearing from the export. Non-empty rationales are in
 `review_feedback` with their outcome and candidate references, but no user,
 session or address identifier. Generation-time Jev and fhi-local picks are in
-`scorer_picks`, keyed `jev` and `fhi_local`, each with the winning candidate's
+`scorer_picks`, keyed `jev` and `fhi_local` (and `humanjudge` once
+HumanJudge's reviewers have picked one), each with the winning candidate's
 id, index and model name, its score, and the scorer/rubric. These stay on the
 task's backend-only `scoring_json`, never in the case context or voter API.
 The case (summaries and `qa_pairs` included) rides along in `context`, and its

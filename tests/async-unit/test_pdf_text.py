@@ -361,10 +361,16 @@ class TestChildMain:
     def test_caps_its_address_space_at_the_child_limit(self):
         setrlimit, _, _ = self._run(["pages"], make_pdf_bytes(["Page one"]))
 
-        setrlimit.assert_called_once_with(
+        setrlimit.assert_any_call(
             resource.RLIMIT_AS,
             (pdf_text._CHILD_ADDRESS_SPACE_BYTES, resource.RLIM_INFINITY),
         )
+
+    def test_writes_no_core_file_if_it_crashes(self):
+        # A core file would hold the decrypted document; tesseract inherits it.
+        setrlimit, _, _ = self._run(["pages"], make_pdf_bytes(["Page one"]))
+
+        setrlimit.assert_any_call(resource.RLIMIT_CORE, (0, 0))
 
     @linux_only
     def test_reads_the_pdf_when_the_cap_cannot_be_set(self):
