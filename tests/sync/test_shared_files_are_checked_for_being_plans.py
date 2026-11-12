@@ -22,7 +22,7 @@ from django.utils import timezone
 from fighthealthinsurance import plan_documents_processing as processing
 from fighthealthinsurance.models import PolicyDocument
 from fighthealthinsurance.plan_sponsors import identify_sponsor, link_sponsor
-from tests.plan_text_samples import EOB, PLAN_TEXT, RECIPE
+from tests.plan_text_samples import EOB, ID_CARD, PLAN_TEXT, RECIPE, shifted
 from tests.sync.test_shared_plans_are_counted_by_company import SPD_WITH_EIN
 from tests.sync.test_shared_plan_documents_are_read_and_cleaned import (
     _ReadingTest,
@@ -33,6 +33,7 @@ from tests.sync.test_shared_plan_documents_are_read_and_cleaned import (
 User = get_user_model()
 
 READY = PolicyDocument.PROCESSING_READY
+UNREADABLE = PolicyDocument.PROCESSING_UNREADABLE
 RECEIVED = PolicyDocument.PROCESSING_RECEIVED
 PERSONAL = PolicyDocument.PROCESSING_PERSONAL
 NOT_A_PLAN = PolicyDocument.PROCESSING_NOT_A_PLAN
@@ -69,6 +70,26 @@ class ReadingChecksForPlansTest(_ReadingTest):
         (doc,) = share(upload("eob.txt", EOB.encode()))
         PolicyDocument.objects.filter(pk=doc.pk).update(staff_says_plan=True)
         self.assertEqual(self.process(doc), READY)
+
+    def test_garbage_with_many_words_is_unreadable_never_not_a_plan(self):
+        status, doc = self.read("garbled.txt", shifted(RECIPE, 3).encode())
+        self.assertEqual((status, doc.cleaned_text), (UNREADABLE, ""))
+
+    def test_a_file_staff_say_is_a_plan_gets_its_text_back_from_the_file(self):
+        _, doc = self.read("eob.txt", EOB.encode())
+        self.assertEqual(doc.cleaned_text, "")
+        admin_user = User.objects.create_superuser(
+            username="rebecca_cole", password="pw-for-tests", email=""
+        )
+        self.client.force_login(admin_user)
+        self.client.post(
+            reverse("admin:fighthealthinsurance_policydocument_changelist"),
+            {"action": "read_again_as_a_plan", "_selected_action": [str(doc.pk)]},
+        )
+        self.assertEqual(self.process(doc), READY)
+        doc.refresh_from_db()
+        self.assertIn("Lee Family Clinic", doc.cleaned_text)
+        self.assertNotIn("W123456789", doc.cleaned_text)
 
     def test_what_the_check_logs_names_the_row_and_its_kind_only(self):
         (doc,) = share(upload("eob.txt", EOB.encode()))
@@ -201,6 +222,23 @@ class CheckingRowsReadBeforeTest(TestCase):
         for doc in (personal, other):
             doc.refresh_from_db()
             self.assertEqual(doc.processing_status, READY)
+
+    def test_it_counts_personal_verdicts_resting_on_details_alone(self):
+        shared_row(cleaned_text=EOB)
+        shared_row(cleaned_text=ID_CARD)
+        out = self.run_command()
+        self.assertIn(
+            "2 shared file(s) read as ready would become personal (text cleared, "
+            "file kept); 1 of them only because they carry two kinds",
+            out,
+        )
+
+    def test_garbled_text_is_left_for_reread(self):
+        doc = shared_row(cleaned_text=shifted(RECIPE, 3))
+        out = self.run_command("--apply")
+        self.assertIn("1 shared file(s) read as ready have damaged or garbled", out)
+        doc.refresh_from_db()
+        self.assertEqual(doc.processing_status, READY)
 
     def test_it_never_prints_a_rows_text(self):
         shared_row(cleaned_text=EOB)

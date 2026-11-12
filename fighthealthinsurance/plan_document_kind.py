@@ -10,7 +10,8 @@ plan (PROCESSING_NOT_A_PLAN). Anything in doubt stays a plan, as before.
 Rules only, no model, in English and Spanish:
 
 - A person's details: an ID, a birth date, a name (a "Dear" greeting
-  counts as one) or a Social Security number (plan_document_scrub).
+  counts as one) or a Social Security number (plan_document_scrub), in
+  the first DETAIL_CHARS characters.
 - A person's own papers have an "Explanation of Benefits" heading or
   "This is not a bill" near the top; or denial wording there ("has been
   denied") and one of their details; or two kinds of their details.
@@ -33,11 +34,14 @@ PLAN = "plan"
 PERSONAL = "personal"
 OTHER = "other"
 
-#: How much of the text the details are looked for in: a person's own
-#: papers are short, and the first pages are what matter.
+#: How much of the text is read for health plan words.
 SAMPLE_CHARS = 100_000
 #: How far down a title counts as one.
 TITLE_CHARS = 3_000
+#: How far down a person's details count: a person's own papers carry them
+#: on the first page, about this much text, while a plan guide may print a
+#: sample ID card or a worked claim far inside.
+DETAIL_CHARS = 5_000
 #: Neither a plan nor personal: at least this many words...
 OTHER_MIN_WORDS = 80
 #: ...with no more than this many different health plan words.
@@ -53,11 +57,14 @@ _SP = r"[^\S\n]"
 # value may start the next line.
 _SEP = rf"{_SP}*+(?:[:#.-]{_SP}*+)?(?:\n{_SP}*+)?"
 
-# A heading (a line that starts with it, never a contents line with dot
-# leaders), or the line an EOB prints anywhere.
+# A heading (a line that starts with it, "Your" or "Su" allowed), never a
+# contents line: dot leaders, or nothing after it but a page number. Or the
+# line an EOB prints anywhere.
 _PERSONAL_TITLE = re.compile(
-    rf"^{_SP}*+(?:explanation{_S}of{_S}benefits"
-    rf"|explicaci[oó]n{_S}de{_S}(?:los{_S})?beneficios)\b(?![^\n]*\.{{4}})"
+    rf"^{_SP}*+(?:(?:your|su){_S})?(?:explanation{_S}of{_S}benefits"
+    rf"|explicaci[oó]n{_S}de{_S}(?:los{_S})?beneficios)\b"
+    rf"(?![^\n]*\.{{4}})"
+    rf"(?!{_SP}*+(?:\([^()\n]{{0,20}}\))?(?:{_SP}|\.)*+\d{{1,4}}{_SP}*+$)"
     rf"|\bthis{_S}is{_S}not{_S}a{_S}bill\b|\besto{_S}no{_S}es{_S}una{_S}factura\b",
     _FLAGS | re.MULTILINE,
 )
@@ -70,16 +77,19 @@ _DENIAL = re.compile(
     _FLAGS,
 )
 # A plan document's own name, not words a letter uses about one ("your plan
-# documents", "our formulary").
+# documents", "our formulary"), nor a "Group Policy:" number on a card.
 _PLAN_TITLE = re.compile(
     rf"\bsummary{_S}of{_S}benefits\b|\bbenefits?{_S}summary\b"
-    rf"|\bsummary{_S}plan{_S}description\b|\bevidence{_S}of{_S}coverage\b"
-    rf"|\bcertificate{_S}of{_S}coverage\b|\bschedule{_S}of{_S}benefits\b"
-    rf"|\bbenefits?{_S}booklet\b|\bmember{_S}handbook\b"
+    rf"|\bsummary{_S}plan{_S}description\b|\bevidence{_S}of{_S}(?:coverage|benefits)\b"
+    rf"|\bcertificate{_S}of{_S}(?:coverage|insurance)\b|\bschedule{_S}of{_S}benefits\b"
+    rf"|\bbenefits?{_S}(?:booklet|guide)\b|\bmember{_S}handbook\b"
+    rf"|\boutline{_S}of{_S}coverage\b|\bplan{_S}(?:document|brochure)\b(?!s)"
+    rf"|\bgroup{_S}(?:insurance{_S})?policy\b(?!{_SP}*+(?:number|no\b|#|id\b|:|\d))"
     rf"|\bresumen{_S}de{_S}(?:los{_S})?beneficios\b"
     rf"|\bdescripci[oó]n{_S}resumida{_S}del{_S}plan\b"
-    rf"|\b(?:evidencia|certificado){_S}de{_S}cobertura\b"
-    rf"|\bmanual{_S}del{_S}(?:miembro|afiliado)\b",
+    rf"|\b(?:evidencia|certificado){_S}de{_S}(?:cobertura|seguro)\b"
+    rf"|\bmanual{_S}del{_S}(?:miembro|afiliado)\b"
+    rf"|\bgu[ií]a{_S}de{_S}beneficios\b|\bdocumento{_S}del{_S}plan\b",
     _FLAGS,
 )
 
@@ -167,20 +177,34 @@ def _has_no_plan_words(sample: str) -> bool:
     return len(_PLAN_WORDS.intersection(words)) <= OTHER_MAX_PLAN_WORDS
 
 
-def document_kind(text: str) -> str:
-    """PLAN, PERSONAL or OTHER for a shared file's text (module docstring)."""
+#: Which rule decided a kind (judge), for the backfill's counts.
+BY_EOB = "eob_heading"
+BY_DENIAL = "denial_with_details"
+BY_DETAILS = "two_kinds_of_details"
+BY_NO_PLAN_WORDS = "no_plan_words"
+BY_DEFAULT = "default"
+
+
+def judge(text: str) -> tuple[str, str]:
+    """(PLAN, PERSONAL or OTHER, the rule that decided it) for a shared
+    file's text (module docstring)."""
     sample = text[:SAMPLE_CHARS]
     head = sample[:TITLE_CHARS]
     personal_title = _PERSONAL_TITLE.search(head) is not None
     denial = _DENIAL.search(head) is not None
     plan_title = _PLAN_TITLE.search(head) is not None
-    details = _detail_kinds(sample)
+    details = _detail_kinds(sample[:DETAIL_CHARS])
     if personal_title and (details or not plan_title):
-        return PERSONAL
+        return PERSONAL, BY_EOB
     if denial and details and (not plan_title or len(details) >= 2):
-        return PERSONAL
+        return PERSONAL, BY_DENIAL
     if not plan_title and len(details) >= 2:
-        return PERSONAL
+        return PERSONAL, BY_DETAILS
     if not plan_title and not details and _has_no_plan_words(sample):
-        return OTHER
-    return PLAN
+        return OTHER, BY_NO_PLAN_WORDS
+    return PLAN, BY_DEFAULT
+
+
+def document_kind(text: str) -> str:
+    """PLAN, PERSONAL or OTHER for a shared file's text (module docstring)."""
+    return judge(text)[0]

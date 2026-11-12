@@ -6,12 +6,16 @@ import time
 import pytest
 
 from fighthealthinsurance.plan_document_kind import (
+    BY_DETAILS,
+    BY_EOB,
+    DETAIL_CHARS,
     OTHER,
     OTHER_MIN_WORDS,
     PERSONAL,
     PLAN,
     TITLE_CHARS,
     document_kind,
+    judge,
 )
 from fighthealthinsurance.plan_document_scrub import scrub
 from tests.plan_text_samples import (
@@ -196,3 +200,85 @@ def test_a_long_run_of_spaces_after_a_label_is_read_quickly(label):
     started = time.monotonic()
     document_kind(label + " " * 99_000 + "!")
     assert time.monotonic() - started < 2
+
+
+SAMPLE_CARD = (
+    "Sample ID card\nMember name: Jane Q. Sample\nMember ID: ABC123456789\n"
+    "Date of birth: 01/01/1980\n"
+)
+UNLISTED_TITLE = "Crumpler Cooperative Wellness Guide\n"
+
+
+def test_a_guide_with_a_sample_id_card_far_inside_stays_a_plan():
+    body = CONTRACT_TEXT * (DETAIL_CHARS // len(CONTRACT_TEXT) + 1)
+    assert document_kind(UNLISTED_TITLE + body + SAMPLE_CARD) == PLAN
+
+
+def test_the_same_details_on_the_first_page_are_personal():
+    assert document_kind(UNLISTED_TITLE + SAMPLE_CARD + CONTRACT_TEXT) == PERSONAL
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Explanation of Benefits    45",
+        "\tExplanation of Benefits\t45",
+        "Explanation of Benefits (EOB)  45",
+        "Explanation of Benefits ........ 45",
+    ],
+    ids=["spaces", "tabs", "abbreviation", "dot_leaders"],
+)
+def test_a_contents_line_is_not_a_heading(line):
+    text = UNLISTED_TITLE + "Contents\n" + line + "\n" + CONTRACT_TEXT
+    assert document_kind(text) == PLAN
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "Your Explanation of Benefits",
+        "Explanation of Benefits (EOB)",
+        "Su explicación de beneficios",
+    ],
+)
+def test_an_eob_heading_with_a_detail_is_personal(heading):
+    statement = (
+        f"Crumpler Mutual Health\n{heading}\nStatement date: 04/02/2026\n"
+        "Member ID: W123456789\nClaim total $412.00\n"
+    )
+    assert judge(statement) == (PERSONAL, BY_EOB)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Certificate of Insurance",
+        "Outline of Coverage",
+        "Plan Document",
+        "Group Insurance Policy",
+        "Group Policy",
+        "Evidence of Benefits",
+        "Benefits Guide",
+        "Plan Brochure",
+        "Certificado de seguro",
+        "Guía de beneficios",
+        "Documento del plan",
+    ],
+)
+def test_a_plan_title_keeps_a_plan_with_a_members_details_a_plan(title):
+    details = "Member name: Rebecca Lee Crumpler\nMember ID: W123456789\n"
+    assert document_kind(f"{title}\n{details}{CONTRACT_TEXT}") == PLAN
+
+
+def test_without_a_plan_title_the_same_details_are_personal():
+    details = "Member name: Rebecca Lee Crumpler\nMember ID: W123456789\n"
+    assert judge(f"{UNLISTED_TITLE}{details}{CONTRACT_TEXT}") == (PERSONAL, BY_DETAILS)
+
+
+@pytest.mark.parametrize("label", ["Group Policy:", "Group Policy", "Group Policy #"])
+def test_a_group_policy_number_on_an_id_card_is_not_a_plan_title(label):
+    assert document_kind(ID_CARD.replace("Group:", label)) == PERSONAL
+
+
+def test_a_letter_naming_its_plan_documents_has_no_plan_title():
+    assert document_kind("Please see your plan documents.\n" + ID_CARD) == PERSONAL

@@ -9,6 +9,11 @@ This judges each such row's stored, cleaned text. It counts them unless
     python manage.py check_shared_document_kinds
     python manage.py check_shared_document_kinds --apply
 
+Rows whose stored text is damaged or garbled are left alone for
+reread_shared_documents. The count says how many personal verdicts rest
+on two kinds of a person's details alone, the rule that is easiest to
+get wrong.
+
 Applied, a person's own papers lose their stored text, and the line
 quoted for their company, and are marked personal, their encrypted file
 kept; a file with no plan words is marked
@@ -21,8 +26,11 @@ from typing import Any
 
 from django.core.management.base import BaseCommand
 
+from fighthealthinsurance.management.commands.reread_shared_documents import (
+    stored_text_is_damaged,
+)
 from fighthealthinsurance.models import PolicyDocument
-from fighthealthinsurance.plan_document_kind import OTHER, PERSONAL, document_kind
+from fighthealthinsurance.plan_document_kind import BY_DETAILS, OTHER, PERSONAL, judge
 
 _STATUS_FOR = {
     PERSONAL: PolicyDocument.PROCESSING_PERSONAL,
@@ -47,17 +55,29 @@ class Command(BaseCommand):
         # One row at a time, keeping only what the change needs: a reading
         # can run to millions of characters.
         found: dict[str, list[tuple[Any, Any]]] = {PERSONAL: [], OTHER: []}
+        by_details_alone = damaged = 0
         for row in rows.iterator(chunk_size=50):
-            kind = document_kind(row.cleaned_text or "")
+            text = row.cleaned_text or ""
+            if stored_text_is_damaged(text):
+                # Garbage is never judged: reread_shared_documents reads it again.
+                damaged += 1
+                continue
+            kind, rule = judge(text)
             if kind in found:
                 found[kind].append((row.pk, row.processed_at))
+                by_details_alone += kind == PERSONAL and rule == BY_DETAILS
         self.stdout.write(
             f"{len(found[PERSONAL])} shared file(s) read as ready would become "
-            "personal (text cleared, file kept)"
+            f"personal (text cleared, file kept); {by_details_alone} of them only "
+            "because they carry two kinds of a person's details"
         )
         self.stdout.write(
             f"{len(found[OTHER])} shared file(s) read as ready would become "
             "not a plan (text kept)"
+        )
+        self.stdout.write(
+            f"{damaged} shared file(s) read as ready have damaged or garbled "
+            "text: left for reread_shared_documents"
         )
         if not options["apply"]:
             return
