@@ -232,6 +232,40 @@ class AnExplainPolicyCopyIsMadeAgainTest(_ExplainPolicy):
         self.assertEqual(self.copies().count(), 1)
         self.assertEqual(dropped(Day.DROPPED_REFUSED), 1)
 
+    def test_a_retry_refused_for_no_bucket_copy_is_counted(self):
+        from django.test import override_settings
+
+        self.fail_first_try()
+        with override_settings(SHARED_FILES_NEED_BUCKET_COPY=True), patch(
+            "fighthealthinsurance.storage_health.bucket_backends", return_value=[object()]
+        ), patch(
+            "fighthealthinsurance.storage_health.has_bucket_copy", return_value=False
+        ), patch.object(shared_plan_documents.logger, "error"), patch.object(
+            shared_plan_documents.logger, "warning"
+        ):
+            due_now()
+        self.assertEqual(dropped(Day.NO_BUCKET_OPT_IN), 1)
+        self.assertEqual(SharedCopyRetry.objects.get().attempts, 1)
+        self.assertFalse(self.copies().exists())
+
+    def test_a_saved_copys_reading_starts_once_it_is_committed(self):
+        from fighthealthinsurance import temporal_client
+
+        self.fail_first_try()
+        with patch.object(
+            temporal_client, "dispatch_shared_plan_documents"
+        ) as dispatch, self.captureOnCommitCallbacks(execute=True):
+            due_now()
+            dispatch.assert_not_called()
+        dispatch.assert_called_once_with(str(self.copies().get().share_batch))
+
+    def test_a_saved_copy_waits_for_the_sweep_if_its_start_is_lost(self):
+        self.fail_first_try()
+        due_now()
+        self.assertEqual(
+            self.copies().get().processing_status, PolicyDocument.PROCESSING_RECEIVED
+        )
+
     def test_staff_can_count_the_copies_waiting(self):
         self.fail_first_try()
         self.assertEqual(shared_copy_retries.copies_waiting(), 1)

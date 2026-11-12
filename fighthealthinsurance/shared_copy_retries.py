@@ -231,12 +231,17 @@ def _retry_one(row: SharedCopyRetry) -> str:
         row.save(update_fields=["next_try_at"])
         return WAITING
     except Exception as e:
+        from fighthealthinsurance.shared_plan_documents import NoBucketCopy, note_count
+
         # The rows rolled back; a copy's file written before would not.
         for doc in saved:
             try:
                 doc.document_enc.delete(save=False)
             except Exception:
                 logger.warning("Could not delete a retried copy's file")
+        if isinstance(e, NoBucketCopy):
+            # The save counted it inside the transaction that rolled back.
+            note_count(SharedPlanDocumentsDay.NO_BUCKET_OPT_IN, 1)
         return _failed(row, type(e).__name__)
     return SAVED
 
