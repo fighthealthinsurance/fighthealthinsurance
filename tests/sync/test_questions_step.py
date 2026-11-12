@@ -805,6 +805,19 @@ class YesNoAnswerTest(QuestionsStepTestBase):
         combined = self._rebuild().combined_form
         self.assertIsNone(combined.fields["emergency"].initial)
 
+    def test_an_answer_changed_to_not_sure_withdraws_the_sentence_it_derived(self):
+        """A background run reads the stored answers, where nothing answers
+        the question any more, so it would not know to withdraw the old
+        sentence itself."""
+        self.denial.qa_context = json.dumps(
+            {"urgent": "Yes", "medical_context": "This is an urgent claim."}
+        )
+        self.denial.save(update_fields=["qa_context"])
+
+        self._generate_appeal(urgent="not_sure", prior_auth_id="PA-1")
+
+        self.assertNotIn("medical_context", self._qa())
+
     def test_a_ticked_box_from_an_older_page_is_a_yes(self):
         """A page rendered before the change still posts "on"."""
         self._generate_appeal(emergency="on")

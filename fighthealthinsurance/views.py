@@ -2213,7 +2213,8 @@ class GenerateAppeal(View):
                 if key in restricted:
                     continue
                 updates[key] = v
-            updates.update(self._yes_no_answers(denial, posted=elems))
+            yes_no = self._yes_no_answers(denial, posted=elems)
+            updates.update(yes_no)
             # This page posts every field it rendered, so a blank where an
             # answer was stored is the person clearing it. merge_qa drops
             # blanks on its own, which is right for the sparse posts other
@@ -2232,6 +2233,13 @@ class GenerateAppeal(View):
                 question = question_text_for_field(raw, generated_questions)
                 if question is not None and raw != qa_key_for_question(question):
                     withdrawn.append(raw)
+            # A yes or no taken back to "Not sure" takes the sentence it
+            # derived with it ("This is an urgent claim."). Nothing stored
+            # answers that question any more, so a background run would not
+            # know to withdraw the sentence; the next generation derives it
+            # again from whatever the remaining answers still support.
+            if any(k in yes_no for k in withdrawn):
+                withdrawn.append("medical_context")
             merge_qa(denial, updates, source="appeal_form_post", withdraw=withdrawn)
             denial.save(update_fields=["qa_context"])
         except Exception as e:
