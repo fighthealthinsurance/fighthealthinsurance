@@ -38,14 +38,37 @@ only no data. tests/sync/test_contrast.py measures them; the site has no dark mo
     /* Only the marks dim, so every label keeps its contrast. */
     .dw-bars:hover .dw-bar:not(:hover) .dw-bar-fill { opacity: 0.45; }
   }
+  /* A line chart's readout: a thin rule at the year pointed at, and its figures in a box. */
+  /* The readout takes no pointer events, so a tap on it reaches the chart and moves it. */
+  .dw-read { pointer-events: none; }
+  .dw-read line { stroke: var(--fhi-ink-2); stroke-width: 1; stroke-dasharray: 3 3; }
+  .dw-read rect { fill: var(--dw-paper); stroke: var(--fhi-line); }
+  .dw-chart .dw-read text { fill: var(--fhi-ink); }
+  /* Switching a map's measure fades each tile to its new colour. */
+  @media (prefers-reduced-motion: no-preference) {
+    .dw-map rect, .dw-map text, .dw-map path.dw-mark { transition: fill 0.35s ease; }
+  }
+  /* The section bar (js/denial_watch_charts.js): fixed under the site header on wide screens; jumps clear it too. */
+  @media (min-width: 768px) { .dw.dw-has-where { --dw-where-h: 3.5rem; } }
+  .dw-where { position: fixed; left: 0; right: 0; z-index: 1020; background: var(--dw-paper); border-bottom: 1px solid var(--fhi-line); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05); }
+  .dw-where-row { display: flex; gap: var(--fhi-space-2); max-width: 1320px; margin-inline: auto; padding: var(--fhi-space-2) var(--fhi-space-4); overflow-x: auto; scrollbar-width: none; }
+  .dw-where a { flex: none; display: inline-flex; align-items: center; min-height: 2.25rem; padding: 0 var(--fhi-space-3); border: 1px solid transparent; border-radius: 999px; font-size: var(--fhi-text-small); font-weight: 600; color: var(--fhi-green-ink); text-decoration: none; white-space: nowrap; }
+  .dw-where a:hover { border-color: var(--fhi-green); }
+  /* Where the links run past the edge, the edge fades so the row reads as one that scrolls. */
+  @media (max-width: 1399px) { .dw-where-row { mask-image: linear-gradient(to right, black calc(100% - 3rem), transparent); } }
+  .dw-where a[aria-current] { background-color: var(--fhi-green-ink); color: var(--dw-paper); }
+  .dw-where a:focus-visible { outline: 3px solid var(--fhi-green-deep); outline-offset: 2px; }
   @media print {
+    .dw-where, .dw-read { display: none !important; }
+    .dw-mix-donut path { mask: none !important; }
+    .dw-mix-donut > * { opacity: 1 !important; }
     .dw-bar-fill, .dw-dumb i { scale: none !important; translate: none !important; }
     .dw-line { clip-path: none !important; }
     .dw-end { opacity: 1 !important; }
   }
   /* Clear the sticky header, 143px tall below 992px wide, so a jump to any anchor lands below it. */
-  .dw [id] { scroll-margin-top: calc(2 * var(--fhi-space-11)); }
-  @media (min-width: 992px) { .dw [id] { scroll-margin-top: calc(var(--fhi-space-11) + var(--fhi-space-7)); } }
+  .dw [id] { scroll-margin-top: calc(2 * var(--fhi-space-11) + var(--dw-where-h, 0px)); }
+  @media (min-width: 992px) { .dw [id] { scroll-margin-top: calc(var(--fhi-space-11) + var(--fhi-space-7) + var(--dw-where-h, 0px)); } }
   .dw-num { font-variant-numeric: tabular-nums; }
   .dw-kicker { font-size: var(--fhi-text-small); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fhi-green-ink); }
   .dw-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--fhi-space-4); }

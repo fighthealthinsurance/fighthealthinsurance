@@ -215,6 +215,33 @@ class TestOpenEnrollmentPage(TestCase):
         for rule in ("scale: none !important", "translate: none !important", "clip-path: none !important", "opacity: 1 !important"):
             self.assertIn(rule, printed)
 
+    def test_line_readout_is_for_pointers_only(self):
+        # The table under each chart has the same figures for keyboards and screen readers.
+        self.assertIn("const g=el('g',{class:'dw-read','aria-hidden':'true'});", CHARTS_JS)
+        self.assertIn("svg.addEventListener('pointerleave',e=>{if(e.pointerType==='mouse')hide();});", CHARTS_JS)
+
+    def test_section_bar_is_for_wide_screens_and_jumps_clear_it(self):
+        self.assertIn("wide=window.matchMedia('(min-width: 768px)')", CHARTS_JS)
+        self.assertIn("@media (min-width: 768px) { .dw.dw-has-where { --dw-where-h: 3.5rem; } }", STYLE_PARTIAL)
+        self.assertEqual(STYLE_PARTIAL.count("+ var(--dw-where-h, 0px)); }"), 2)
+
+    def test_section_bar_marks_the_last_section_at_the_bottom_of_the_page(self):
+        # On a tall screen the last section never reaches the marker line.
+        self.assertIn("if(window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-2&&secs[secs.length-1].getBoundingClientRect().top<window.innerHeight)at=secs.length-1;", CHARTS_JS)
+
+    def test_section_bar_rechecks_when_the_page_changes_height(self):
+        # Opening a table moves the sections without a scroll event.
+        self.assertIn("if(window.ResizeObserver)new ResizeObserver(ask).observe(root);", CHARTS_JS)
+
+    def test_map_colour_fade_respects_reduced_motion(self):
+        fade = re.search(r"@media \(prefers-reduced-motion: no-preference\) \{\n    \.dw-map rect[^}]*\}", STYLE_PARTIAL)
+        self.assertIsNotNone(fade)
+
+    def test_print_hides_the_bar_and_readout_and_shows_the_whole_donut(self):
+        printed = re.search(r"@media print \{(.*?)\n  \}", STYLE_PARTIAL, re.S).group(1)
+        for rule in (".dw-where, .dw-read { display: none !important; }", ".dw-mix-donut path { mask: none !important; }", ".dw-mix-donut > * { opacity: 1 !important; }"):
+            self.assertIn(rule, printed)
+
     def test_counting_up_only_runs_on_tiles_already_showing(self):
         # A tile below the fold keeps its real figure rather than waiting at 0.
         self.assertIn("function countUp(box){if(!MOTION||!box||!inView(box))return;", CHARTS_JS)
