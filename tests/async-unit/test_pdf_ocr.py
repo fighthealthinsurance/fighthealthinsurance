@@ -155,3 +155,41 @@ async def test_a_tesseract_still_running_at_the_deadline_is_killed_with_the_chil
             break
         await asyncio.sleep(0.1)
     assert _state(pid) in (None, "Z")
+
+
+def _fake_tesseract(tmp_path, languages):
+    """A stand-in tesseract that lists ``languages`` and, for a page, prints
+    the arguments it was run with."""
+    fake = tmp_path / "tesseract"
+    listing = "\n".join(["List of available languages in /tessdata (n):", *languages])
+    fake.write_text(
+        f"#!{sys.executable}\nimport sys\n"
+        "if '--list-langs' in sys.argv:\n"
+        f"    print({listing!r})\n"
+        "else:\n"
+        "    sys.stdin.buffer.read()\n"
+        "    print(' '.join(sys.argv[1:]))\n"
+    )
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+    return fake
+
+
+@pytest.mark.parametrize(
+    "installed, expected",
+    [(["eng", "osd", "spa"], "eng+spa"), (["eng", "osd"], "eng"), ([], "eng")],
+)
+def test_pages_are_read_in_the_languages_installed(tmp_path, monkeypatch, installed, expected):
+    fake = _fake_tesseract(tmp_path, installed)
+    monkeypatch.setattr(pdf_text, "_TESSERACT", (str(fake), "stdin", "stdout"))
+    got = pdf_text.ocr_pdf_pages(make_pdf_bytes([""]), [0], 1000, 200, 50_000_000, 30, 120)
+    assert got["texts"] == [[0, f"stdin stdout -l {expected}\n"]]
+
+
+def test_the_image_and_ci_install_spanish():
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(root, "k8s", "Dockerfile")) as f:
+        assert " tesseract-ocr tesseract-ocr-spa " in f.read()
+    with open(os.path.join(root, ".github", "workflows", "ci.yml")) as f:
+        ci = f.read()
+    # Every CI job that installs tesseract installs its Spanish data too.
+    assert ci.count("tesseract-ocr ") == ci.count("tesseract-ocr tesseract-ocr-spa") > 0
