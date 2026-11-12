@@ -41,7 +41,7 @@ mypy --config-file mypy.ini -p fighthealthinsurance -p fhi_users
 # Database migrations
 python manage.py makemigrations
 python manage.py migrate
-python manage.py loaddata initial followup plan_source insurance_companies pa_requirements
+python manage.py loaddata initial followup plan_source insurance_companies known_non_fax_numbers pa_requirements
 
 # Run every tox suite in parallel with a pass/fail summary (pre-push check)
 ./scripts/good_to_go.sh
@@ -152,7 +152,7 @@ Tests are in `tests/` with subdirectories:
 - `async-unit/` - Unit tests
 - `selenium/` - Sync selenium tests
 
-Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_source).
+Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_source, insurance_companies, known_non_fax_numbers, pa_requirements).
 
 ## Claude Code Web Sessions
 

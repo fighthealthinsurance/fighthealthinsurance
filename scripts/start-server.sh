@@ -13,6 +13,7 @@ if [ -n "$MIGRATIONS" ]; then
   python manage.py loaddata followup
   python manage.py loaddata plan_source
   python manage.py loaddata insurance_companies
+  python manage.py loaddata known_non_fax_numbers
   python manage.py loaddata pa_requirements
   python manage.py ensure_adminuser --no-input
   sleep 10
@@ -96,6 +97,7 @@ if [ "$ENVIRONMENT" == "Dev" ]; then
   python manage.py loaddata followup
   python manage.py loaddata plan_source
   python manage.py loaddata insurance_companies
+  python manage.py loaddata known_non_fax_numbers
   python manage.py loaddata pa_requirements
   python manage.py ensure_adminuser --no-input
 fi

@@ -1,0 +1,268 @@
+# Numbers people try to fax appeals to that do not take faxes (mostly
+# insurers' member-services voice lines). See models.KnownNonFaxNumber.
+# Seeded 2026-11 from each insurer's own contact pages (see each row's notes);
+# none is listed as an appeals fax in insurance_companies.yaml.
+#
+# Every InsuranceCompany / InsurancePlan appeal_phone_number in
+# insurance_companies.yaml already counts as a voice line, so only add
+# numbers here that are not on file there. Store the 10 digits only.
+# loaddata overwrites the row with the same pk on every deploy, so a number
+# added here needs a pk no admin-added row already has (check prod first).
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 1
+  fields:
+    number: "8663481286"
+    kind: voice
+    label: "UnitedHealthcare member services (Apple employee plan)"
+    insurance_company: 2
+    notes: "Reported by staff 2026-11: appeals keep getting faxed here."
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 2
+  fields:
+    number: "8668014409"
+    kind: voice
+    label: "UnitedHealthcare member services (plans through work)"
+    insurance_company: 2
+    notes: "uhc.com/contact-us"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 3
+  fields:
+    number: "8666332446"
+    kind: voice
+    label: "UnitedHealthcare member services"
+    insurance_company: 2
+    notes: "UHC member line quoted in UHC's wildfire-support guidance (via amwinsconnect.com)"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 4
+  fields:
+    number: "8008723862"
+    kind: voice
+    label: "Aetna corporate contact center"
+    insurance_company: 3
+    notes: "aetna.com member services FAQ"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 5
+  fields:
+    number: "8009971654"
+    kind: voice
+    label: "Cigna Healthcare customer service"
+    insurance_company: 4
+    notes: "cigna.com/contact-us"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 6
+  fields:
+    number: "8002446224"
+    kind: voice
+    label: "Cigna medical, dental and vision customer service"
+    insurance_company: 4
+    notes: "cigna.com/contact-us"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 7
+  fields:
+    number: "8004574708"
+    kind: voice
+    label: "Humana Medicare member services"
+    insurance_company: 5
+    notes: "humana.com contact page"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 8
+  fields:
+    number: "8778771051"
+    kind: voice
+    label: "Humana dental and vision member services"
+    insurance_company: 5
+    notes: "humana.com contact page"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 9
+  fields:
+    number: "8004644000"
+    kind: voice
+    label: "Kaiser Permanente member services (California)"
+    insurance_company: 6
+    notes: "kp.org member services listings"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 10
+  fields:
+    number: "8007880616"
+    kind: voice
+    label: "Kaiser Permanente member services, Spanish (California)"
+    insurance_company: 6
+    notes: "kp.org member services listings"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 11
+  fields:
+    number: "8007577585"
+    kind: voice
+    label: "Kaiser Permanente member services, Chinese (California)"
+    insurance_company: 6
+    notes: "kp.org member services listings"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 12
+  fields:
+    number: "8004430815"
+    kind: voice
+    label: "Kaiser Permanente Senior Advantage member services"
+    insurance_company: 6
+    notes: "kp.org member services listings"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 13
+  fields:
+    number: "8006329700"
+    kind: voice
+    label: "Kaiser Permanente member services (Colorado)"
+    insurance_company: 6
+    notes: "kp.org member services listings"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 14
+  fields:
+    number: "8008132000"
+    kind: voice
+    label: "Kaiser Permanente member services (Oregon / SW Washington)"
+    insurance_company: 6
+    notes: "kp.org member services listings"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 15
+  fields:
+    number: "8006334227"
+    kind: voice
+    label: "1-800-MEDICARE"
+    notes: "medicare.gov/about-us/contact-medicare"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 16
+  fields:
+    number: "8449120938"
+    kind: voice
+    label: "Anthem Ohio Medicaid member services"
+    insurance_company: 11
+    notes: "anthem.com/oh/medicaid/contact-us"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 17
+  fields:
+    number: "8005359481"
+    kind: voice
+    label: "Blue Shield Promise (Medi-Cal) member services"
+    insurance_company: 12
+    notes: "blueshieldca.com Blue Shield Promise contact page"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 18
+  fields:
+    number: "8007764466"
+    kind: voice
+    label: "Blue Shield of California Medicare member services"
+    insurance_company: 12
+    notes: "blueshieldca.com Medicare contact page"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 19
+  fields:
+    number: "8559053825"
+    kind: voice
+    label: "Blue Shield Promise Cal MediConnect member services"
+    insurance_company: 12
+    notes: "blueshieldca.com Medicare contact page"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 20
+  fields:
+    number: "8888582150"
+    kind: voice
+    label: "Molina Marketplace member services"
+    insurance_company: 7
+    notes: "molinahealthcare.com marketplace contact page / member guide"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 21
+  fields:
+    number: "8555421974"
+    kind: voice
+    label: "Molina Marketplace (Covered California) line"
+    insurance_company: 7
+    notes: "molinahealthcare.com/marketplace/ca contact page"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 22
+  fields:
+    number: "8442651278"
+    kind: voice
+    label: "Ambetter (New Hampshire) member services"
+    insurance_company: 24
+    notes: "ambetterhealth.com/en/nh/contact-us"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 23
+  fields:
+    number: "8335433145"
+    kind: voice
+    label: "Ambetter Health Solutions member services"
+    insurance_company: 24
+    notes: "Ambetter 2026 member quick reference guide (ambetterhealth.com)"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 24
+  fields:
+    number: "8003522583"
+    kind: voice
+    label: "Florida Blue customer service (1-800-FLA-BLUE)"
+    insurance_company: 15
+    notes: "floridablue.com member FAQ"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 25
+  fields:
+    number: "8009266565"
+    kind: voice
+    label: "Florida Blue Medicare member services"
+    insurance_company: 15
+    notes: "floridablue.com Medicare member page"
+    created: 2026-11-11T00:00:00Z
+
+- model: fighthealthinsurance.knownnonfaxnumber
+  pk: 26
+  fields:
+    number: "8004823600"
+    kind: voice
+    label: "Blue Cross Blue Shield Federal Employee Program (FEP) customer service"
+    notes: "FEP contact pages of several BCBS plans (e.g. bcbsm.com)"
+    created: 2026-11-11T00:00:00Z

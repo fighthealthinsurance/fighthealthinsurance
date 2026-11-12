@@ -38,6 +38,7 @@ from fighthealthinsurance.models import (
     DenialTypesRelation,
     Diagnosis,
     FaxesToSend,
+    KnownNonFaxNumber,
     FollowUp,
     FollowUpDocuments,
     FollowUpSched,
@@ -1248,13 +1249,27 @@ class FaxesToSendAdmin(admin.ModelAdmin):
         "paid",
         "fax_success",
         "sent",
+        "failure_reason",
         "denial_id",
     )
     search_fields = ("email", "name")
-    list_filter = ("date", "paid", "fax_success", "sent")
+    list_filter = ("date", "paid", "fax_success", "sent", "failure_reason")
     ordering = ("-date",)
     raw_id_fields = ("denial_id", "for_appeal")
     list_select_related = ("denial_id",)
+
+
+@admin.register(KnownNonFaxNumber)
+class KnownNonFaxNumberAdmin(admin.ModelAdmin):
+    """Numbers people fax appeals to that don't take faxes (mostly insurer
+    voice lines). Carriers' appeal_phone_number values count too, without
+    a row here; see fax_number_check."""
+
+    list_display = ("number", "kind", "label", "insurance_company", "created")
+    list_filter = ("kind",)
+    search_fields = ("number", "label", "notes")
+    ordering = ("number",)
+    raw_id_fields = ("insurance_company",)
 
 
 @admin.register(DenialTypesRelation)

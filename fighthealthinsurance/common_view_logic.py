@@ -638,6 +638,19 @@ class AppealAssemblyHelper:
             return target
 
 
+async def _is_known_non_fax_number(number: str) -> bool:
+    """Whether ``number`` is a voice line / dead number we know takes no
+    faxes (fax_number_check). A failed lookup is a no: it only costs us a
+    chance to catch a misread number, never the extraction."""
+    from fighthealthinsurance.fax_number_check import alookup_non_fax_number
+
+    try:
+        return await alookup_non_fax_number(number) is not None
+    except Exception:
+        logger.opt(exception=True).warning("Known non-fax number lookup failed")
+        return False
+
+
 async def _record_synthesis_attempt(
     *,
     denial_id: int,
@@ -4911,6 +4924,14 @@ class DenialCreatorHelper:
                 if fax_digits[-10:] not in all_source_digits:
                     logger.debug(
                         f"Rejected fax number {appeal_fax_number} - digits not found in source text"
+                    )
+                    appeal_fax_number = None
+                elif await _is_known_non_fax_number(appeal_fax_number):
+                    # Denial letters print the member-services phone line
+                    # beside the appeals fax, and readers mix them up; a
+                    # number we know takes no faxes is never the answer.
+                    logger.debug(
+                        f"Rejected fax number {appeal_fax_number} - known voice line"
                     )
                     appeal_fax_number = None
                 else:
