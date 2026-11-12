@@ -112,6 +112,14 @@ class TheSweepLooksAgainTest(_LookupTest):
             self.retry()
         found.assert_not_awaited()
 
+    def test_a_row_with_no_text_is_not_looked_at_and_holds_none_back(self):
+        textless, other = self.unfinished(2)
+        PolicyDocument.objects.filter(pk=textless.pk).update(cleaned_text="")
+        PolicyDocument.objects.filter(pk=other.pk).update(company_lookup_failures=2)
+        with finding(FOUND) as found:
+            self.assertEqual(self.retry(limit=1), 1)
+        found.assert_awaited_once_with(other.cleaned_text, other.cleaned_text)
+
     def test_a_row_no_longer_ready_is_not_looked_up_again(self):
         (doc,) = self.unfinished()
         PolicyDocument.objects.filter(pk=doc.pk).update(
@@ -163,3 +171,4 @@ class TheSweepLooksAgainTest(_LookupTest):
             self.assertEqual(
                 async_to_sync(sweep_activities.retry_company_lookups)(), 1
             )
+

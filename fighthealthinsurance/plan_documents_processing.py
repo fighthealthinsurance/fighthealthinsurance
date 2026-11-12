@@ -544,6 +544,8 @@ async def _acount_lookup_failure(document_id: Any) -> None:
 
 def _lookups_due():
     # Fewest failed first, so one that keeps failing does not hold the rest.
+    # A row with no text has nothing to look up in; left in, it would keep
+    # its place at the front every run.
     return (
         _shared_rows()
         .filter(
@@ -552,6 +554,7 @@ def _lookups_due():
             company_lookup_failures__lt=MAX_COMPANY_LOOKUPS,
         )
         .exclude(plan_sponsor_source=SOURCE_STAFF)
+        .exclude(cleaned_text="")
         .order_by("company_lookup_failures", "id")
     )
 
