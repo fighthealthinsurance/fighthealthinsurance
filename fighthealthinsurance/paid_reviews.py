@@ -336,7 +336,7 @@ def find_id(found: typing.Any, *names: str) -> str:
     for name in names:
         if found.get(name) not in (None, ""):
             return str(found[name])
-    for wrapper in ("bounty", "submission", "data", "object"):
+    for wrapper in ("bounty", "submission", "endpoint", "data", "object"):
         inner = found.get(wrapper)
         if isinstance(inner, dict):
             nested = find_id(inner, *names)
@@ -540,8 +540,9 @@ def handle_event(event: dict) -> str:
     bounty_id = find_id(data, "bountyId", "bounty_id")
     submission_id = find_id(data, "submissionId", "submission_id")
     if not submission_id:
-        # Event ids are "<type>:<subject id>" (docs/webhooks).
-        _, _, submission_id = str(event.get("id", "")).partition(":")
+        # Event ids are "<type>:<subject id>" (docs/webhooks), and some carry
+        # more parts ("webhook.test:<endpoint>:<uuid>"): the subject is last.
+        _, _, submission_id = str(event.get("id", "")).rpartition(":")
     if not bounty_id or not submission_id:
         return "ignored: no bounty or submission id"
     bounty = PaidReviewBounty.objects.filter(rah_bounty_id=bounty_id).first()

@@ -393,6 +393,37 @@ class WebhookViewTest(TestCase):
         self.assertEqual(response.status_code, 502)
 
 
+class LiveResponseShapeTest(TestCase):
+    """Response shapes copied from RentAHuman's live API (Nov 2026)."""
+
+    def test_webhook_endpoint_id_is_read_from_the_create_answer(self):
+        answer = {
+            "success": True,
+            "endpoint": {
+                "id": "8R5nKXHkeq3pIJE7m4MN",
+                "url": "https://www.fighthealthinsurance.com/chooser/paid/webhook/rentahuman/",
+                "events": ["submission.submitted"],
+            },
+            "secret": "whsec_example",
+        }
+        self.assertEqual(
+            paid_reviews.find_id(answer, "id", "endpointId"), "8R5nKXHkeq3pIJE7m4MN"
+        )
+
+    def test_webhook_secret_is_read_from_the_create_answer(self):
+        answer = {"success": True, "endpoint": {"id": "e1"}, "secret": "whsec_example"}
+        self.assertEqual(paid_reviews.find_id(answer, "secret"), "whsec_example")
+
+    def test_test_event_is_ignored(self):
+        event = {
+            "id": "webhook.test:xtXLX67TQJyQaK0ZeCfz:ddd8ce1f-ada3-4d85-afb5-3222c056077d",
+            "type": "webhook.test",
+            "created": "2026-11-12T02:00:48.280Z",
+            "data": {"endpointId": "xtXLX67TQJyQaK0ZeCfz", "message": "test"},
+        }
+        self.assertEqual(paid_reviews.handle_event(event), "ignored")
+
+
 class BountyPayloadTest(TestCase):
     def test_payload_links_the_join_url(self):
         bounty = make_bounty()
