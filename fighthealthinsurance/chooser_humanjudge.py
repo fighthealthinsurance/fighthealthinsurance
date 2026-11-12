@@ -14,18 +14,21 @@ tallies or the public rankings. What they decide is one entry,
 ``"humanjudge"``, in ``ChooserTask.scoring_json``, beside Jev's and
 fhi-local's picks.
 
-``sync`` does one round: send the drafts not sent yet, fetch new verdicts
-(``GET /api/v1/models/{id}/evaluations?detail=votes``) and update the picks
-of the cases they touched. The chooser refill actor runs it every tick, and
-``manage.py humanjudge_sync`` runs it by hand. It is off unless
-``HUMANJUDGE_API_KEY`` is set (and ``CHOOSER_HUMANJUDGE`` is not false).
+Staff drive it from the admin, so a person decides what goes out and when:
+"Upload to HumanJudge" on the Chooser Task list sends the selected cases'
+drafts (``upload_tasks``), and "Download verdicts from HumanJudge" on the
+HumanJudge Verdict list fetches the new verdicts
+(``GET /api/v1/models/{id}/evaluations?detail=votes``) and updates the
+picks of the cases they touch (``download_verdicts``). Nothing runs on a timer. It is off
+unless ``HUMANJUDGE_API_KEY`` is set (and ``CHOOSER_HUMANJUDGE`` is not
+false).
 """
 
 import datetime
 import hashlib
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
 import httpx
@@ -51,9 +54,11 @@ TRACE_NAME = "fhi-appeal-arena"
 # Cases whose drafts have been in front of our voters. Never QUEUED (still
 # being written) or DISABLED (not fit to show anyone).
 SENDABLE_STATUSES = ("READY", "IN_USE", "EXHAUSTED")
-MAX_ATTEMPTS = 5
+# Cases one upload may send: each draft is its own request, and the admin
+# waits on them all.
+MAX_TASKS_PER_UPLOAD = 25
 _HTTP_TIMEOUT_SECONDS = 20.0
-# HumanJudge's page cap (the SDK's PAGE_SIZE), and how many pages one sync reads.
+# HumanJudge's page cap (the SDK's PAGE_SIZE), and how many pages one download reads.
 _PAGE_SIZE = 1000
 _MAX_PAGES = 20
 # Verdicts are re-read this far back from the newest one stored, for votes
@@ -234,7 +239,7 @@ class HumanJudgeClient:
         else:
             logger.warning(
                 f"HumanJudge: stopped reading votes after {_MAX_PAGES} pages; "
-                "the rest come on the next sync"
+                "download again for the rest"
             )
         return out
 
@@ -304,102 +309,124 @@ def _external_key(record: dict, inference_id: str) -> str:
     return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()
 
 
-def _sendable_candidates():
-    """Active drafts of synthetic Arena appeal cases. The source check is
-    the privacy line: nothing that is not synthetic is ever sent."""
-    return ChooserCandidate.objects.filter(
-        is_active=True,
-        task__task_type="appeal",
-        task__source="synthetic",
-        task__status__in=SENDABLE_STATUSES,
+def sendable_tasks():
+    """Synthetic Arena appeal cases that have reached voters. The source
+    check is the privacy line: nothing that is not synthetic is ever sent."""
+    return ChooserTask.objects.filter(
+        task_type="appeal", source="synthetic", status__in=SENDABLE_STATUSES
     )
 
 
-def _retriable():
-    return HumanJudgeSubmission.objects.filter(
-        Q(status="PENDING") | Q(status="FAILED", attempts__lt=MAX_ATTEMPTS),
-        # Checked again at send time: a case can be disabled after queuing.
-        candidate__in=_sendable_candidates(),
-    )
+@dataclass
+class UploadResult:
+    sent: int = 0
+    failed: int = 0
+    already_sent: int = 0
+    # Selected cases that may not go: not synthetic, not appeals, or never
+    # shown to voters.
+    not_sendable: int = 0
 
 
-async def _queue_unsent(limit: int) -> int:
-    """Make submission rows for the newest cases' unsent drafts, whole cases
-    at a time, until ``limit`` drafts are waiting to go. Drafts still waiting
-    from earlier rounds (HumanJudge down, say) count, so an outage does not
-    queue the whole backlog."""
-    room = limit - await _retriable().acount()
-    if room <= 0:
-        return 0
-    # Every case has at least one unsent draft, so ``room`` cases is plenty.
-    task_ids = [
-        task_id
-        async for task_id in _sendable_candidates()
-        .filter(humanjudge_submission__isnull=True)
-        .order_by("-task__created_at")
-        .values_list("task_id", flat=True)
-        .distinct()[:room]
-    ]
-    queued = 0
-    for task_id in task_ids:
-        if queued >= room:
-            break
-        async for candidate in _sendable_candidates().filter(
-            task_id=task_id, humanjudge_submission__isnull=True
-        ):
-            _, created = await HumanJudgeSubmission.objects.aget_or_create(
-                candidate=candidate,
-                defaults={"task_id": task_id, "inference_id": new_inference_id()},
-            )
-            queued += int(created)
-    return queued
-
-
-async def submit_pending(client: HumanJudgeClient, limit: int) -> int:
-    """Send up to ``limit`` unsent drafts; returns how many went."""
-    await _queue_unsent(limit)
-    pending = (
-        _retriable()
-        .select_related("candidate", "task")
-        .order_by("-task__created_at", "candidate__candidate_index")[:limit]
-    )
-    sent = 0
-    async for submission in pending:
-        candidate = submission.candidate
-        submission.attempts += 1
-        try:
-            await client.ingest(
-                submission.inference_id,
-                render_case(submission.task.context_json),
-                truncate_at_boundary(candidate.content, _DRAFT_CHARS),
-                # Opaque ids only, to match verdicts back; never the model.
-                {"task_id": submission.task_id, "candidate_id": candidate.id},
-            )
-        except HumanJudgeAuthError:
-            # Spend no attempt on a refused key: nothing else will go either.
-            submission.attempts -= 1
-            raise
-        except (HumanJudgeError, httpx.HTTPError) as e:
-            submission.status = "FAILED"
-            submission.last_error = f"{type(e).__name__}: {e}"[:200]
-            await submission.asave(update_fields=["status", "attempts", "last_error"])
-            continue
-        submission.status = "SENT"
-        submission.sent_at = timezone.now()
-        submission.last_error = ""
-        await submission.asave(
-            update_fields=["status", "attempts", "last_error", "sent_at"]
+async def _send(client: HumanJudgeClient, submission: HumanJudgeSubmission) -> bool:
+    candidate = submission.candidate
+    submission.attempts += 1
+    try:
+        await client.ingest(
+            submission.inference_id,
+            render_case(submission.task.context_json),
+            truncate_at_boundary(candidate.content, _DRAFT_CHARS),
+            # Opaque ids only, to match verdicts back; never the model.
+            {"task_id": submission.task_id, "candidate_id": candidate.id},
         )
-        sent += 1
-    return sent
+    except HumanJudgeAuthError:
+        # Nothing else will go either; the caller says so. No attempt spent.
+        raise
+    except (HumanJudgeError, httpx.HTTPError) as e:
+        submission.status = "FAILED"
+        submission.last_error = f"{type(e).__name__}: {e}"[:200]
+        await submission.asave(update_fields=["status", "attempts", "last_error"])
+        return False
+    submission.status = "SENT"
+    submission.sent_at = timezone.now()
+    submission.last_error = ""
+    await submission.asave(
+        update_fields=["status", "attempts", "last_error", "sent_at"]
+    )
+    return True
 
 
-async def fetch_verdicts(client: HumanJudgeClient) -> set[int]:
-    """Store the verdicts not stored yet; returns the ids of the cases that
-    got one."""
+async def upload_tasks(
+    task_ids: Iterable[int],
+    transport: Optional[httpx.AsyncBaseTransport] = None,
+) -> UploadResult:
+    """Send the active drafts of these cases that have not gone yet (failed
+    ones again). Raises HumanJudgeError when HumanJudge is not configured,
+    HumanJudgeAuthError when it refuses the key."""
+    if not enabled():
+        raise HumanJudgeError("HumanJudge is not configured (HUMANJUDGE_API_KEY)")
+    wanted = set(task_ids)
+    if len(wanted) > MAX_TASKS_PER_UPLOAD:
+        raise HumanJudgeError(
+            f"Upload at most {MAX_TASKS_PER_UPLOAD} cases at a time "
+            f"({len(wanted)} selected)"
+        )
+    sendable = [
+        task_id
+        async for task_id in sendable_tasks()
+        .filter(id__in=wanted)
+        .values_list("id", flat=True)
+    ]
+    result = UploadResult(not_sendable=len(wanted) - len(sendable))
+    async for candidate in ChooserCandidate.objects.filter(
+        task_id__in=sendable, is_active=True
+    ):
+        await HumanJudgeSubmission.objects.aget_or_create(
+            candidate=candidate,
+            defaults={"task_id": candidate.task_id, "inference_id": new_inference_id()},
+        )
+    submissions = [
+        s
+        async for s in HumanJudgeSubmission.objects.filter(
+            task_id__in=sendable, candidate__is_active=True
+        )
+        .select_related("candidate", "task")
+        .order_by("task_id", "candidate__candidate_index")
+    ]
+    async with HumanJudgeClient(transport=transport) as client:
+        for submission in submissions:
+            if submission.status == "SENT":
+                result.already_sent += 1
+            elif await _send(client, submission):
+                result.sent += 1
+            else:
+                result.failed += 1
+    if result.sent or result.failed:
+        logger.info(f"HumanJudge upload: {result}")
+    return result
+
+
+@dataclass
+class DownloadResult:
+    new_verdicts: int = 0
+    # The cases that got a new verdict.
+    task_ids: set[int] = field(default_factory=set)
+    # Cases the new verdicts settled on a pick for.
+    picks: int = 0
+    # Votes on traces that are not Arena drafts we sent, or without a
+    # pass/flag verdict; left unstored.
+    unmatched: int = 0
+
+    @property
+    def cases(self) -> int:
+        return len(self.task_ids)
+
+
+async def fetch_verdicts(client: HumanJudgeClient) -> DownloadResult:
+    """Store the verdicts not stored yet (picks are not updated here)."""
+    result = DownloadResult()
     model_id = await client.model_id()
     if not model_id:
-        return set()
+        raise HumanJudgeError("No HumanJudge model to read: set HUMANJUDGE_MODEL_ID")
     newest = (
         await HumanJudgeVerdict.objects.exclude(voted_at=None)
         .order_by("-voted_at")
@@ -419,7 +446,6 @@ async def fetch_verdicts(client: HumanJudgeClient) -> set[int]:
             inference_id__in=list(by_inference)
         )
     }
-    touched: set[int] = set()
     unmatched = skipped = 0
     for inference_id, rows in by_inference.items():
         submission = submissions.get(inference_id)
@@ -446,7 +472,8 @@ async def fetch_verdicts(client: HumanJudgeClient) -> set[int]:
                 },
             )
             if created:
-                touched.add(submission.task_id)
+                result.task_ids.add(submission.task_id)
+                result.new_verdicts += 1
     if unmatched or skipped:
         logger.info(
             f"HumanJudge: {unmatched} vote(s) matched no Arena draft and "
@@ -457,7 +484,8 @@ async def fetch_verdicts(client: HumanJudgeClient) -> set[int]:
         logger.warning(
             f"HumanJudge: {unkeyed} vote(s) carried no inference id to match"
         )
-    return touched
+    result.unmatched = unmatched + skipped + unkeyed
+    return result
 
 
 @dataclass
@@ -516,24 +544,16 @@ async def update_picks(task_ids: Iterable[int]) -> int:
     return picked
 
 
-async def sync(
+async def download_verdicts(
     transport: Optional[httpx.AsyncBaseTransport] = None,
-) -> Optional[dict[str, int]]:
-    """One round: send, fetch, pick. None when HumanJudge is off. A refused
-    key stops the round with an error logged; other failures propagate to
-    the caller, which treats the round as best-effort."""
+) -> DownloadResult:
+    """Fetch HumanJudge's new verdicts and update the picks of the cases
+    they touch. Raises as upload_tasks does."""
     if not enabled():
-        return None
-    limit = max(0, int(getattr(settings, "CHOOSER_HUMANJUDGE_SUBMIT_BATCH", 20)))
+        raise HumanJudgeError("HumanJudge is not configured (HUMANJUDGE_API_KEY)")
     async with HumanJudgeClient(transport=transport) as client:
-        try:
-            sent = await submit_pending(client, limit)
-            touched = await fetch_verdicts(client)
-        except HumanJudgeAuthError as e:
-            logger.error(f"HumanJudge refused the key ({e}); check HUMANJUDGE_API_KEY")
-            return {"sent": 0, "cases_with_new_verdicts": 0, "picks": 0}
-    picks = await update_picks(touched)
-    summary = {"sent": sent, "cases_with_new_verdicts": len(touched), "picks": picks}
-    if sent or touched:
-        logger.info(f"HumanJudge sync: {summary}")
-    return summary
+        result = await fetch_verdicts(client)
+    result.picks = await update_picks(result.task_ids)
+    if result.new_verdicts:
+        logger.info(f"HumanJudge download: {result}")
+    return result

@@ -416,11 +416,8 @@ class Base(Configuration):
     HUMANJUDGE_TOKEN = os.getenv("HUMANJUDGE_TOKEN", "")
     HUMANJUDGE_MODEL_ID = os.getenv("HUMANJUDGE_MODEL_ID", "")
     HUMANJUDGE_BASE_URL = os.getenv("HUMANJUDGE_BASE_URL", "https://api.humanjudge.com")
-    # Drafts sent per sync, and verdicts each active draft of a case needs
-    # before HumanJudge's pick for the case is recorded.
-    CHOOSER_HUMANJUDGE_SUBMIT_BATCH = int(
-        os.getenv("CHOOSER_HUMANJUDGE_SUBMIT_BATCH", "20")
-    )
+    # Verdicts each active draft of a case needs before HumanJudge's pick
+    # for the case is recorded.
     CHOOSER_HUMANJUDGE_MIN_VERDICTS = int(
         os.getenv("CHOOSER_HUMANJUDGE_MIN_VERDICTS", "1")
     )
@@ -1354,8 +1351,8 @@ class _TestBase(Dev):
     CHOOSER_JUDGE_EVIDENCE = False
     # Candidate judging is mocked and enabled per test, never read from the host.
     CHOOSER_SCORE_CANDIDATES = False
-    # Nor may a draft go to HumanJudge; a test that sends one mocks the
-    # HTTP transport and turns this on with a fake key.
+    # Nor may a draft go to HumanJudge (only staff send them, from the
+    # admin); a test that sends one mocks the transport and sets a fake key.
     CHOOSER_HUMANJUDGE = False
     HUMANJUDGE_API_KEY = ""
     HUMANJUDGE_TOKEN = ""

@@ -1,13 +1,16 @@
+import csv
 from typing import Optional
 from urllib.parse import urlsplit
 
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
+from django.core.exceptions import PermissionDenied
 from django.db import connection, transaction
 from django.db.models import Count, DateTimeField, IntegerField
 from django.db.models.expressions import RawSQL
-from django.urls import reverse
+from django.http import HttpResponse, HttpResponseNotAllowed, HttpResponseRedirect
+from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 from loguru import logger
@@ -1586,6 +1589,52 @@ class ChatTurnAdmin(admin.ModelAdmin):
         return False
 
 
+class HumanJudgeUploadedFilter(admin.SimpleListFilter):
+    """Arena cases by whether their drafts have gone to HumanJudge."""
+
+    title = "HumanJudge"
+    parameter_name = "humanjudge"
+
+    def lookups(self, request, model_admin):
+        return (("sent", "Uploaded"), ("unsent", "Not uploaded"))
+
+    def queryset(self, request, queryset):
+        sent = HumanJudgeSubmission.objects.filter(status="SENT")
+        if self.value() == "sent":
+            return queryset.filter(id__in=sent.values("task_id"))
+        if self.value() == "unsent":
+            return queryset.exclude(id__in=sent.values("task_id"))
+        return queryset
+
+
+def _humanjudge_upload(model_admin, request, task_ids) -> None:
+    """Send these Arena cases' drafts to HumanJudge and say how it went.
+    Lazy import: the module pulls in the ML router."""
+    from asgiref.sync import async_to_sync
+
+    from fighthealthinsurance import chooser_humanjudge
+
+    try:
+        result = async_to_sync(chooser_humanjudge.upload_tasks)(list(task_ids))
+    except chooser_humanjudge.HumanJudgeError as e:
+        model_admin.message_user(request, f"Nothing uploaded: {e}", messages.ERROR)
+        return
+    level = messages.WARNING if result.failed else messages.SUCCESS
+    parts = [f"Uploaded {result.sent} draft(s) to HumanJudge."]
+    if result.already_sent:
+        parts.append(f"{result.already_sent} had already gone.")
+    if result.failed:
+        parts.append(
+            f"{result.failed} failed (see HumanJudge Submissions; upload again to retry)."
+        )
+    if result.not_sendable:
+        parts.append(
+            f"{result.not_sendable} case(s) skipped: only synthetic appeal cases "
+            "that have reached voters may go."
+        )
+    model_admin.message_user(request, " ".join(parts), level)
+
+
 @admin.register(ChooserTask)
 class ChooserTaskAdmin(admin.ModelAdmin):
     """Admin configuration for ChooserTask model."""
@@ -1602,9 +1651,21 @@ class ChooserTaskAdmin(admin.ModelAdmin):
         "created_at",
     )
     search_fields = ("id", "source")
-    list_filter = ("task_type", "status", "case_version", "complexity", "created_at")
+    list_filter = (
+        "task_type",
+        "status",
+        "case_version",
+        "complexity",
+        HumanJudgeUploadedFilter,
+        "created_at",
+    )
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at", "updated_at")
+    actions = ("upload_to_humanjudge",)
+
+    @admin.action(description="Upload to HumanJudge (synthetic appeal cases only)")
+    def upload_to_humanjudge(self, request, queryset):
+        _humanjudge_upload(self, request, queryset.values_list("id", flat=True))
 
 
 @admin.register(ChooserCandidate)
@@ -1668,12 +1729,27 @@ class HumanJudgeSubmissionAdmin(admin.ModelAdmin):
     list_filter = ("status", "created_at")
     ordering = ("-created_at",)
     readonly_fields = ("id", "inference_id", "created_at", "sent_at")
+    actions = ("upload_again",)
+
+    def has_add_permission(self, request):
+        # Made by "Upload to HumanJudge" on the Chooser Task list.
+        return False
+
+    @admin.action(description="Upload again (sends their cases' unsent drafts)")
+    def upload_again(self, request, queryset):
+        _humanjudge_upload(
+            self, request, queryset.values_list("task_id", flat=True).distinct()
+        )
 
 
 @admin.register(HumanJudgeVerdict)
 class HumanJudgeVerdictAdmin(admin.ModelAdmin):
-    """HumanJudge's verdicts, kept apart from the Arena's own votes."""
+    """HumanJudge's verdicts, kept apart from the Arena's own votes. The
+    list's "Download verdicts from HumanJudge" button fetches new ones."""
 
+    change_list_template = (
+        "admin/fighthealthinsurance/humanjudgeverdict/change_list.html"
+    )
     list_display = (
         "id",
         "task",
@@ -1688,6 +1764,84 @@ class HumanJudgeVerdictAdmin(admin.ModelAdmin):
     list_filter = ("verdict", "flag_category", "voted_at")
     ordering = ("-fetched_at",)
     readonly_fields = ("id", "external_key", "raw", "fetched_at")
+    actions = ("export_csv",)
+
+    CSV_FIELDS = (
+        "task_id",
+        "candidate_id",
+        "model_name",
+        "synthesized_by",
+        "verdict",
+        "flag_category",
+        "feedback",
+        "evaluator_id",
+        "voted_at",
+    )
+
+    def has_add_permission(self, request):
+        # Verdicts come only from HumanJudge.
+        return False
+
+    def get_urls(self):
+        return [
+            path(
+                "download/",
+                self.admin_site.admin_view(self.download_view),
+                name="fighthealthinsurance_humanjudgeverdict_download",
+            ),
+        ] + super().get_urls()
+
+    def download_view(self, request):
+        """POST only: fetch HumanJudge's new verdicts, then back to the list."""
+        changelist = reverse("admin:fighthealthinsurance_humanjudgeverdict_changelist")
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance import chooser_humanjudge
+
+        try:
+            result = async_to_sync(chooser_humanjudge.download_verdicts)()
+        except chooser_humanjudge.HumanJudgeError as e:
+            self.message_user(request, f"Nothing downloaded: {e}", messages.ERROR)
+            return HttpResponseRedirect(changelist)
+        message = (
+            f"Downloaded {result.new_verdicts} new verdict(s) on {result.cases} "
+            f"case(s); {result.picks} of those cases now have a HumanJudge pick."
+        )
+        if result.unmatched:
+            message += (
+                f" {result.unmatched} vote(s) matched no draft we uploaded and "
+                "were left out."
+            )
+        self.message_user(request, message, messages.SUCCESS)
+        return HttpResponseRedirect(changelist)
+
+    @admin.action(description="Export selected verdicts as CSV")
+    def export_csv(self, request, queryset):
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = (
+            'attachment; filename="humanjudge_verdicts.csv"'
+        )
+        writer = csv.writer(response)
+        writer.writerow(self.CSV_FIELDS)
+        for verdict in queryset.select_related("candidate").order_by("task_id", "id"):
+            writer.writerow(
+                [
+                    verdict.task_id,
+                    verdict.candidate_id,
+                    verdict.candidate.model_name,
+                    verdict.candidate.synthesized_by or "",
+                    verdict.verdict,
+                    verdict.flag_category,
+                    verdict.feedback,
+                    verdict.evaluator_id,
+                    verdict.voted_at.isoformat() if verdict.voted_at else "",
+                ]
+            )
+        return response
 
 
 @admin.register(AuditLog)

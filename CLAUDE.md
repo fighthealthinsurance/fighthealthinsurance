@@ -141,7 +141,7 @@ ML backends (at least one; either kind works on its own):
 - `HEALTH_BACKEND_HOST` / `HEALTH_BACKEND_PORT` - a self-hosted backend
 
 Appeal Arena:
-- `HUMANJUDGE_API_KEY` - sends synthetic Arena appeal drafts (never real ones) to HumanJudge's human reviewers; their verdicts live in `HumanJudgeVerdict`, apart from `ChooserVote` (see docs/chooser.md)
+- `HUMANJUDGE_API_KEY` - lets staff upload synthetic Arena appeal drafts (never real ones) to HumanJudge's human reviewers from the admin; their verdicts live in `HumanJudgeVerdict`, apart from `ChooserVote` (see docs/chooser.md)
 
 Development:
 - `RECAPTCHA_TESTING=true` - Disable reCAPTCHA locally
