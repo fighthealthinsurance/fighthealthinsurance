@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0266_choosercandidate_synthesized_by"),
+        ("fighthealthinsurance", "0270_paid_review_bounties"),
     ]
 
     operations = [
