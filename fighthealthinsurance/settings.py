@@ -741,6 +741,25 @@ class Base(Configuration):
     LOGIN_REDIRECT_URL = "/"
     DEFF_FETCH_URL_NAME = "fake_fetch_url"
     STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    # Paid Arena reviews through RentAHuman (paid_reviews.py, docs/chooser.md
+    # "Paid reviewers"). The API key posts bounties and reviews submissions;
+    # the webhook secret (whsec_..., shown once when the endpoint is
+    # registered) checks the events RentAHuman sends. Both blank turns the
+    # feature's outside calls off; the join link and progress still work.
+    RENTAHUMAN_API_KEY = os.getenv("RENTAHUMAN_API_KEY", "")
+    RENTAHUMAN_API_BASE = os.getenv("RENTAHUMAN_API_BASE", "https://rentahuman.ai/api")
+    RENTAHUMAN_WEBHOOK_SECRET = os.getenv("RENTAHUMAN_WEBHOOK_SECRET", "")
+    # Where the join link in a bounty points.
+    PAID_REVIEW_SITE_ORIGIN = os.getenv(
+        "PAID_REVIEW_SITE_ORIGIN", "https://www.fighthealthinsurance.com"
+    )
+    # The floor a paid review must clear to count toward the completion
+    # code: server-timed seconds from serving the case to the vote, and the
+    # length of the one-sentence reason.
+    PAID_REVIEW_MIN_SECONDS = int(os.getenv("PAID_REVIEW_MIN_SECONDS", "60"))
+    PAID_REVIEW_MIN_RATIONALE_CHARS = int(
+        os.getenv("PAID_REVIEW_MIN_RATIONALE_CHARS", "25")
+    )
     REST_FRAMEWORK = {
         "DEFAULT_AUTHENTICATION_CLASSES": [
             "rest_framework.authentication.SessionAuthentication",
@@ -1363,6 +1382,11 @@ class _TestBase(Dev):
     # A backfill that finds the claim held gives up at once; a test that
     # wants it to wait patches the wait in.
     CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS = 0
+    # Paid reviews never reach RentAHuman from a test, whatever the host's
+    # environment holds; a test that needs a key or secret sets one.
+    RENTAHUMAN_API_KEY = ""
+    RENTAHUMAN_WEBHOOK_SECRET = ""
+    RENTAHUMAN_API_BASE = "http://127.0.0.1:1/api"
     # A model forced into the arena from the host environment would be asked
     # for real by every test that builds a task.
     CHOOSER_FORCE_MODEL = ""

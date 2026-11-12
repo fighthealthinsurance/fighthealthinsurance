@@ -54,7 +54,7 @@ from fighthealthinsurance.ml.ml_models import (
     describe_model_error,
 )
 from fighthealthinsurance.ml.ml_router import ml_router
-from fighthealthinsurance import chooser_complexity
+from fighthealthinsurance import chooser_complexity, paid_reviews
 from fighthealthinsurance.chooser_practice_areas import normalize_practice_area
 from fighthealthinsurance.chooser_review_signals import (
     MAX_POSITIONS,
@@ -2811,6 +2811,9 @@ class ChooserViewSet(viewsets.ViewSet):
             response_data["review_count"] = ChooserVote.objects.filter(
                 user=voter["user"]
             ).count()
+        paid_run = paid_reviews.session_for(request)
+        if paid_run is not None:
+            response_data["paid_review"] = paid_reviews.progress(paid_run)
         self._remember_served(request, task.id)
 
         return Response(
@@ -3120,6 +3123,9 @@ class ChooserViewSet(viewsets.ViewSet):
         user_agent = str(request.META.get("HTTP_USER_AGENT", ""))[
             : self.USER_AGENT_CHARS
         ]
+        # A worker on a paid RentAHuman run (paid_reviews.py): the vote is
+        # tagged with the run, and the answer says how far along it is.
+        paid_run = paid_reviews.session_for(request)
 
         # One vote per session, and per signed-in user, is held by the
         # database too, for two votes racing from two sessions; atomic, so a
@@ -3139,6 +3145,7 @@ class ChooserViewSet(viewsets.ViewSet):
                     expanded_candidate_ids=expanded_candidate_ids,
                     review_signals=review_signals,
                     user_agent=user_agent,
+                    paid_review=paid_run,
                     **self._network_details(request),
                     **voter,
                 )
@@ -3159,6 +3166,10 @@ class ChooserViewSet(viewsets.ViewSet):
             response_data["review_count"] = ChooserVote.objects.filter(
                 user=voter["user"]
             ).count()
+        if paid_run is not None:
+            response_data["paid_review"] = paid_reviews.progress(
+                paid_run, last_vote=vote
+            )
         return Response(
             serializers.ChooserVoteResponseSerializer(response_data).data,
             status=status.HTTP_200_OK,

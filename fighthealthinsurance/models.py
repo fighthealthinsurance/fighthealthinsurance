@@ -4907,6 +4907,15 @@ class ChooserVote(ExportModelOperationsMixin("ChooserVote"), models.Model):  # t
         related_name="+",
     )
     client_key = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    # The paid run (RentAHuman) this vote was cast in, if any, so paid votes
+    # can be told from volunteers' (see paid_reviews.py). Null for volunteers.
+    paid_review = models.ForeignKey(
+        "PaidReviewSession",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="votes",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -5109,6 +5118,86 @@ class HumanJudgeVerdict(ExportModelOperationsMixin("HumanJudgeVerdict"), models.
 
     def __str__(self):
         return f"HumanJudge {self.verdict} on Candidate {self.candidate_id}"
+
+
+class PaidReviewBounty(ExportModelOperationsMixin("PaidReviewBounty"), models.Model):  # type: ignore
+    """One batch of paid Arena reviewers, posted as a RentAHuman bounty.
+
+    Each worker opens the bounty's join link (``join_token``), judges
+    ``reviews_required`` cases that clear the quality floor, and is shown a
+    completion code to submit as their evidence (see paid_reviews.py and
+    docs/chooser.md, "Paid reviewers")."""
+
+    STATUS_CHOICES = [
+        ("draft", "Draft"),
+        ("open", "Open"),
+        ("closed", "Closed"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    # The secret in the join link. Anyone holding it can judge for the
+    # bounty, but only an accepted worker's submission gets paid.
+    join_token = models.CharField(max_length=64, unique=True)
+    # RentAHuman's id for the bounty; blank until it is posted.
+    rah_bounty_id = models.CharField(max_length=100, blank=True, default="")
+    title = models.CharField(max_length=200)
+    price_dollars = models.DecimalField(max_digits=8, decimal_places=2)
+    spots = models.PositiveIntegerField()
+    reviews_required = models.PositiveIntegerField()
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default="draft")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["rah_bounty_id"],
+                condition=~models.Q(rah_bounty_id=""),
+                name="paid_review_bounty_unique_rah_id",
+            )
+        ]
+        verbose_name = "Paid Review Bounty"
+        verbose_name_plural = "Paid Review Bounties"
+
+    def __str__(self):
+        return f"{self.title} ({self.status}, {self.rah_bounty_id or 'unposted'})"
+
+
+class PaidReviewSession(ExportModelOperationsMixin("PaidReviewSession"), models.Model):  # type: ignore
+    """One worker's run at a paid bounty: the browser session that opened
+    the join link, the votes it cast (ChooserVote.paid_review), and the
+    completion code it earned and the submission that claimed it."""
+
+    STATUS_CHOICES = [
+        ("working", "Working"),
+        ("code_issued", "Code issued"),
+        # Claimed by a submission, but RentAHuman has not taken the approval yet.
+        ("verified", "Verified"),
+        ("approved", "Approved"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    bounty = models.ForeignKey(
+        PaidReviewBounty, on_delete=models.CASCADE, related_name="sessions"
+    )
+    session_key = models.CharField(max_length=100, db_index=True)
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES, default="working")
+    completion_code = models.CharField(
+        max_length=20, null=True, blank=True, unique=True
+    )
+    code_issued_at = models.DateTimeField(null=True, blank=True)
+    # The RentAHuman submission that claimed the code: one each way.
+    rah_submission_id = models.CharField(
+        max_length=100, null=True, blank=True, unique=True
+    )
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Paid Review Session"
+        verbose_name_plural = "Paid Review Sessions"
+
+    def __str__(self):
+        return f"Paid review {self.id} for bounty {self.bounty_id} ({self.status})"
 
 
 class EvaluatorLoginThrottle(models.Model):

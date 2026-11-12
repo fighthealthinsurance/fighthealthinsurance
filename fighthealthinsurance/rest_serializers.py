@@ -949,6 +949,18 @@ class ChooserCandidateSerializer(serializers.Serializer):
     )
 
 
+class PaidReviewProgressSerializer(serializers.Serializer):
+    """A paid RentAHuman run's progress (paid_reviews.progress): reviews
+    counted of those required, the completion code once earned, and after
+    a vote, whether it counted and if not why."""
+
+    counted = serializers.IntegerField(min_value=0)
+    required = serializers.IntegerField(min_value=0)
+    completion_code = serializers.CharField(allow_blank=True)
+    last_vote_counted = serializers.BooleanField(required=False)
+    note = serializers.CharField(required=False, allow_blank=True)
+
+
 class ChooserTaskSerializer(serializers.Serializer):
     """Serializer for chooser tasks returned by next endpoints."""
 
@@ -957,6 +969,7 @@ class ChooserTaskSerializer(serializers.Serializer):
     task_context = serializers.JSONField(required=False, allow_null=True)
     candidates = ChooserCandidateSerializer(many=True)
     review_count = serializers.IntegerField(required=False, min_value=0)
+    paid_review = PaidReviewProgressSerializer(required=False)
 
 
 class ChooserNoTaskSerializer(serializers.Serializer):
@@ -1019,6 +1032,7 @@ class ChooserVoteResponseSerializer(serializers.Serializer):
     message = serializers.CharField()
     vote_id = serializers.IntegerField(required=False)
     review_count = serializers.IntegerField(required=False, min_value=0)
+    paid_review = PaidReviewProgressSerializer(required=False)
 
 
 class ChooserSkipRequestSerializer(serializers.Serializer):

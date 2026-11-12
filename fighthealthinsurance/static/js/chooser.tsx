@@ -111,13 +111,66 @@ interface ChooserTaskContext {
   history?: Array<{ role: string; content: string }>;
 }
 
+// A paid RentAHuman run's progress (paid_reviews.progress on the server):
+// only sent to a session that opened a bounty's join link.
+interface PaidReview {
+  counted: number;
+  required: number;
+  completion_code: string;
+  last_vote_counted?: boolean;
+  note?: string;
+}
+
 interface ChooserTask {
   task_id: number;
   task_type: string;
   task_context: ChooserTaskContext;
   candidates: ChooserCandidate[];
   review_count?: number;
+  paid_review?: PaidReview;
 }
+
+// The paid run's progress, and once earned, the code to paste on
+// RentAHuman. Nothing shows for a volunteer.
+const PaidReviewBanner: React.FC<{ paid: PaidReview | null }> = ({ paid }) => {
+  if (!paid) return null;
+  if (paid.completion_code) {
+    return (
+      <Alert
+        color="green"
+        variant="filled"
+        radius="md"
+        title="Paid task complete"
+        data-testid="paid-review-code"
+      >
+        <Text size="md">
+          Paste this completion code as your submission on RentAHuman:
+        </Text>
+        <Text
+          size="xl"
+          fw={700}
+          ff="monospace"
+          style={{ userSelect: "all", letterSpacing: "0.1em" }}
+        >
+          {paid.completion_code}
+        </Text>
+        <Text size="sm">
+          You are welcome to keep judging; extra rounds help but are not paid.
+        </Text>
+      </Alert>
+    );
+  }
+  return (
+    <Alert color="blue" variant="light" radius="md" data-testid="paid-review">
+      <Text size="sm">
+        Paid task: {paid.counted} of {paid.required} reviews counted. A review
+        counts when you take your time and write a one-sentence reason in the
+        &ldquo;Why&rdquo; box.
+        {paid.last_vote_counted === false && paid.note ? ` ${paid.note}` : ""}
+      </Text>
+    </Alert>
+  );
+};
 
 type TaskType = "appeal" | "chat";
 
@@ -1187,8 +1240,8 @@ const ToolCallList: React.FC<{ calls: ToolCall[] }> = ({ calls }) => {
         );
       })}
       <Text size="xs" c="dimmed">
-        This was looked up before the draft was written. Does the draft say
-        no more than was found?
+        This was looked up before the draft was written. Does the draft say no
+        more than was found?
       </Text>
     </Stack>
   );
@@ -1510,7 +1563,13 @@ const ChooserInterface: React.FC<{
   captchaSiteKey: string;
   captchaAlreadyPassed: boolean;
   initialReviewCount: number | null;
-}> = ({ captchaSiteKey, captchaAlreadyPassed, initialReviewCount }) => {
+  initialPaidReview: PaidReview | null;
+}> = ({
+  captchaSiteKey,
+  captchaAlreadyPassed,
+  initialReviewCount,
+  initialPaidReview,
+}) => {
   const [state, setState] = useState<ChooserState>({
     mode: "selection",
     task: null,
@@ -1612,6 +1671,9 @@ const ChooserInterface: React.FC<{
   });
   const [reviewCount, setReviewCount] = useState<number | null>(
     initialReviewCount,
+  );
+  const [paidReview, setPaidReview] = useState<PaidReview | null>(
+    initialPaidReview,
   );
   const [lastRoundFouls, setLastRoundFouls] = useState(0);
   const [lastRoundTie, setLastRoundTie] = useState(false);
@@ -1837,6 +1899,7 @@ const ChooserInterface: React.FC<{
         const task: ChooserTask = await response.json();
         if (stale()) return;
         if (task.review_count !== undefined) setReviewCount(task.review_count);
+        if (task.paid_review) setPaidReview(task.paid_review);
         resetReviewTracking();
         setState((prev) => ({
           ...prev,
@@ -1928,9 +1991,13 @@ const ChooserInterface: React.FC<{
           throw new Error(errorData.error || "Failed to submit vote");
         }
 
-        const result = (await response.json()) as { review_count?: number };
+        const result = (await response.json()) as {
+          review_count?: number;
+          paid_review?: PaidReview;
+        };
         if (result.review_count !== undefined)
           setReviewCount(result.review_count);
+        if (result.paid_review) setPaidReview(result.paid_review);
         const next = {
           rounds: scoreboard.rounds + 1,
           fouls: scoreboard.fouls + fouls,
@@ -2145,6 +2212,7 @@ const ChooserInterface: React.FC<{
               Your account: {plural(reviewCount, "review")}
             </Badge>
           )}
+          <PaidReviewBanner paid={paidReview} />
           {scoreboard.rounds > 0 && (
             <Text size="sm" c="dimmed">
               In this browser: {plural(scoreboard.rounds, "round")} judged
@@ -2387,6 +2455,7 @@ const ChooserInterface: React.FC<{
               ? ` · ${plural(reviewCount, "review")} across your account`
               : ""}
           </Text>
+          <PaidReviewBanner paid={paidReview} />
           <Alert
             color="lime"
             variant="light"
@@ -2538,6 +2607,7 @@ const ChooserInterface: React.FC<{
                 : "Which chat reply wins?"}
             </Title>
           </Group>
+          <PaidReviewBanner paid={paidReview} />
 
           <Text size="xs" ta="center" c="dimmed">
             📋 Synthetic case for training purposes only. Drafts are shown
@@ -2698,6 +2768,7 @@ const App: React.FC = () => {
             captchaSiteKey={captchaSiteKey}
             captchaAlreadyPassed={captchaAlreadyPassed}
             initialReviewCount={initialReviewCount}
+            initialPaidReview={initialPaidReview}
           />
         </Box>
       </ErrorBoundary>
@@ -2713,6 +2784,15 @@ const initialReviewCount =
   container?.dataset.reviewCount === undefined
     ? null
     : Number(container.dataset.reviewCount);
+// Seeded by the page for a session on a paid RentAHuman run.
+const initialPaidReview: PaidReview | null =
+  container?.dataset.paidRequired === undefined
+    ? null
+    : {
+        counted: Number(container.dataset.paidCounted ?? 0),
+        required: Number(container.dataset.paidRequired),
+        completion_code: container.dataset.paidCode ?? "",
+      };
 if (container) {
   const root = createRoot(container);
   root.render(<App />);
