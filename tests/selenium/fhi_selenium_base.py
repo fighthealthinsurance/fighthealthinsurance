@@ -1,3 +1,4 @@
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -126,6 +127,32 @@ class FHISeleniumBase(BaseCase, TestCase):
                 )
                 is not None
             )
+
+    def hover_when_still(self, selector, timeout=15):
+        """Hover over an element once the page has stopped scrolling to it.
+
+        custom.css gives html smooth scrolling, so BaseCase.hover's scroll is
+        an animation it waits only 50ms for: the pointer goes down at where
+        the element was, the page keeps moving, and it rests over a
+        neighbour, which gets the mouseover. Wait until the element's
+        position holds between two polls, then move the pointer onto it.
+        """
+        self.scroll_to(selector)
+        tops = []
+
+        def still(d):
+            tops.append(
+                d.execute_script(
+                    "return document.querySelector(arguments[0]).getBoundingClientRect().top",
+                    selector,
+                )
+            )
+            return len(tops) > 1 and tops[-1] == tops[-2]
+
+        WebDriverWait(self.driver, timeout, poll_frequency=0.1).until(still)
+        ActionChains(self.driver).move_to_element(
+            self.find_element(selector)
+        ).perform()
 
     def wait_for_clickable(self, selector, timeout=15):
         """Wait for element to be clickable."""
