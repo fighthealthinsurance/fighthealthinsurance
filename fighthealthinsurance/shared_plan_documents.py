@@ -355,14 +355,35 @@ def _require_bucket_copy(doc: PolicyDocument) -> None:
 
     name = doc.document_enc.name
     if not bucket_backends():
-        # A setup with no object store would refuse every share on the site;
-        # it saves as before, and says so loudly.
+        if _object_store_configured():
+            # Configured, but its client failed at startup: the file would
+            # be on pod disks only.
+            logger.error(
+                f"The object store is configured but not running; shared file "
+                f"{doc.pk} not saved"
+            )
+            raise NoBucketCopy()
+        # A setup with no object store at all would refuse every share on
+        # the site; it saves as before, and says so loudly.
         logger.error(f"No object store is configured; shared file {doc.pk} kept anyway")
         return
     if not has_bucket_copy(name):
         logger.error(f"Shared file {doc.pk} has no bucket copy; not saved")
         _remove_bucket_copies(name)
         raise NoBucketCopy()
+
+
+def _object_store_configured() -> bool:
+    # The settings Prod builds its object store from (EXTERNAL_STORAGE_B).
+    return all(
+        getattr(settings, key, None)
+        for key in (
+            "MINIO_STORAGE_ENDPOINT",
+            "MINIO_STORAGE_ACCESS_KEY",
+            "MINIO_STORAGE_SECRET_KEY",
+            "MINIO_STORAGE_MEDIA_BUCKET_NAME",
+        )
+    )
 
 
 def _remove_bucket_copies(name: str) -> None:

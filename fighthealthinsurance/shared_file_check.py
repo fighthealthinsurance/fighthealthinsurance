@@ -102,8 +102,9 @@ def check_shared_files() -> dict[str, int]:
     for pk, name, stored_size in _files_to_check().iterator(chunk_size=200):
         left = MAX_SECONDS - (time.monotonic() - started)
         if checked >= MAX_FILES or left <= 0:
-            counts[Day.FILE_CHECK_NOT_CHECKED] += 1
-            continue
+            # The rest are counted once, not read row by row.
+            counts[Day.FILE_CHECK_NOT_CHECKED] = _files_to_check().count() - checked
+            break
         checked += 1
         if not backends:
             counts[Day.FILE_CHECK_UNKNOWN] += 1
