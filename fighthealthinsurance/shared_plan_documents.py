@@ -688,6 +688,13 @@ def share_opt_in_copies(
             logger.info(f"Left opted-in files from {source} unshared: over budget")
             note_dropped(SharedPlanDocumentsDay.DROPPED_OVER_BUDGET, pending)
             return []
+        from fighthealthinsurance.shared_copy_retries import (
+            hold_for_retry,
+            origins_for,
+        )
+
+        # Found before the save: a failed save can close the uploads.
+        origins = origins_for(passing, origin_of) if origin_of is not None else []
         try:
             saved = save_shared_documents(
                 passing,
@@ -699,19 +706,11 @@ def share_opt_in_copies(
         except OverDailyBudget:
             raise
         except Exception as e:
-            from fighthealthinsurance.shared_copy_retries import hold_for_retry
-
             logger.error(
                 f"Failed to save opted-in shared copies from {source}: "
                 f"{type(e).__name__}"
             )
-            held = (
-                hold_for_retry(
-                    passing, origin_of, source=source, hashed_email=hashed_email
-                )
-                if origin_of is not None
-                else 0
-            )
+            held = hold_for_retry(origins, source=source, hashed_email=hashed_email)
             note_dropped(SharedPlanDocumentsDay.DROPPED_NOT_SAVED, pending - held)
             return []
         note_shared(request, passing)

@@ -172,6 +172,66 @@ class AnExplainPolicyCopyIsMadeAgainTest(_ExplainPolicy):
         self.assertFalse(SharedCopyRetry.objects.exists())
         self.assertEqual(dropped(Day.DROPPED_REFUSED), 1)
 
+    def test_every_expired_copy_goes_whatever_the_runs_limit(self):
+        own = self.fail_first_try()
+        old = timezone.now() - shared_copy_retries.RETRY_LIFETIME
+        for _ in range(shared_copy_retries.MAX_RETRIES_PER_RUN + 2):
+            SharedCopyRetry.objects.create(
+                source=PolicyDocument.SOURCE_SHARED_EXPLAIN,
+                origin_policy_document=own,
+                consent_version=consent.SHARING_VERSION,
+                next_try_at=timezone.now() + datetime.timedelta(days=1),
+            )
+        SharedCopyRetry.objects.update(created_at=old - datetime.timedelta(minutes=1))
+        shared_copy_retries.retry_due_copies()
+        self.assertFalse(SharedCopyRetry.objects.exists())
+
+    def test_a_removal_during_the_retry_stops_the_copy(self):
+        self.fail_first_try()
+        from fighthealthinsurance.ml import ml_document_extraction
+
+        real = ml_document_extraction.read_and_decrypt_file
+
+        def removed_while_reading(field, max_bytes=None):
+            content = real(field, max_bytes=max_bytes)
+            shared_plan_documents.remove_shared_documents(
+                Denial.get_hashed_email(EMAIL)
+            )
+            return content
+
+        with patch.object(
+            ml_document_extraction, "read_and_decrypt_file", removed_while_reading
+        ):
+            outcome = due_now()
+        self.assertEqual(outcome[shared_copy_retries.GONE], 1)
+        self.assertFalse(self.copies().exists())
+
+    def test_a_copy_and_its_retrys_end_commit_together(self):
+        self.fail_first_try()
+        with patch.object(
+            SharedCopyRetry, "delete", side_effect=RuntimeError("db went away")
+        ), patch.object(shared_copy_retries.logger, "warning"):
+            due_now()
+        self.assertFalse(self.copies().exists())
+        self.assertEqual(SharedCopyRetry.objects.get().attempts, 1)
+
+    def test_a_page_copy_marked_spam_is_never_made_again(self):
+        own = self.fail_first_try()
+        PolicyDocument.objects.filter(pk=own.pk).update(
+            processing_status=PolicyDocument.PROCESSING_SPAM
+        )
+        due_now()
+        self.assertFalse(self.copies().exists())
+        self.assertFalse(SharedCopyRetry.objects.exists())
+
+    def test_a_file_whose_copy_staff_marked_spam_is_not_made_again(self):
+        self.fail_first_try()
+        self.upload()
+        self.copies().update(processing_status=PolicyDocument.PROCESSING_SPAM)
+        due_now()
+        self.assertEqual(self.copies().count(), 1)
+        self.assertEqual(dropped(Day.DROPPED_REFUSED), 1)
+
     def test_staff_can_count_the_copies_waiting(self):
         self.fail_first_try()
         self.assertEqual(shared_copy_retries.copies_waiting(), 1)
@@ -262,6 +322,19 @@ class AnAppealCopyIsMadeAgainTest(_UploadsTestCase):
     def test_it_points_at_the_appeals_own_file_and_the_appeal_goes_on(self):
         response = self.fail_first_try()
         self.assertTemplateUsed(response, "entity_extract.html")
+        own = PlanDocuments.objects.get(denial=self.denial)
+        self.assertEqual(SharedCopyRetry.objects.get().origin_plan_document_id, own.pk)
+
+    def test_a_save_that_closes_the_upload_still_holds_the_copy(self):
+        def closes_then_fails(files, **kwargs):
+            for uploaded in files:
+                uploaded.close()
+            raise RuntimeError("storage went away")
+
+        with patch.object(
+            shared_plan_documents, "save_shared_documents", side_effect=closes_then_fails
+        ), patch.object(shared_plan_documents.logger, "error"):
+            self.post()
         own = PlanDocuments.objects.get(denial=self.denial)
         self.assertEqual(SharedCopyRetry.objects.get().origin_plan_document_id, own.pk)
 

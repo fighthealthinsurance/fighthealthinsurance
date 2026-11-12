@@ -33,7 +33,7 @@ import os
 from typing import Any, Callable, Optional, Sequence
 
 from django.core.files.uploadedfile import SimpleUploadedFile, UploadedFile
-from django.db.models import Q
+from django.db import transaction
 from django.utils import timezone
 from loguru import logger
 
@@ -56,26 +56,37 @@ SAVED = "saved"
 ALREADY_SHARED = "already_shared"
 WAITING = "waiting"
 DROPPED = "dropped"
+GONE = "gone"
+
+
+def origins_for(
+    files: Sequence[UploadedFile], origin_of: Callable[[UploadedFile], Any]
+) -> list[Any]:
+    """Each file's own row on the page it came from, or None, found before
+    the save is tried: a failed save can close the upload. Never raises."""
+    found: list[Any] = []
+    for uploaded in files:
+        try:
+            found.append(origin_of(uploaded))
+        except Exception as e:
+            logger.warning(f"Could not find a shared copy's origin: {type(e).__name__}")
+            found.append(None)
+    return found
 
 
 def hold_for_retry(
-    files: Sequence[UploadedFile],
-    origin_of: Callable[[UploadedFile], Any],
-    *,
-    source: str,
-    hashed_email: Optional[str],
+    origins: Sequence[Any], *, source: str, hashed_email: Optional[str]
 ) -> int:
-    """Hold each of ``files`` with an origin row to be made again later.
-    Returns how many were held. Never raises: the page the copies came from
-    has already done what it was for."""
+    """Hold a copy for each origin row to be made again later. Returns how
+    many were held. Never raises: the page the copies came from has already
+    done what it was for."""
     from fighthealthinsurance import consent
 
     held = 0
-    for uploaded in files:
+    for origin in origins:
+        if origin is None:
+            continue
         try:
-            origin = origin_of(uploaded)
-            if origin is None:
-                continue
             SharedCopyRetry.objects.create(
                 source=source,
                 origin_policy_document=(
@@ -122,12 +133,15 @@ def _failed(row: SharedCopyRetry, reason: str) -> str:
 
 def _origin_file(row: SharedCopyRetry) -> tuple[Any, Any]:
     """(the origin row, its stored file field), or (None, None) when the
-    origin has no file to copy any more."""
+    origin has no file to copy any more, or staff marked it potential spam."""
     origin: Any = row.origin_policy_document or row.origin_plan_document
     if origin is None:
         return None, None
     if isinstance(origin, PolicyDocument):
-        if origin.processing_status == PolicyDocument.PROCESSING_REMOVED:
+        if origin.processing_status in (
+            PolicyDocument.PROCESSING_REMOVED,
+            PolicyDocument.PROCESSING_SPAM,
+        ):
             return None, None
         field = origin.document_enc
     else:
@@ -144,6 +158,15 @@ def _details(origin: Any) -> tuple[dict[str, Any], str]:
     return details_from_denial(origin.denial), "other"
 
 
+def _marked_spam(digest: str) -> bool:
+    # A copy of this file staff marked as potential spam is never made again.
+    return PolicyDocument.objects.filter(
+        source__in=PolicyDocument.SHARED_FILE_SOURCES,
+        fingerprint=digest,
+        processing_status=PolicyDocument.PROCESSING_SPAM,
+    ).exists()
+
+
 def _retry_one(row: SharedCopyRetry) -> str:
     from django.core.exceptions import ValidationError
 
@@ -157,9 +180,6 @@ def _retry_one(row: SharedCopyRetry) -> str:
     )
     from fighthealthinsurance.upload_limits import MAX_STORED_POLICY_DOCUMENT_BYTES
 
-    now = timezone.now()
-    if row.created_at <= now - RETRY_LIFETIME:
-        return _drop(row, SharedPlanDocumentsDay.DROPPED_NOT_SAVED)
     origin, field = _origin_file(row)
     if origin is None:
         return _drop(row, SharedPlanDocumentsDay.DROPPED_ORIGIN_GONE)
@@ -172,43 +192,77 @@ def _retry_one(row: SharedCopyRetry) -> str:
         validate_shared_document(uploaded)
     except ValidationError:
         return _drop(row, SharedPlanDocumentsDay.DROPPED_REFUSED)
-    if row.source == PolicyDocument.SOURCE_SHARED_APPEAL and fingerprint(
-        uploaded
-    ) in _shared_from_appeal(row.hashed_email):
+    digest = fingerprint(uploaded)
+    if _marked_spam(digest):
+        return _drop(row, SharedPlanDocumentsDay.DROPPED_REFUSED)
+    if (
+        row.source == PolicyDocument.SOURCE_SHARED_APPEAL
+        and digest in _shared_from_appeal(row.hashed_email)
+    ):
         row.delete()
         return ALREADY_SHARED
     details, document_type = _details(origin)
+    saved: list[PolicyDocument] = []
     try:
-        save_shared_documents(
-            [uploaded],
-            source=row.source,
-            details=details,
-            hashed_email=row.hashed_email,
-            document_type=document_type,
-            consent_version=row.consent_version,
-        )
+        # The last look and the save hold the row: a removal or the origin's
+        # deletion waits for them, then removes the copy too; and the copy
+        # and the row's end commit together, so a copy is never made twice.
+        with transaction.atomic():
+            held = SharedCopyRetry.objects.select_for_update().filter(pk=row.pk).first()
+            if held is None:
+                return GONE
+            if _origin_file(held)[0] is None:
+                return _drop(held, SharedPlanDocumentsDay.DROPPED_ORIGIN_GONE)
+            saved = save_shared_documents(
+                [uploaded],
+                source=held.source,
+                details=details,
+                hashed_email=held.hashed_email,
+                document_type=document_type,
+                consent_version=held.consent_version,
+            )
+            held.delete()
     except OverDailyBudget:
         # A full day waits for the next one; it spends no attempt.
-        tomorrow = (now + datetime.timedelta(days=1)).date()
+        tomorrow = (timezone.now() + datetime.timedelta(days=1)).date()
         row.next_try_at = datetime.datetime.combine(
             tomorrow, datetime.time.min, tzinfo=datetime.timezone.utc
         )
         row.save(update_fields=["next_try_at"])
         return WAITING
     except Exception as e:
+        # The rows rolled back; a copy's file written before would not.
+        for doc in saved:
+            try:
+                doc.document_enc.delete(save=False)
+            except Exception:
+                logger.warning("Could not delete a retried copy's file")
         return _failed(row, type(e).__name__)
-    row.delete()
     return SAVED
 
 
+def _drop_expired(now: datetime.datetime) -> int:
+    """Drop every copy past RETRY_LIFETIME, whatever the run's limit."""
+    from fighthealthinsurance.shared_plan_documents import note_dropped
+
+    expired = SharedCopyRetry.objects.filter(created_at__lte=now - RETRY_LIFETIME)
+    count, _ = expired.delete()
+    if count:
+        note_dropped(SharedPlanDocumentsDay.DROPPED_NOT_SAVED, count)
+        logger.info(f"Shared copies past their lifetime dropped: {count}")
+    return count
+
+
 def retry_due_copies(limit: int = MAX_RETRIES_PER_RUN) -> dict[str, int]:
-    """Make again up to ``limit`` copies that are due, and drop any past
-    RETRY_LIFETIME. Returns counts by outcome. Never raises for one copy."""
+    """Drop every copy past RETRY_LIFETIME, then make again up to ``limit``
+    copies that are due. Returns counts by outcome. Never raises for one
+    copy."""
     now = timezone.now()
-    counts = {SAVED: 0, ALREADY_SHARED: 0, WAITING: 0, DROPPED: 0}
-    due = SharedCopyRetry.objects.filter(
-        Q(next_try_at__lte=now) | Q(created_at__lte=now - RETRY_LIFETIME)
-    ).order_by("next_try_at", "id")[:limit]
+    counts = {SAVED: 0, ALREADY_SHARED: 0, WAITING: 0, DROPPED: 0, GONE: 0}
+    counts[DROPPED] += _drop_expired(now)
+    due = SharedCopyRetry.objects.filter(next_try_at__lte=now).order_by(
+        "next_try_at", "id"
+    )[:limit]
     for row in list(due):
         try:
             outcome = _retry_one(row)
