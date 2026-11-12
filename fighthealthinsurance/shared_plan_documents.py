@@ -219,6 +219,8 @@ _BUDGET_NAMES = (
     SharedPlanDocumentsDay.STAFF_SUMMARY_TRIES,
     SharedPlanDocumentsDay.FILE_CHECK,
     *SharedPlanDocumentsDay.FILE_CHECK_COUNTS,
+    SharedPlanDocumentsDay.NO_BUCKET_SHARE_PAGE,
+    SharedPlanDocumentsDay.NO_BUCKET_OPT_IN,
 )
 
 
@@ -368,7 +370,7 @@ def _remove_bucket_copies(name: str) -> None:
 
     for backend in bucket_backends():
         try:
-            with Timeout(5.0):
+            with Timeout(2.0):
                 backend.delete(name)
         except Exception as e:
             logger.warning(f"Could not remove a bucket copy: {type(e).__name__}")
@@ -479,7 +481,17 @@ def save_shared_documents(
                 from fighthealthinsurance.plan_sponsors import link_typed_employer
 
                 link_typed_employer([doc.pk for doc in saved], typed_employer)
-    except Exception:
+    except Exception as e:
+        if isinstance(e, NoBucketCopy):
+            # Counted here, outside the rolled-back transaction.
+            note_count(
+                (
+                    SharedPlanDocumentsDay.NO_BUCKET_SHARE_PAGE
+                    if source == PolicyDocument.SOURCE_SHARED
+                    else SharedPlanDocumentsDay.NO_BUCKET_OPT_IN
+                ),
+                len(files),
+            )
         if day is not None:
             give_back(budget, len(files), day)
         if links_day is not None:
@@ -531,16 +543,22 @@ def note_dropped(reason: str, files: int) -> None:
     """Count ``files`` opted-in copies left out today for ``reason`` (one of
     SharedPlanDocumentsDay.DROPPED), for the staff summary. Counts only, no
     file or person. Never raises."""
+    note_count(reason, files)
+
+
+def note_count(name: str, files: int) -> None:
+    """Add ``files`` to today's ``name`` count (a SharedPlanDocumentsDay
+    name kept through the prune). Counts only. Never raises."""
     if files <= 0:
         return
     try:
         day = timezone.now().date()
-        SharedPlanDocumentsDay.objects.get_or_create(day=day, name=reason)
-        SharedPlanDocumentsDay.objects.filter(day=day, name=reason).update(
+        SharedPlanDocumentsDay.objects.get_or_create(day=day, name=name)
+        SharedPlanDocumentsDay.objects.filter(day=day, name=name).update(
             count=F("count") + files
         )
     except Exception:
-        logger.opt(exception=True).warning("Could not count dropped shared copies")
+        logger.opt(exception=True).warning("Could not count shared copies")
 
 
 def _new_copies(

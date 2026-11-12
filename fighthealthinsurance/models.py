@@ -5665,6 +5665,11 @@ class SharedPlanDocumentsDay(models.Model):
     # it goes once a day; and how many times the day has tried to send it.
     STAFF_SUMMARY = "staff_summary"
     STAFF_SUMMARY_TRIES = "staff_summary_tries"
+    # Shared files refused because the object store did not hold them
+    # (SHARED_FILES_NEED_BUCKET_COPY): from the share page, and copies from
+    # another page's tick. Counts only, for the staff summary.
+    NO_BUCKET_SHARE_PAGE = "no_bucket_share_page"
+    NO_BUCKET_OPT_IN = "no_bucket_opt_in"
     # The nightly file check (shared_file_check): 1 once the day's check has
     # run, and what it found in the bucket, file by file. Counts only.
     FILE_CHECK = "file_check"

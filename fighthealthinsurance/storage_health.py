@@ -294,7 +294,7 @@ def has_bucket_copy(name: str, storage: Optional[CombinedStorage] = None) -> boo
     for backend in bucket_backends(storage):
         try:
             found, _ = _probe(
-                backend, EXISTS_TIMEOUT_S, lambda: _has_copy(backend, name)
+                backend, EXISTS_TIMEOUT_S, functools.partial(_has_copy, backend, name)
             )
         except Exception as e:
             logger.warning(

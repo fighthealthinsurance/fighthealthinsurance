@@ -132,6 +132,47 @@ class ASharedFileNeedsABucketCopyTest(_BucketTest):
         self.assertFalse(any(self.bucket.exists(name) for name in written))
 
     @override_settings(SHARED_FILES_NEED_BUCKET_COPY=True)
+    def test_a_failed_save_never_removes_another_rows_copy(self):
+        # The same file under the same name, shared again: a new stored name.
+        (kept,) = self.share(PLAN_TEXT.encode())
+        with patch.object(self.bucket, "exists", return_value=False), patch(
+            "fighthealthinsurance.shared_plan_documents.logger.error"
+        ):
+            with self.assertRaises(NoBucketCopy):
+                self.share(PLAN_TEXT.encode())
+        self.assertTrue(self.bucket.exists(kept.document_enc.name))
+
+    @override_settings(SHARED_FILES_NEED_BUCKET_COPY=True)
+    def test_a_refused_share_page_save_is_counted_for_the_day(self):
+        with patch.object(self.bucket, "exists", return_value=False), patch(
+            "fighthealthinsurance.shared_plan_documents.logger.error"
+        ):
+            with self.assertRaises(NoBucketCopy):
+                self.share(PLAN_TEXT.encode(), PLAN_TEXT.encode() + b" ")
+        today = timezone.now().date()
+        self.assertEqual(
+            Day.objects.get(day=today, name=Day.NO_BUCKET_SHARE_PAGE).count, 2
+        )
+
+    @override_settings(SHARED_FILES_NEED_BUCKET_COPY=True)
+    def test_a_refused_opted_in_copy_is_counted_apart(self):
+        with patch.object(self.bucket, "exists", return_value=False), patch(
+            "fighthealthinsurance.shared_plan_documents.logger.error"
+        ):
+            with self.assertRaises(NoBucketCopy):
+                save_shared_documents(
+                    [SimpleUploadedFile("plan.txt", PLAN_TEXT.encode())],
+                    source=PolicyDocument.SOURCE_SHARED_APPEAL,
+                    details={},
+                    hashed_email=Denial.get_hashed_email(EMAIL),
+                )
+        today = timezone.now().date()
+        self.assertEqual(Day.objects.get(day=today, name=Day.NO_BUCKET_OPT_IN).count, 1)
+        self.assertFalse(
+            Day.objects.filter(day=today, name=Day.NO_BUCKET_SHARE_PAGE).exists()
+        )
+
+    @override_settings(SHARED_FILES_NEED_BUCKET_COPY=True)
     def test_a_bucket_that_cannot_answer_counts_as_no_copy(self):
         with patch.object(self.bucket, "exists", side_effect=OSError("down")), patch(
             "fighthealthinsurance.shared_plan_documents.logger.error"
@@ -251,7 +292,12 @@ class TheNightlyFileCheckTest(_BucketTest):
         from fighthealthinsurance.shared_plan_documents import _drop_past_address_rows
 
         yesterday = timezone.now().date() - datetime.timedelta(days=1)
-        names = (Day.FILE_CHECK, *Day.FILE_CHECK_COUNTS)
+        names = (
+            Day.FILE_CHECK,
+            *Day.FILE_CHECK_COUNTS,
+            Day.NO_BUCKET_SHARE_PAGE,
+            Day.NO_BUCKET_OPT_IN,
+        )
         for name in names:
             Day.objects.create(day=yesterday, name=name, count=1)
         _drop_past_address_rows(timezone.now().date())
