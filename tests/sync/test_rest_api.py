@@ -306,6 +306,7 @@ class DenialEndToEnd(APITestCase):
             "visible",
             "required",
             "help_text",
+            "why_we_ask",
             "initial",
             "type",
         ]
