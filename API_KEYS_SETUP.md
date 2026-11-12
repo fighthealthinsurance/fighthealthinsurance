@@ -20,6 +20,7 @@ the rest of the app keeps working.
 | `NCBI_API_KEY` | NCBI / PubMed | Optional | Higher PubMed rate limits (3 to 10 requests per second) |
 | none | RxNav / RxNorm | No key needed | Drug-name normalization (brand and generic names, misspellings) |
 | `LOG_ANALYTICS_WORKSPACE_ID`, `LOG_ANALYTICS_WORKSPACE_KEY` | Azure Log Analytics | Optional | Ship app logs to a Log Analytics workspace |
+| `HUMANJUDGE_API_KEY`, `HUMANJUDGE_TOKEN`, `HUMANJUDGE_MODEL_ID` | HumanJudge | Optional | Outside human review of Appeal Arena drafts, from the admin |
 | See [docs/ml-backends.md](docs/ml-backends.md) | Model backends | At least one | Appeal generation |
 
 ## Setting the variables
@@ -227,6 +228,65 @@ export LOG_ANALYTICS_LOG_TYPE="FightHealthInsurance"
   added, and no network calls are made.
 - Shipping errors are swallowed so logging can't break a request. Records are
   dropped if the in-memory send queue is full.
+
+---
+
+## HumanJudge (`HUMANJUDGE_API_KEY` / `_TOKEN` / `_MODEL_ID`)
+
+Optional: lets staff send the Appeal Arena's synthetic appeal drafts to
+[HumanJudge](https://humanjudge.com), whose reviewers (people, blind to the
+model) pass or flag each one, and download their verdicts. Only synthetic
+Arena drafts can be sent; real denials and appeals never are. How it works:
+[docs/chooser.md](docs/chooser.md), "HumanJudge, an outside human judge".
+
+### Sign up
+
+1. Sign up as a developer at <https://humanjudge.com/auth?role=builder>
+   (free during their beta).
+2. In the developer hub, create one model for the Arena, standalone: not
+   enrolled in any of their public benchmarks. Copy its API key, which
+   starts with `gj_sk_`. That is `HUMANJUDGE_API_KEY`; it sends the drafts
+   and can read their verdicts.
+3. Optional: on <https://humanjudge.com/profile>, create a personal access
+   token (starts with `gj_pat_`). That is `HUMANJUDGE_TOKEN`; when set, it is
+   used to read verdicts instead of the model key. Set it if downloading
+   verdicts fails with an access error.
+4. Only if the account has more than one model: the Arena model's id (a
+   UUID, shown in the developer hub) is `HUMANJUDGE_MODEL_ID`. With one
+   model, the app finds it.
+
+### Configure
+
+```bash
+export HUMANJUDGE_API_KEY="gj_sk_live_your-key"
+# Optional, see above.
+export HUMANJUDGE_TOKEN="gj_pat_your-token"
+export HUMANJUDGE_MODEL_ID="00000000-0000-0000-0000-000000000000"
+# Optional: CHOOSER_HUMANJUDGE=false turns it off with the key in place.
+```
+
+In production, add the keys to the shared `fight-health-insurance-secret`
+Secret (namespace `totallylegitco`), for example:
+
+```bash
+kubectl -n totallylegitco patch secret fight-health-insurance-secret \
+  --type merge -p '{"stringData":{"HUMANJUDGE_API_KEY":"gj_sk_live_your-key"}}'
+```
+
+then restart the web pods (the admin runs there): they read the Secret only
+when they start. The Ray pods do not need it.
+
+### Behavior
+
+- **With the key set:** the Chooser Task list's **Upload to HumanJudge**
+  action sends the selected cases' drafts, and the HumanJudge Verdict
+  list's **Download verdicts from HumanJudge** button fetches the new
+  verdicts. Nothing is sent or fetched on its own.
+- **Without it:** both say HumanJudge is not configured, and nothing is
+  sent anywhere.
+- To check the setup, upload one case, then download. A message that votes
+  "matched no draft we uploaded" means verdicts are arriving but cannot be
+  tied to drafts; report it, as the vote format is not fully documented.
 
 ---
 
