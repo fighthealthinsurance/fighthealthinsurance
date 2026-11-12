@@ -95,6 +95,14 @@ class EmployerAndInsurerShowTest(_ShareTestCase):
 
 
 class ATypedEmployerTest(_ShareTestCase):
+    def setUp(self):
+        super().setUp()
+        # The goal's count is cached for every visitor; start each test fresh.
+        from django.core.cache import cache
+
+        cache.clear()
+        self.addCleanup(cache.clear)
+
     def test_it_links_a_company_already_on_the_list_as_the_persons(self):
         crumpler = company("Crumpler Cooperative")
         self.share(

@@ -309,8 +309,12 @@ the page.
             <p id="sharing-terms">{{ sharing_terms }}</p>
             <div class="fhi-accordion">
                 <details class="fhi-accordion-item" id="what-happens">
-                    <summary><span class="fhi-accordion-question">More about how we use what you share</span></summary>
+                    <summary><span class="fhi-accordion-question">{{ sharing_terms_fold }}</span></summary>
                     <div class="fhi-accordion-body">
+                        <ul id="sharing-terms-more">
+                            {% for point in sharing_terms_more %}<li>{{ point }}</li>
+                            {% endfor %}
+                        </ul>
                         <ul id="sharing-details">
                             {% for point in sharing_details %}<li>{{ point }}</li>
                             {% endfor %}

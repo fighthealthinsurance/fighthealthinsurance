@@ -25,10 +25,13 @@ from fighthealthinsurance.chat_forms import SharePlanDocumentsForm
 
 TEMPLATES = Path(__file__).resolve().parents[2] / "fighthealthinsurance" / "templates"
 
-# The core terms beside the box, as the page words them.
+# The one line beside the box, and the rest of the terms, folded.
+SHARING_LINE = (
+    "We keep what you share and use it, with other people's documents, to "
+    "publish what we learn about plans."
+)
 SHARING_POINTS = [
-    "We keep what you share, including what you tell us about the plan, and use "
-    "it with other people's documents to publish what we learn about plans.",
+    "That includes what you tell us about the plan.",
     "Our team and AI models, including outside services, read your files.",
     "We keep everything as long as we can.",
 ]
@@ -54,7 +57,7 @@ SHARING_WORDS_SHA256 = {
     # From here the share page's folded details are part of the words.
     "2026-10-28": "4bd9edc25d22114e3057439d8d3e931f8fb52cd281610589388a8948a726d273",
     # From here the share page's email box and its fold are part of the words.
-    "2026-11-11": "49c597a7138392ed26b75668754e611f1bbbe6c2fd451e95a9fc006b94d9b12d",
+    "2026-11-11": "51ce9d546419959c001f964776e0c350ed27e454cda3901fbbea9e3f3f49ab66",
 }
 
 EM_DASH = "\u2014"
@@ -89,11 +92,9 @@ class SharePlanDocumentsPageTest(TestCase):
         self.assertEqual(agree["type"], "checkbox")
         self.assertTrue(agree.has_attr("required"))
 
-    def test_the_core_terms_show_beside_the_box(self):
+    def test_one_line_of_the_terms_shows_beside_the_box(self):
         terms = self.soup.find(id="sharing-terms")
-        for point in SHARING_POINTS:
-            with self.subTest(point=point):
-                self.assertIn(point, terms.get_text(" ", strip=True))
+        self.assertEqual(terms.get_text(" ", strip=True), SHARING_LINE)
         self.assertIsNone(terms.find_parent("details"))
         box = self.soup.find("input", attrs={"name": "agree"})
         self.assertIs(box.find_previous(id="sharing-terms"), terms)
@@ -104,18 +105,34 @@ class SharePlanDocumentsPageTest(TestCase):
         fold = self.soup.find("details", id="what-happens")
         self.assertFalse(fold.has_attr("open"))
         self.assertEqual(
-            fold.find("summary").get_text(strip=True),
-            "More about how we use what you share",
+            fold.find("summary").get_text(strip=True), "What sharing means"
         )
         self.assertEqual(
             [li.get_text(" ", strip=True) for li in fold.find_all("li")],
-            SHARING_DETAIL_POINTS,
+            SHARING_POINTS + SHARING_DETAIL_POINTS,
         )
         self.assertEqual(list(consent.SHARING_DETAILS), SHARING_DETAIL_POINTS)
         terms = self.soup.find(id="sharing-terms")
         box = self.soup.find("input", attrs={"name": "agree"})
         self.assertIs(terms.find_next("details"), fold)
         self.assertIs(fold.find_next("input", attrs={"name": "agree"}), box)
+
+    def test_every_sentence_of_the_terms_is_on_the_page(self):
+        page = self.soup.find(id="sharing-agreement").get_text(" ", strip=True)
+        for sentence in re.split(r"(?<=\.) ", consent.SHARING_TERMS):
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, page)
+        for words in (
+            "Our team and AI models, including outside services, read your files.",
+            "We keep everything as long as we can.",
+        ):
+            self.assertIn(words, consent.SHARING_TERMS)
+
+    def test_the_box_is_described_by_the_line_and_the_fold(self):
+        box = self.soup.find("input", attrs={"name": "agree"})
+        self.assertEqual(
+            box["aria-describedby"].split(), ["sharing-terms", "what-happens"]
+        )
 
     def test_no_term_says_an_ai_model_reads_a_link(self):
         words = [consent.SHARING_TERMS, *consent.SHARING_DETAILS]
@@ -440,6 +457,7 @@ class SharingTermsVersionTest(TestCase):
                 consent.SHARING_EMAIL_HINT,
                 consent.SHARING_EMAIL_FOLD,
                 *consent.SHARING_EMAIL_DETAILS,
+                consent.SHARING_TERMS_FOLD,
             ]
         )
         digest = hashlib.sha256(words.encode()).hexdigest()

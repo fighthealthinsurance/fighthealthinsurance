@@ -4627,7 +4627,9 @@ class SharePlanDocumentsView(FormView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["sharing_terms"] = consent.SHARING_TERMS
+        context["sharing_terms"] = consent.SHARING_TERMS_LINE
+        context["sharing_terms_more"] = consent.SHARING_TERMS_MORE
+        context["sharing_terms_fold"] = consent.SHARING_TERMS_FOLD
         context["sharing_details"] = consent.SHARING_DETAILS
         context["email_fold"] = consent.SHARING_EMAIL_FOLD
         context["email_details"] = consent.SHARING_EMAIL_DETAILS

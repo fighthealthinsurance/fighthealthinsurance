@@ -551,6 +551,11 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        # The box is described by the line beside it and the folded terms,
+        # so a screen reader reaches all of what it agrees to.
+        self.fields["agree"].widget.attrs[
+            "aria-describedby"
+        ] = "sharing-terms what-happens"
         # The names of PDFs with no text to read, a scan among them: kept,
         # and the person told (clean_plan_documents).
         self.scans: list[str] = []
@@ -558,6 +563,16 @@ class SharePlanDocumentsForm(StyledWidgetsMixin, forms.Form):
         state_field.choices = [("", "Choose a state")] + [
             (state.abbreviation, state.name) for state in get_states_sorted_by_name()
         ]
+
+    def full_clean(self) -> None:
+        super().full_clean()
+        # Django adds a field's error to aria-describedby only when the widget
+        # names none; the box names the terms, so add its error after them.
+        if self.errors.get("agree"):
+            attrs = self.fields["agree"].widget.attrs
+            attrs["aria-describedby"] = (
+                f"{attrs.get('aria-describedby', '')} {self['agree'].auto_id}_error"
+            ).strip()
 
     def clean_plan_documents(self) -> list[UploadedFile]:
         files = [f for f in self.cleaned_data.get("plan_documents") or [] if f]

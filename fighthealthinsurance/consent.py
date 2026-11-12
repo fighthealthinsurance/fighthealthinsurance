@@ -64,12 +64,20 @@ _SHARING_BODY = (
 # The share page's agreement. The core terms sit beside the box; the
 # details fold away under them and are part of what the box agrees to.
 # Only files are said to be read by AI models: nothing reads a link.
-SHARING_TERMS = (
-    "We keep what you share, including what you tell us about the plan, and "
-    "use it with other people's documents to publish what we learn about "
-    "plans. Our team and AI models, including outside services, read your "
-    "files. We keep everything as long as we can."
+# The share page shows one line beside the box (SHARING_TERMS_LINE) and folds
+# the rest of the terms (SHARING_TERMS_MORE) at the top of SHARING_DETAILS'
+# fold, so the page can be scanned. SHARING_TERMS is all of it, as one.
+SHARING_TERMS_LINE = (
+    "We keep what you share and use it, with other people's documents, to "
+    "publish what we learn about plans."
 )
+SHARING_TERMS_MORE = (
+    "That includes what you tell us about the plan.",
+    "Our team and AI models, including outside services, read your files.",
+    "We keep everything as long as we can.",
+)
+SHARING_TERMS = " ".join((SHARING_TERMS_LINE, *SHARING_TERMS_MORE))
+SHARING_TERMS_FOLD = "What sharing means"
 SHARING_DETAILS = (
     "We store what you share encrypted, files and links alike.",
     "Our team opens links by hand. We never fetch them automatically.",
