@@ -3,9 +3,15 @@
 {% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-<div class="container" style="max-width: 640px; padding: 3rem 1rem;">
-  <h1>This paid review task has closed</h1>
-  <p>Thank you for your interest. The task this link belonged to is no longer taking reviews.</p>
-  <p>You are still welcome to judge drafts as a volunteer in the <a href="{% url 'chooser' %}">Appeal Arena</a>.</p>
-</div>
-{% endblock %}
+{% comment %}
+What a paid Arena bounty's join link shows once its bounty is closed or
+unknown (paid_reviews.PaidReviewJoinView, served as 410).
+{% endcomment %}
+<section id="paid-review-closed">
+    <div class="fhi-page fhi-page-centred">
+        {% include "partials/page_title.html" with title="This paid review task has closed" %}
+        <p>Thank you for your interest. The task this link belonged to is no longer taking reviews.</p>
+        <p>You are still welcome to judge drafts as a volunteer in the <a href="{% url 'chooser' %}">Appeal Arena</a>.</p>
+    </div>
+</section>
+{% endblock content %}
