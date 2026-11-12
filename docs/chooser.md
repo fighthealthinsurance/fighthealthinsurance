@@ -130,6 +130,69 @@ login goes straight to `/chooser/`, where the account's review count includes
 all of its previous votes. The login grants no extra privileges and does not
 change the Arena's existing captcha requirement.
 
+## Paid reviewers (RentAHuman)
+
+Volunteers come and go, so the Arena can also hire judges by the batch
+through [RentAHuman](https://rentahuman.ai), a marketplace where software
+posts paid tasks for people (`paid_reviews.py`). The cases are synthetic,
+so a stranger sees no one's health information. One batch is one
+RentAHuman bounty (`PaidReviewBounty`):
+
+1. **Post it.** `python manage.py post_paid_review_bounty --spots 10
+   --price 5 --reviews 10` (the defaults) prints the cost (workers' pay
+   plus RentAHuman's 18% fee: $59 for 100 reviews, about $0.59 a review,
+   or about $10 an hour for the worker at three minutes a review) and
+   RentAHuman's dry-run preview. Add `--post` to post it for real; $5 a
+   worker is RentAHuman's minimum. The bounty is a remote "computer gig"
+   with text evidence and RentAHuman's AI screening on (`autoAccept`:
+   qualified applicants are accepted, clear mismatches declined, the rest
+   left for you), and its description links the join URL,
+   `/chooser/paid/<join_token>/`. If RentAHuman holds it as
+   `pending_deposit`, top up the wallet there.
+2. **The worker judges.** The join link ties their browser session to a
+   `PaidReviewSession` and opens the Arena, which is unchanged except for a
+   progress banner. Each vote that session casts is tagged
+   (`ChooserVote.paid_review`), so paid votes can be studied or weighted
+   apart from volunteers'. A paid vote counts toward the run when it was
+   timed by the server at `PAID_REVIEW_MIN_SECONDS` or more, carries a
+   reason of `PAID_REVIEW_MIN_RATIONALE_CHARS` or more, and did not come
+   from an automated browser; the vote answer says why one did not count.
+   Any outcome counts (a winner, a tie, all bad): the floor stops
+   click-through, not disagreement. Every vote, counted or not, is recorded
+   like any other.
+3. **The code.** After `reviews_required` counted votes the banner shows a
+   completion code (`FHI-XXXX-XXXX`, single use), which the worker pastes
+   as their submission.
+4. **Checking it.** RentAHuman's `submission.submitted` event, at
+   `/chooser/paid/webhook/rentahuman/` (signed with
+   `RENTAHUMAN_WEBHOOK_SECRET`), has the submission fetched from the API
+   and checked. A submission RentAHuman already shows as reviewed is left
+   alone, so repeated deliveries are harmless; the event id is not used to
+   deduplicate, since a resubmission after a redo can carry the same one.
+   A code issued for that
+   bounty and not yet claimed is claimed and the submission approved;
+   anything else gets a redo request saying what was wrong.
+   `python manage.py sync_paid_reviews` does the same for every pending
+   submission, as a poll behind the webhook or instead of it.
+5. **Paying.** Approving moves no money. Release the escrow on RentAHuman
+   (its guidance is that agents release payment only when the account
+   owner says so). Close a batch's join link with
+   `post_paid_review_bounty --close <id>` or in the admin. That only stops
+   new workers joining: runs already started keep counting votes, keep
+   showing an earned code, and are still answered by `sync_paid_reviews`.
+
+Setting up the account: create an API key at
+rentahuman.ai/account/api-keys and set `RENTAHUMAN_API_KEY`. Then
+`python manage.py rentahuman_setup` shows the wallet and webhooks;
+`--deposit 60` prints a Stripe Checkout link to fund the wallet (nothing is
+charged until someone pays there); `--webhook` registers this site's
+webhook for `submission.submitted` and prints the `whsec_...` secret once,
+for `RENTAHUMAN_WEBHOOK_SECRET` (register it after the route is deployed);
+`--test-webhook <endpoint id>` sends RentAHuman's test event. Settings: `RENTAHUMAN_API_KEY`, `RENTAHUMAN_WEBHOOK_SECRET`,
+`RENTAHUMAN_API_BASE`, `PAID_REVIEW_SITE_ORIGIN` (where the join link
+points), `PAID_REVIEW_MIN_SECONDS` (60) and
+`PAID_REVIEW_MIN_RATIONALE_CHARS` (25). Tests blank the key and secret.
+
 ## The door: "I'm not a robot"
 
 The Arena starts with the same reCAPTCHA checkbox as the site's other

@@ -40,6 +40,8 @@ from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserTask,
     ChooserVote,
+    PaidReviewBounty,
+    PaidReviewSession,
     DataSource,
     Denial,
     DenialQA,
@@ -2359,3 +2361,38 @@ class SiteBannerAdmin(admin.ModelAdmin):
     def short_message(self, obj: SiteBanner) -> str:
         text = (obj.message or "").strip().replace("\n", " ")
         return (text[:80] + "…") if len(text) > 80 else text
+
+
+@admin.register(PaidReviewBounty)
+class PaidReviewBountyAdmin(admin.ModelAdmin):
+    """Paid Arena reviewer batches posted to RentAHuman (paid_reviews.py).
+    Set status to closed to stop the join link taking new workers."""
+
+    list_display = (
+        "id",
+        "title",
+        "status",
+        "rah_bounty_id",
+        "price_dollars",
+        "spots",
+        "reviews_required",
+        "created_at",
+    )
+    list_filter = ("status",)
+    readonly_fields = ("join_token", "created_at")
+
+
+@admin.register(PaidReviewSession)
+class PaidReviewSessionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "bounty",
+        "status",
+        "completion_code",
+        "rah_submission_id",
+        "code_issued_at",
+        "claimed_at",
+    )
+    list_filter = ("status", "bounty")
+    search_fields = ("completion_code", "rah_submission_id")
+    readonly_fields = ("session_key", "created_at")

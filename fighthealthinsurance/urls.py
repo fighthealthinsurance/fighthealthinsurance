@@ -38,6 +38,7 @@ from fighthealthinsurance import (
     evaluator_accounts,
     fax_views,
     intake_resume_views,
+    paid_reviews,
     public_rankings,
     staff_views,
     views,
@@ -721,6 +722,18 @@ urlpatterns += [
         "chooser/",
         views.ChooserView.as_view(),
         name="chooser",
+    ),
+    # Paid Arena reviewers hired through RentAHuman (paid_reviews.py): the
+    # join link in a bounty, and the signed events RentAHuman sends.
+    path(
+        "chooser/paid/webhook/rentahuman/",
+        csrf_exempt(paid_reviews.RentAHumanWebhookView.as_view()),
+        name="rentahuman_webhook",
+    ),
+    path(
+        "chooser/paid/<str:join_token>/",
+        paid_reviews.PaidReviewJoinView.as_view(),
+        name="paid_review_join",
     ),
     # Public, synthetic-only rankings from the chooser's votes, plus the
     # most-appealed conditions and treatments (public_rankings.py).

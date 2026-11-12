@@ -4377,6 +4377,14 @@ class ChooserView(TemplateView):
         context["captcha_passed"] = bool(
             self.request.session.get(ChooserViewSet.CAPTCHA_SESSION_KEY)
         )
+        # A worker on a paid RentAHuman run sees their progress from the
+        # landing on (paid_reviews.py).
+        from fighthealthinsurance import paid_reviews
+
+        paid_run = paid_reviews.session_for(self.request)
+        context["paid_review"] = (
+            paid_reviews.progress(paid_run) if paid_run is not None else None
+        )
 
         # Trigger async pre-fill of tasks so user doesn't have to wait
         from fighthealthinsurance.chooser_tasks import trigger_prefill_async
