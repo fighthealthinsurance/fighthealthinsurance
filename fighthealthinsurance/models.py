@@ -5660,7 +5660,15 @@ class SharedPlanDocumentsDay(models.Model):
     DROPPED_REFUSED = "dropped_refused"
     DROPPED_OVER_BUDGET = "dropped_over_budget"
     DROPPED_NOT_SAVED = "dropped_not_saved"
-    DROPPED = (DROPPED_REFUSED, DROPPED_OVER_BUDGET, DROPPED_NOT_SAVED)
+    # A copy whose save failed, retried, and whose page's own copy was gone
+    # by then (removed, or its file missing).
+    DROPPED_ORIGIN_GONE = "dropped_origin_gone"
+    DROPPED = (
+        DROPPED_REFUSED,
+        DROPPED_OVER_BUDGET,
+        DROPPED_NOT_SAVED,
+        DROPPED_ORIGIN_GONE,
+    )
     # 1 while the day's staff summary is being sent or once it has gone, so
     # it goes once a day; and how many times the day has tried to send it.
     STAFF_SUMMARY = "staff_summary"
@@ -5703,6 +5711,39 @@ class SharedPlanDocumentsDay(models.Model):
 
     def __str__(self) -> str:
         return f"{self.day} {self.name}: {self.count}"
+
+
+class SharedCopyRetry(models.Model):
+    """A copy someone ticked to share for research, on Explain Policy or the
+    appeal's plan documents step, whose save failed: the hourly sweep makes
+    it again from the page's own copy (the origin row), never from a copy
+    of its own (shared_copy_retries). Holds no file, name or text. Goes
+    with its origin row (cascade), with remove-my-data by email, and after
+    shared_copy_retries.RETRY_LIFETIME at most."""
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    source = models.CharField(max_length=20)
+    origin_policy_document = models.ForeignKey(
+        "PolicyDocument", null=True, blank=True, on_delete=models.CASCADE
+    )
+    origin_plan_document = models.ForeignKey(
+        "PlanDocuments", null=True, blank=True, on_delete=models.CASCADE
+    )
+    hashed_email = models.CharField(max_length=300, null=True, blank=True)
+    # The sharing terms' version when the box was ticked: the copy keeps it.
+    consent_version = models.DateField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    next_try_at = models.DateTimeField()
+    last_reason = models.CharField(max_length=40, blank=True, default="")
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["next_try_at"]),
+            models.Index(fields=["hashed_email"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"SharedCopyRetry {self.pk} ({self.source})"
 
 
 class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"), models.Model):  # type: ignore

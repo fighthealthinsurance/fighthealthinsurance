@@ -1327,6 +1327,8 @@ def test_the_plan_documents_worker_registers_only_its_workflows_and_activities()
         shared_plan_documents,
     )
     from fighthealthinsurance.workflows.plan_documents_sweep import (
+        COPY_RETRY_TIMEOUT,
+        FILE_CHECK_TIMEOUT,
         PlanDocumentsSweepWorkflow,
     )
     from fighthealthinsurance.workflows.shared_plan_documents import (
@@ -1350,6 +1352,7 @@ def test_the_plan_documents_worker_registers_only_its_workflows_and_activities()
         plan_documents_sweep.find_waiting_share_batches,
         plan_documents_sweep.send_plan_documents_staff_summary,
         plan_documents_sweep.check_shared_plan_document_files,
+        plan_documents_sweep.retry_shared_copies,
     ]
     # One at a time, so at most one PDF child shares the appeal worker's memory.
     assert plan_docs["max_concurrent_activities"] == 1
@@ -1363,6 +1366,14 @@ def test_the_plan_documents_worker_registers_only_its_workflows_and_activities()
         <= plan_docs["graceful_shutdown_timeout"]
         <= appeal["graceful_shutdown_timeout"]
     )
+    # So do the sweep's longest steps.
+    assert FILE_CHECK_TIMEOUT <= plan_docs["graceful_shutdown_timeout"]
+    assert COPY_RETRY_TIMEOUT <= plan_docs["graceful_shutdown_timeout"]
+    # And each ends its own work before its step's timeout.
+    from fighthealthinsurance import shared_copy_retries, shared_file_check
+
+    assert shared_file_check.MAX_SECONDS < FILE_CHECK_TIMEOUT.total_seconds()
+    assert shared_copy_retries.RUN_SECONDS < COPY_RETRY_TIMEOUT.total_seconds()
 
 
 def test_task_queue_override_leaves_the_plan_documents_queue_alone():

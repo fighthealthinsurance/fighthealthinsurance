@@ -609,11 +609,13 @@ class Command(BaseCommand):
                         sweep_activities.find_waiting_share_batches,
                         sweep_activities.send_plan_documents_staff_summary,
                         sweep_activities.check_shared_plan_document_files,
+                        sweep_activities.retry_shared_copies,
                     ],
                     max_concurrent_activities=1,
                     # Covers a reading's five-minute start_to_close (OCR
-                    # included), no longer than the appeal Worker's 300s
-                    # drain, inside the pod's grace.
+                    # included) and the sweep's file check and copy retries,
+                    # no longer than the appeal Worker's 300s drain, inside
+                    # the pod's grace.
                     graceful_shutdown_timeout=timedelta(minutes=5),
                 )
                 runs.append(plan_documents_worker.run())

@@ -118,3 +118,22 @@ async def check_shared_plan_document_files() -> bool:
     except Exception as e:
         logger.error(f"The shared plan document file check failed: {type(e).__name__}")
         raise _failure(e, "file check", retryable=False) from None
+
+
+@activity.defn
+async def retry_shared_copies() -> int:
+    """Make again the copies ticked for research whose save failed and are
+    due (shared_copy_retries.retry_due_copies). Returns how many were
+    saved. Counts only; nothing about a file or a person."""
+    from channels.db import database_sync_to_async
+
+    from fighthealthinsurance.shared_copy_retries import SAVED, retry_due_copies
+
+    await _aclose_old_connections()
+    try:
+        # A thread of its own: reading and saving files takes a while.
+        retry = database_sync_to_async(retry_due_copies, thread_sensitive=False)
+        return int((await retry())[SAVED])
+    except Exception as e:
+        logger.error(f"Retrying shared copies failed: {type(e).__name__}")
+        raise _failure(e, "shared copy retries", retryable=False) from None

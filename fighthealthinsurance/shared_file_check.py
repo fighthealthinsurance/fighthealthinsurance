@@ -33,9 +33,10 @@ from loguru import logger
 from fighthealthinsurance.models import PolicyDocument, SharedPlanDocumentsDay
 
 #: The most files one check reads, and how long it may take: past either,
-#: the rest are counted as not checked.
+#: the rest are counted as not checked. The time ends inside the plan
+#: documents worker's shutdown drain.
 MAX_FILES = 1000
-MAX_SECONDS = 600
+MAX_SECONDS = 180
 #: The longest one file's look in the object store may take; a stalled one
 #: is counted unknown and the check goes on.
 SECONDS_PER_FILE = 20.0

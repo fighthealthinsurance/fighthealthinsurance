@@ -20,6 +20,8 @@ A run does three things, and a failure in one never stops the next:
 4. Asks for the daily check that each shared file is still whole in the
    bucket (shared_file_check): the first run of each UTC day runs it.
    Counts only; run once, never retried.
+5. Makes again the copies ticked for research whose save failed and are
+   due (shared_copy_retries), a few a run. Run once, never retried.
 
 History holds the run's numbers, the reminders' row ids, true or false for
 each, the shares' uuids, the counts and whether the summary went.
@@ -55,6 +57,10 @@ LOOKUP_RETRY = RetryPolicy(
 SEND_RETRY = RetryPolicy(maximum_attempts=1)
 # The same pace the Ray email loop keeps between sends.
 SEND_PACING = timedelta(seconds=2)
+# Inside the plan documents worker's five-minute shutdown drain, so a deploy
+# lets them finish; each bounds its own work below this.
+FILE_CHECK_TIMEOUT = timedelta(minutes=4)
+COPY_RETRY_TIMEOUT = timedelta(minutes=4)
 
 
 @workflow.defn
@@ -70,13 +76,26 @@ class PlanDocumentsSweepWorkflow:
             result["summary_sent"] = int(await self._send_summary())
         if workflow.patched("plan-documents-file-check"):
             result["files_checked"] = int(await self._check_files())
+        if workflow.patched("plan-documents-copy-retries"):
+            result["copies_saved"] = await self._retry_copies()
         return result
+
+    async def _retry_copies(self) -> int:
+        try:
+            return await workflow.execute_activity(
+                sweep_activities.retry_shared_copies,
+                start_to_close_timeout=COPY_RETRY_TIMEOUT,
+                retry_policy=SEND_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("shared copy retries failed; next run tries")
+            return 0
 
     async def _check_files(self) -> bool:
         try:
             return await workflow.execute_activity(
                 sweep_activities.check_shared_plan_document_files,
-                start_to_close_timeout=timedelta(minutes=15),
+                start_to_close_timeout=FILE_CHECK_TIMEOUT,
                 retry_policy=SEND_RETRY,
             )
         except ActivityError:
