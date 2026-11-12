@@ -1625,8 +1625,48 @@ def appeal_backup_names(
     return [name for name in candidates if name not in already]
 
 
+#: The outside model that writes beside ours for people who allow outside
+#: models (appeal_pass_names). Named, not ranked: the outside ranking can put
+#: another model first (the sponsored Azure model ranks ahead when it is set
+#: up), and this pass is for this model.
+SIDE_BY_SIDE_OUTSIDE = "nvidia/NVIDIA-Nemotron-3.5-Super-VL"
+
+
+def side_by_side_enabled() -> bool:
+    """FHI_APPEAL_SIDE_BY_SIDE (default on): whether people who allow outside
+    models get our model and SIDE_BY_SIDE_OUTSIDE writing side by side. Off,
+    their passes are exactly as before."""
+    from django.conf import settings
+
+    return bool(getattr(settings, "FHI_APPEAL_SIDE_BY_SIDE", True))
+
+
+def is_external_name(router: Any, name: Optional[str]) -> bool:
+    """Whether any backend registered under ``name`` is an outside model."""
+    return any(
+        getattr(m, "external", False) for m in router.models_by_name.get(name, [])
+    )
+
+
+def _side_by_side_primary(router: Any) -> List[str]:
+    """Our alpha model (fhi-local, matched by its backend, since its name
+    comes from the environment) and SIDE_BY_SIDE_OUTSIDE, each only when it
+    can be asked now, in that order."""
+    names: List[str] = []
+    for model in router.internal_models_by_cost:
+        if isinstance(model, AlphaRemoteInternal) and router._selectable(model):
+            name = getattr(model, "name", None)
+            if name and name in router.models_by_name:
+                names.append(name)
+                break
+    outside = router.models_by_name.get(SIDE_BY_SIDE_OUTSIDE, [])
+    if any(router._selectable(m) for m in outside):
+        names.append(SIDE_BY_SIDE_OUTSIDE)
+    return names
+
+
 def appeal_pass_names(
-    router: Any, use_external: bool
+    router: Any, use_external: bool, side_by_side: Optional[bool] = None
 ) -> Tuple[List[str], List[str], bool]:
     """The names the appeals primary and backup passes call, in order, and
     whether a hosted model can answer in the backup.
@@ -1641,7 +1681,28 @@ def appeal_pass_names(
     pass is empty, rather than each repeating it. ``router`` is passed in
     (not ``self``) so ``make_appeals`` and the staff routing overview read the
     same router their callers (and tests) hand them.
+
+    Side by side (``side_by_side``, default side_by_side_enabled()), for
+    people who allow outside models only: the primary pass is our alpha
+    model and SIDE_BY_SIDE_OUTSIDE, each when it can be asked, so the person
+    gets both drafts. The other internal models and the next outside models
+    move to the backup, in that order, and write only if neither primary
+    answers. One of the two missing leaves the other alone; with neither,
+    the passes are as before. Without outside models allowed this never
+    applies.
     """
+    if side_by_side is None:
+        side_by_side = side_by_side_enabled()
+    primary = _side_by_side_primary(router) if use_external and side_by_side else []
+    if primary:
+        candidates = router.generate_text_backend_names(use_external=True)
+        backup = [
+            name
+            for name in candidates
+            if name not in primary and name != SIDE_BY_SIDE_OUTSIDE
+        ]
+        hosted_backup = any(is_external_name(router, name) for name in backup)
+        return primary, backup, hosted_backup
     candidates = router.generate_text_backend_names(use_external=use_external)
     hosted_backup = use_external and any(
         getattr(m, "external", False)

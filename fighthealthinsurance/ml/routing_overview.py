@@ -284,8 +284,10 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
     paths.append(
         PathPlan(
             "Appeals, primary pass",
-            "Every model is asked at once and the first usable full letter "
-            "wins. This pass is internal only whatever the person chose.",
+            "Every model listed is asked at once, and each usable full letter "
+            "is a draft. External models off: our internal models. External "
+            "models on: our alpha model and Nemotron side by side "
+            "(FHI_APPEAL_SIDE_BY_SIDE, within its daily budget).",
             name_entries(primary[False]),
             name_entries(primary[True]),
         )
@@ -299,7 +301,8 @@ def build_routing_overview(router: Optional[MLRouter] = None) -> RoutingOverview
             "Appeals, backup pass",
             "Asked only when the primary pass gives no usable letter, and "
             "only models the primary pass did not already ask, so it has none "
-            "unless the person allowed external models.",
+            "unless the person allowed external models. Then it is our other "
+            "internal models and the next external ones.",
             name_entries(backup[False]),
             name_entries(backup[True]),
         )

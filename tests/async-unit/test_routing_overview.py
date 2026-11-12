@@ -7,6 +7,8 @@ the selectors return, merged across the two settings of use_external.
 
 import os
 import unittest
+
+from django.test import override_settings
 from typing import Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -115,6 +117,8 @@ class TestRoles(_NoRoutingEnv):
         )
         return router
 
+    # Today's internal-first passes; side by side is tested on its own.
+    @override_settings(FHI_APPEAL_SIDE_BY_SIDE=False)
     def test_roles_follow_the_selectors(self):
         router = self._production_like()
         overview = ro.build_routing_overview(router)
@@ -155,6 +159,8 @@ class TestRoles(_NoRoutingEnv):
         self.assertIsNone(overview.top_external_rank(router.models_by_name["sonar"][0]))
         self.assertIsNone(overview.top_external_rank(None))
 
+    # Today's internal-first passes; side by side is tested on its own.
+    @override_settings(FHI_APPEAL_SIDE_BY_SIDE=False)
     def test_path_lists_keep_the_selectors_order(self):
         overview = ro.build_routing_overview(self._production_like())
         primary = _plan(overview, "Appeals, primary pass")
@@ -177,6 +183,8 @@ class TestRoles(_NoRoutingEnv):
             [e.name for e in summaries.external_allowed], ["fhi-local", GEMMA]
         )
 
+    # Today's internal-first passes; side by side is tested on its own.
+    @override_settings(FHI_APPEAL_SIDE_BY_SIDE=False)
     def test_the_backup_pass_never_repeats_the_primary(self):
         """make_appeals backs up only with names the primary pass did not
         call, so with external models off the backup has nothing left, and
@@ -235,6 +243,8 @@ class TestRoles(_NoRoutingEnv):
             "Summaries: 1st (external allowed)", _labels(overview, router, GEMMA)
         )
 
+    # Today's internal-first passes; side by side is tested on its own.
+    @override_settings(FHI_APPEAL_SIDE_BY_SIDE=False)
     def test_backends_sharing_a_name_keep_their_own_roles(self):
         """Two internal servers set to the same model path register under one
         name. Only the healthy one is picked for chat, questions and

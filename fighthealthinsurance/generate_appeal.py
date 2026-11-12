@@ -68,7 +68,7 @@ from fighthealthinsurance.letter_openings import (
     APPEAL_SALUTATION_INSTRUCTION,
     strip_letter_preamble,
 )
-from fighthealthinsurance.ml import llm_usage
+from fighthealthinsurance.ml import llm_usage, spend
 from fighthealthinsurance.ml.web_search_context import is_web_citation
 from fighthealthinsurance.ml.ml_metrics import ml_call_purpose
 from fighthealthinsurance.ml.model_identity import TEMPLATE_MODEL_NAME
@@ -101,7 +101,12 @@ from .ml.ml_models import (
     render_citations_context,
     repetition_penalty,
 )
-from .ml.ml_router import appeal_pass_names, ml_router
+from .ml.ml_router import (
+    SIDE_BY_SIDE_OUTSIDE,
+    appeal_pass_names,
+    is_external_name,
+    ml_router,
+)
 
 
 class ExtractionUnavailable(Exception):
@@ -3680,6 +3685,36 @@ class AppealGenerator(object):
         model_names, backup_model_names, hosted_backup = appeal_pass_names(
             ml_router, use_ext
         )
+        # Side by side, the outside model writes beside ours only while
+        # today's budget allows (spend.side_by_side_budget_left); past it the
+        # letter is written as before, the outside models as the backup.
+        if SIDE_BY_SIDE_OUTSIDE in model_names and not spend.side_by_side_budget_left():
+            logger.info(
+                f"make_appeals: side-by-side budget spent or unread for "
+                f"denial {denial.denial_id}; writing as before"
+            )
+            model_names, backup_model_names, hosted_backup = appeal_pass_names(
+                ml_router, use_ext, side_by_side=False
+            )
+        # Side by side, only the full letter goes to the outside model
+        # writing beside ours: the helper calls (the one-line
+        # medical-necessity answers) and the context-shed retries stay with
+        # our models. Otherwise the lists are as they always were.
+        side_by_side_outside = (
+            SIDE_BY_SIDE_OUTSIDE if SIDE_BY_SIDE_OUTSIDE in model_names else None
+        )
+        helper_model_names = [
+            name for name in model_names if name != side_by_side_outside
+        ]
+        if side_by_side_outside is not None and not helper_model_names:
+            # Nemotron writes alone (our alpha model is down): the helper
+            # calls go to the first internal model in the backup that can be
+            # asked, as they would have before, and to none only when none is.
+            helper_model_names = [
+                name
+                for name in backup_model_names
+                if not is_external_name(ml_router, name) and _model_can_be_asked(name)
+            ][:1]
         if not model_names and hosted_backup:
             logger.info(
                 f"make_appeals: no internal model is up for denial "
@@ -3783,7 +3818,7 @@ class AppealGenerator(object):
                         "ml_citations_context": ml_citations_context,
                         "prof_pov": prof_pov,
                     }
-                    for model_name in model_names
+                    for model_name in helper_model_names
                 ]
             )
             logger.debug(f"Processing {len(medical_reasons)} medical necessity reasons")
@@ -3980,7 +4015,12 @@ class AppealGenerator(object):
                     "use_external=True but no external backend was selectable "
                     "for the backup"
                 )
-            ladder_calls = _calls_worth_shedding(calls)
+            ladder_calls = [
+                call
+                for call in _calls_worth_shedding(calls)
+                if side_by_side_outside is None
+                or call.get("model_name") != side_by_side_outside
+            ]
             if not ladder_calls:
                 # No primary call, or no instance of any primary model can be
                 # asked (parked, refused, cooling down, out of budget): one
