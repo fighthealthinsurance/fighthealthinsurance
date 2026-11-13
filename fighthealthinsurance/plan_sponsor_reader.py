@@ -156,8 +156,20 @@ _PLAN_YEAR_WORDS = re.compile(
     r"|per[ií]odo\s+de\s+cobertura|a[ñn]o\s+del\s+plan|vigen(?:te|cia)",
     re.IGNORECASE,
 )
-#: A type's words right after "not" ("not an ERISA plan") deny it.
-_NEGATED = re.compile(r"\bnot\s+(?:an?\s+|the\s+)?$", re.IGNORECASE)
+#: A type's words right after "not" ("not an ERISA plan", "not Original
+#: Medicare") deny it.
+_NEGATED = re.compile(
+    r"\bnot\s+(?:an?\s+|the\s+)?(?:original\s+|traditional\s+)?$", re.IGNORECASE
+)
+_DATE = (
+    r"(?:[0-9]{1,2}[/.-][0-9]{1,2}[/.-]([0-9]{4})|([0-9]{4})-[0-9]{2}-[0-9]{2}"
+    r"|[a-z]{3,9}\.?\s+[0-9]{1,2},?\s+([0-9]{4}))"
+)
+#: A date range. One across two years ("07/01/2025 - 06/30/2026") is the
+#: plan year it starts, never the one it ends.
+_DATE_RANGE = re.compile(
+    _DATE + r"\s*(?:[-\u2013\u2014]|to|through|thru)\s*" + _DATE, re.IGNORECASE
+)
 #: Each model's answer, and all of them together, a second look included:
 #: the reading's activity has 5 minutes
 #: (workflows/shared_plan_documents.READ_TIMEOUT) and reading the file can
@@ -477,6 +489,13 @@ def _checked_year(data: dict, squashed_text: str) -> Optional[int]:
         return None
     if not _PLAN_YEAR_WORDS.search(line):
         return None
+    for span in _DATE_RANGE.finditer(line):
+        start, end = (
+            int(next(y for y in part if y))
+            for part in (span.groups()[:3], span.groups()[3:])
+        )
+        if start != end and year == end:
+            return None
     return year
 
 

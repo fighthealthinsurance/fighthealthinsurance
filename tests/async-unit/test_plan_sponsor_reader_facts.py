@@ -143,6 +143,33 @@ class TestThePlanYear:
         found = facts(plan_year=2026, plan_year_evidence="Group number 202612")
         assert found.plan_year is None
 
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "Coverage Period: 07/01/2025 - 06/30/2026",
+            "Plan year: July 1, 2025 through June 30, 2026",
+            "Coverage period 2025-07-01 to 2026-06-30",
+        ],
+    )
+    @pytest.mark.parametrize("given, kept", [(2025, 2025), (2026, None)])
+    def test_a_range_across_two_years_gives_the_year_it_starts(self, line, given, kept):
+        found = facts(PAGE_ONE + line, plan_year=given, plan_year_evidence=line)
+        assert found.plan_year == kept
+
+    @pytest.mark.parametrize("given, kept", [(2025, 2025), (2026, None)])
+    def test_every_range_on_the_line_is_checked(self, given, kept):
+        line = (
+            "Open enrollment 11/01/2025 - 12/15/2025. "
+            "Coverage Period: 07/01/2025 - 06/30/2026"
+        )
+        found = facts(PAGE_ONE + line, plan_year=given, plan_year_evidence=line)
+        assert found.plan_year == kept
+
+    def test_a_year_beside_a_range_within_one_year_is_kept(self):
+        line = "Plan Year 2026. Open enrollment 11/01/2025 - 12/15/2025"
+        found = facts(PAGE_ONE + line, plan_year=2026, plan_year_evidence=line)
+        assert found.plan_year == 2026
+
     def test_a_birth_year_is_dropped(self):
         found = facts(
             plan_year=2001,
@@ -217,6 +244,8 @@ class TestThePlanType:
             ("medicare_advantage", "This is not a Medicare Advantage plan."),
             ("medicare_traditional", "If you have Medicare, this plan pays secondary."),
             ("medicare_traditional", "This plan is secondary to Medicare."),
+            ("medicare_traditional", "This plan is not Original Medicare."),
+            ("medicare_traditional", "This is not traditional Medicare."),
         ],
     )
     def test_a_line_that_rules_its_type_out_drops_it(self, kind, line):
