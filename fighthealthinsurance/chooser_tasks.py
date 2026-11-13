@@ -313,9 +313,16 @@ def _forced_arena_models(task_type: str) -> List:
         if model is None:
             if name not in _UNREGISTERED_FORCED_NAMES:
                 _UNREGISTERED_FORCED_NAMES.add(name)
+                skipped = getattr(ml_router, "skipped_models", None) or {}
+                reason = skipped.get(name) if isinstance(skipped, dict) else None
+                why = (
+                    f"skipped at startup: {reason}"
+                    if reason
+                    else "no backend offers that name"
+                )
                 logger.warning(
                     f"CHOOSER_FORCE_MODEL names {name!r}, which is not a "
-                    "registered backend; ignoring it"
+                    f"registered backend ({why}); ignoring it"
                 )
             continue
         if getattr(model, "context_only", False) is True:

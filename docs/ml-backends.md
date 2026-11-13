@@ -209,8 +209,14 @@ them on its synthetic cases (`CHOOSER_FORCE_MODEL`, see
 `ENABLED_REMOTE_MODELS` when that allow-list is set. When DeepInfra or
 Perplexity has no key, building the router logs a `Skipping model ... No
 token found` warning; without `LUNA_ROUTE_KEY` it logs `Skipping chat model
-<model id>: Exception` for each LunaRoute model. Either is expected, not a
-fault.
+lunaroute/<model> (<model id>) of LunaRoute: not_configured: LUNA_ROUTE_KEY
+not set` for each LunaRoute model. Either is expected, not a fault. Every
+model the router left out, and why (no key, not on `ENABLED_REMOTE_MODELS`,
+retired, failed to build), is listed on one INFO line, `MLRouter: skipped
+models: ...`, next to `MLRouter: chat/arena-only models: ...` for the ones it
+did register; a `CHOOSER_FORCE_MODEL` name that is not registered repeats its
+reason in the arena's warning. So when the arena's LunaRoute models are
+missing, those lines say whether the key or the allow-list kept them out.
 
 `OpenRouterArena` is the same arrangement over OpenRouter for the arena's
 default hosted models, `openrouter-arena/anthropic/claude-opus-5.5` and

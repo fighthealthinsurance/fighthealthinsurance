@@ -126,6 +126,19 @@ class ChatOnlyModelsTest(SimpleTestCase):
         for name in ml_models.LunaRoute.ARENA_MODELS:
             self.assertNotIn(name, router.chat_outside_models_by_name)
 
+    def test_lunaroute_without_its_key_records_the_missing_key(self):
+        env = {"DEEPINFRA_API": "test-key"}
+        with patch.object(ml_models, "get_env_variable", side_effect=env.get):
+            router = MLRouter()
+        for name in ml_models.LunaRoute.ARENA_MODELS:
+            self.assertIn("LUNA_ROUTE_KEY not set", router.skipped_models[name])
+
+    def test_lunaroute_with_its_key_is_not_listed_as_skipped(self):
+        with patch.object(ml_models, "get_env_variable", return_value="lr_test"):
+            router = MLRouter()
+        for name in ml_models.LunaRoute.ARENA_MODELS:
+            self.assertNotIn(name, router.skipped_models)
+
     def test_every_chat_model_is_length_capped_and_thinking_is_never_disabled(self):
         with patch.object(ml_models, "get_env_variable", return_value="test-key"):
             for name in ml_models.DeepInfra.CHAT_MODELS:
@@ -269,4 +282,17 @@ class AllowListTest(SimpleTestCase):
             router = MLRouter()
         self.assertEqual(
             set(router.chat_outside_models_by_name), {"zai-org/GLM-5.3-Flash"}
+        )
+
+    def test_a_chat_model_left_off_the_allow_list_is_recorded_as_skipped(self):
+        env = {
+            "LUNA_ROUTE_KEY": "lr_test",
+            "ENABLED_REMOTE_MODELS": "zai-org/GLM-5.3-Flash",
+        }
+        with patch.object(ml_models, "get_env_variable", side_effect=env.get), patch(
+            "fighthealthinsurance.ml.ml_router.get_env_variable", side_effect=env.get
+        ):
+            router = MLRouter()
+        self.assertEqual(
+            router.skipped_models["lunaroute/glm-5.3"], "not in ENABLED_REMOTE_MODELS"
         )

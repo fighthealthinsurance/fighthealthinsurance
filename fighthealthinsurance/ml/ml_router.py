@@ -79,6 +79,20 @@ def _log_narrow_fallback(context: str, names: list[str]) -> None:
     logger.warning(message)
 
 
+def _skip_reason(backend: Any, e: Exception) -> str:
+    """Why ``backend`` could not build a model, for the log: its missing
+    configuration ("LUNA_ROUTE_KEY not set") when config_status names one,
+    else only the exception's type. Never the exception's text, which for a
+    client library can carry a key or a request."""
+    try:
+        status, detail = backend.config_status()
+    except Exception:
+        status, detail = ("configured", None)
+    if status != "configured" and detail:
+        return f"{status}: {detail}"
+    return type(e).__name__
+
+
 class MLRouter(object):
     """
     Tool to route our requests most cheapily.
@@ -91,6 +105,10 @@ class MLRouter(object):
     external_models_by_cost: List[RemoteModelLike]
     context_only_models_by_cost: List[RemoteModelLike]
     chat_outside_models_by_name: dict[str, RemoteModelLike]
+    # Model name -> why it was not registered (no key, not on
+    # ENABLED_REMOTE_MODELS, retired, failed to build), for the logs and for
+    # callers that name a model and find it missing (CHOOSER_FORCE_MODEL).
+    skipped_models: dict[str, str]
 
     def __init__(self):
         # Initialize instance attributes to avoid mutable class-level state
@@ -100,6 +118,7 @@ class MLRouter(object):
         self.external_models_by_cost = []
         self.context_only_models_by_cost = []
         self.chat_outside_models_by_name = {}
+        self.skipped_models = {}
         logger.debug("MLRouter: starting model registration")
         enabled_models = self._enabled_model_names()
         if enabled_models is not None:
@@ -137,6 +156,7 @@ class MLRouter(object):
                             f"MLRouter: skipping retired model {m.name} "
                             f"({retired.describe()})"
                         )
+                        self.skipped_models[m.name] = "retired"
                         continue
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
@@ -167,6 +187,7 @@ class MLRouter(object):
                             f"MLRouter: skipping disabled remote model {m.name} "
                             f"(not in ENABLED_REMOTE_MODELS)"
                         )
+                        self.skipped_models[m.name] = "not in ENABLED_REMOTE_MODELS"
                         continue
                     # Stamp the friendly tracking name onto the instance so
                     # consumers that hold a model *instance* (e.g. the chooser
@@ -203,6 +224,9 @@ class MLRouter(object):
                         f"Skipping model {getattr(m, 'internal_name', m)} of "
                         f"{backend} due to {e} of {type(e)}"
                     )
+                    name = getattr(m, "name", None)
+                    if name:
+                        self.skipped_models[name] = _skip_reason(backend, e)
         for k, v in building_models_by_name.items():
             sorted_model_descriptions: list[ModelDescription] = sorted(v)
             self.models_by_name[k] = [
@@ -233,6 +257,22 @@ class MLRouter(object):
             f"{len(self.context_only_models_by_cost)} context-only"
         )
         logger.info(f"All loaded models: {[str(m) for m in self.all_models_by_cost]}")
+        if self.chat_outside_models_by_name:
+            logger.info(
+                "MLRouter: chat/arena-only models: "
+                f"{sorted(self.chat_outside_models_by_name)}"
+            )
+        if self.skipped_models:
+            # One line at INFO, so a model that is missing (the arena's
+            # LunaRoute models without LUNA_ROUTE_KEY, say) says why without
+            # turning on debug logging.
+            logger.info(
+                "MLRouter: skipped models: "
+                + ", ".join(
+                    f"{name} ({reason})"
+                    for name, reason in sorted(self.skipped_models.items())
+                )
+            )
         logger.debug(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
         )
@@ -253,6 +293,7 @@ class MLRouter(object):
             for m in descriptions:
                 if retirement(m.name, m.internal_name) is not None:
                     logger.info(f"MLRouter: skipping retired chat model {m.name}")
+                    self.skipped_models[m.name] = "retired"
                     continue
                 if (
                     enabled_models is not None
@@ -263,6 +304,7 @@ class MLRouter(object):
                         f"MLRouter: skipping disabled chat model {m.name} "
                         f"(not in ENABLED_REMOTE_MODELS)"
                     )
+                    self.skipped_models[m.name] = "not in ENABLED_REMOTE_MODELS"
                     continue
                 try:
                     if m.model is None:
@@ -270,9 +312,15 @@ class MLRouter(object):
                     if getattr(m.model, "name", None) is None:
                         m.model.name = m.name
                     self.chat_outside_models_by_name[m.name] = m.model
+                    # Registered after all (as a chat model, say, where the
+                    # general loop skipped it): not missing.
+                    self.skipped_models.pop(m.name, None)
                 except Exception as e:
+                    reason = _skip_reason(backend, e)
+                    self.skipped_models[m.name] = reason
                     logger.warning(
-                        f"Skipping chat model {m.internal_name}: {type(e).__name__}"
+                        f"Skipping chat model {m.name} ({m.internal_name}) of "
+                        f"{backend.__name__}: {reason}"
                     )
 
     def chat_outside_models(
