@@ -23,11 +23,12 @@ The rules (``verdict``), from the task's votes and skips:
   tied winners, or neither won).
 - **Clear winner**: at least CHOOSER_SETTLE_MIN_REVIEWS reviews, and the
   leading outcome (the most credit) beats every other outcome head to head
-  by a one-sided sign test at p <= CLEAR_WINNER_P (5-0, 6-1 or 7-1, and so
-  on, against its closest rival).
+  by a one-sided sign test at p <= CLEAR_WINNER_P (5-0, 6-0, 7-1 or 8-1, and
+  so on, against its closest rival; 6-1 is not enough).
 - **Clearly undecided**, when there is no clear winner:
   - *skipped*: at least CHOOSER_SETTLE_MIN_REVIEWS judges saw it (reviews
-    plus skips) and at least CHOOSER_UNDECIDED_SKIP_SHARE of them skipped,
+    plus counted skips, see ``counted_skips``) and at least
+    CHOOSER_UNDECIDED_SKIP_SHARE of them skipped,
     so judges can't tell the drafts apart, or the case can't be judged;
   - *split*: at least CHOOSER_UNDECIDED_REVIEWS reviews, and the leader
     beats the runner-up in no more than EVEN_SPLIT of the reviews that
@@ -206,6 +207,20 @@ def verdict(
     return None
 
 
+def counted_skips(task_id: int) -> int:
+    """The task's skips that count toward settling it: made after the case
+    was served to that session (ChooserSkip.served_at), by a judge who has
+    not since voted on it (by session or signed-in user, as the endpoints
+    tell judges apart), so nobody is both a reviewer and a skipper."""
+    votes = ChooserVote.objects.filter(task_id=task_id)
+    return (
+        ChooserSkip.objects.filter(task_id=task_id, served_at__isnull=False)
+        .exclude(session_key__in=votes.values("session_key"))
+        .exclude(user__in=votes.filter(user__isnull=False).values("user"))
+        .count()
+    )
+
+
 def task_verdict(task_id: int) -> Optional[Verdict]:
     """``verdict`` for the stored task: its votes, skips and active
     candidates, read from the database."""
@@ -220,7 +235,7 @@ def task_verdict(task_id: int) -> Optional[Verdict]:
             "all_bad",
         )
     ]
-    skips = ChooserSkip.objects.filter(task_id=task_id).count()
+    skips = counted_skips(task_id)
     candidate_ids = ChooserCandidate.objects.filter(
         task_id=task_id, is_active=True
     ).values_list("id", flat=True)

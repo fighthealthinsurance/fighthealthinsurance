@@ -548,7 +548,8 @@ one included: each is a *review*) and skips:
   neither when it gave them the same (tied winners, or neither won).
 - **Clear winner**: at least `CHOOSER_SETTLE_MIN_REVIEWS` reviews, and the
   leading outcome beats every other one head to head by a one-sided sign
-  test at p ≤ 0.05 (5-0, 6-1, 7-1 and so on against its closest rival).
+  test at p ≤ 0.05 (5-0, 6-0, 7-1, 8-1 and so on against its closest rival;
+  6-1, at p ≈ 0.06, is not enough).
 - **Clearly undecided**, when there is no clear winner, in any of three
   ways: at least `CHOOSER_SETTLE_MIN_REVIEWS` judges saw it (reviews plus
   skips) and at least `CHOOSER_UNDECIDED_SKIP_SHARE` of them skipped it;
@@ -556,6 +557,12 @@ one included: each is a *review*) and skips:
   runner-up in no more than 60% of the reviews that tell them apart (an
   even split at the top); or `CHOOSER_UNDECIDED_MAX_REVIEWS` reviews with
   no clear winner at all.
+- A skip counts only when it was of a case the next-task endpoint served
+  that session (`ChooserSkip.served_at`), since a skip names nothing but a
+  task id and could otherwise retire cases nobody read; and not when the
+  same judge (session or signed-in user) later voted on it, so nobody is
+  both a reviewer and a skipper. Skips from before `served_at` was recorded
+  don't count. Any skip still hides the case from that judge.
 
 A vote or skip only ever settles a case, never reopens one.
 `python manage.py settle_chooser_tasks [--task-type appeal|chat] [--reopen]
@@ -846,4 +853,8 @@ HumanJudge's reviewers have picked one), each with the winning candidate's
 id, index and model name, its score, and the scorer/rubric. These stay on the
 task's backend-only `scoring_json`, never in the case context or voter API.
 The case (summaries and `qa_pairs` included) rides along in `context`, and its
-`complexity` (1 to 5, or null when unscored) beside it.
+`complexity` (1 to 5, or null when unscored) beside it. `settled_reason`
+(`clear_winner`, `undecided`, or blank while the case is still served) says
+why the case stopped being served, not who won: `chosen_candidate` stays the
+draft with the most credit, even on a case whose clear answer was "no usable
+draft" (then `all_bad_count` is the larger number).

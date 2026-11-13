@@ -9,9 +9,11 @@ from unittest.mock import patch
 from django.core.management import call_command
 from django.test import override_settings
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from fighthealthinsurance import chooser_settlement
 from fighthealthinsurance.chooser_tokens import candidate_token
 from fighthealthinsurance.models import (
     ChooserCandidate,
@@ -48,9 +50,17 @@ class ChooserSettlementAPITest(APITestCase):
                 session_key=f"other-voter-{chosen.id}-{i}",
             )
 
-    def _stored_skips(self, count):
+    def _stored_skips(self, count, served=True):
         for i in range(count):
-            ChooserSkip.objects.create(task=self.task, session_key=f"skipper-{i}")
+            ChooserSkip.objects.create(
+                task=self.task,
+                session_key=f"skipper-{i}",
+                served_at=timezone.now() if served else None,
+            )
+
+    def _serve(self):
+        response = self.client.get(reverse("chooser-next-appeal"))
+        self.assertEqual(response.json()["task_id"], self.task.id)
 
     def _vote(self, chosen):
         return self.client.post(
@@ -94,6 +104,7 @@ class ChooserSettlementAPITest(APITestCase):
     def test_the_skip_that_tips_the_share_settles_the_task_undecided(self):
         self._stored_votes(self.a, 2)
         self._stored_skips(2)
+        self._serve()
 
         self.assertEqual(self._skip().status_code, status.HTTP_200_OK)
 
@@ -101,6 +112,37 @@ class ChooserSettlementAPITest(APITestCase):
         self.assertEqual(
             (self.task.status, self.task.settled_reason), ("EXHAUSTED", "undecided")
         )
+
+    def test_a_skip_of_a_case_never_served_does_not_settle_it(self):
+        self._stored_votes(self.a, 2)
+        self._stored_skips(2)
+
+        self._skip()
+
+        self.task.refresh_from_db()
+        self.assertEqual(self.task.status, "READY")
+
+    def test_a_skip_of_a_case_never_served_still_hides_it_from_the_judge(self):
+        self._skip()
+
+        self.assertTrue(ChooserSkip.objects.filter(task=self.task).exists())
+
+    def test_skips_without_a_recorded_serve_do_not_count(self):
+        self._stored_votes(self.a, 2)
+        self._stored_skips(3, served=False)
+
+        self.assertEqual(chooser_settlement.counted_skips(self.task.id), 0)
+
+    def test_a_judge_who_skipped_then_voted_counts_as_a_reviewer_only(self):
+        self._stored_skips(2)
+        ChooserVote.objects.create(
+            task=self.task,
+            chosen_candidate=self.a,
+            presented_candidate_ids=self.ids,
+            session_key="skipper-0",
+        )
+
+        self.assertEqual(chooser_settlement.counted_skips(self.task.id), 1)
 
     def test_a_settled_task_is_not_served_to_a_new_judge(self):
         self._stored_votes(self.a, 5)

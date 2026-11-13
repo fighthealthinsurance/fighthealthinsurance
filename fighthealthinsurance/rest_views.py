@@ -3246,7 +3246,11 @@ class ChooserViewSet(viewsets.ViewSet):
         # Create the skip record, or ignore it if this judge already skipped
         # the task in any session (one skip per user is also held by the
         # database, for two skips racing from two of their sessions).
+        # Only a skip of a case this session was served counts toward
+        # settling it (ChooserSkip.served_at); any skip still hides the case
+        # from this judge.
         if not ChooserSkip.objects.filter(judged, task=task).exists():
+            served_at = self._served_at(request, task.id)
             try:
                 ChooserSkip.objects.get_or_create(
                     task=task,
@@ -3254,12 +3258,14 @@ class ChooserViewSet(viewsets.ViewSet):
                     defaults={
                         "user": voter["user"],
                         "client_key": voter["client_key"],
+                        "served_at": served_at,
                     },
                 )
             except IntegrityError:
                 pass
             else:
-                self._settle(task.id)
+                if served_at is not None:
+                    self._settle(task.id)
 
         return Response(
             serializers.ChooserSkipResponseSerializer(

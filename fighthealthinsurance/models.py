@@ -5010,6 +5010,13 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
         related_name="+",
     )
     client_key = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    # When the next-task endpoint served this session the task, as on
+    # ChooserVote. A skip counts toward settling the task as undecided
+    # (chooser_settlement) only with it: a skip names nothing but a task id,
+    # so without proof the case was shown, a few sessions could retire cases
+    # nobody read. NULL for a skip without a recorded serve, and on rows
+    # written before this field.
+    served_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

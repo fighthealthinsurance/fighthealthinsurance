@@ -11,6 +11,11 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.AddField(
+            model_name="chooserskip",
+            name="served_at",
+            field=models.DateTimeField(blank=True, null=True),
+        ),
+        migrations.AddField(
             model_name="choosertask",
             name="settled_at",
             field=models.DateTimeField(blank=True, null=True),
