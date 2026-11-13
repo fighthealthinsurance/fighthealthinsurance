@@ -947,10 +947,11 @@ SOURCE_MODEL = "model"
 
 def known_insurer_read(name: str, insurers: frozenset[str]) -> bool:
     """Whether ``name``, an insurer our model read, is one in the catalog
-    (plan_sponsors.known_insurers)."""
-    from fighthealthinsurance.plan_sponsors import _is_insurer, normalize_name
+    (plan_sponsors.known_insurers), whole: a catalog name with more words
+    after it may carry a person's name."""
+    from fighthealthinsurance.plan_sponsors import normalize_name
 
-    return _is_insurer(normalize_name(name), insurers)
+    return normalize_name(name) in insurers
 
 
 def remove_shared_documents(hashed_email: str) -> None:

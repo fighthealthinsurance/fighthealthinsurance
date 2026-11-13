@@ -258,6 +258,43 @@ class ASecondLookAtALongDocumentTest(TestCase):
             ("Crumpler Cooperative", True, 2),
         )
 
+    def test_a_sponsor_found_the_second_time_is_not_kept_as_the_insurer(self):
+        text = "Administered by Crumpler Cooperative\n" + long_spd()
+
+        def answer_for(prompt):
+            if "Plan Sponsor: Crumpler Cooperative" in prompt:
+                return answer(**SPONSOR)
+            return answer(
+                insurer="Crumpler Cooperative",
+                insurer_evidence="Administered by Crumpler Cooperative",
+            )
+
+        with models_say(answer_for):
+            reading = read(text)
+        self.assertEqual(
+            (reading.sponsor.name, reading.facts.insurer_name),
+            ("Crumpler Cooperative", ""),
+        )
+
+    def test_the_sponsor_as_checked_is_not_kept_as_the_insurer(self):
+        text = (
+            "Plan Sponsor: Crumpler Cooperative Medical Plan\n"
+            "Administered by Crumpler Cooperative\n" + PAGE_ONE
+        )
+        with models_say(
+            lambda prompt: answer(
+                sponsor="Crumpler Cooperative Medical Plan",
+                evidence="Plan Sponsor: Crumpler Cooperative Medical Plan",
+                insurer="Crumpler Cooperative",
+                insurer_evidence="Administered by Crumpler Cooperative",
+            )
+        ):
+            reading = read(text)
+        self.assertEqual(
+            (reading.sponsor.name, reading.facts.insurer_name),
+            ("Crumpler Cooperative", ""),
+        )
+
     def test_it_is_asked_at_most_once(self):
         with models_say(lambda prompt: NO_SPONSOR) as asked:
             reading = read(long_spd())
