@@ -19,7 +19,12 @@ from fighthealthinsurance import plan_documents_processing as processing
 from fighthealthinsurance.activities import plan_documents_sweep as sweep_activities
 from fighthealthinsurance.models import PolicyDocument
 from fighthealthinsurance.plan_sponsor_reader import PlanReading
-from fighthealthinsurance.plan_sponsors import Sponsor, link_sponsor
+from fighthealthinsurance.plan_sponsors import (
+    SOURCE_MODEL,
+    SOURCE_PERSON,
+    Sponsor,
+    link_sponsor,
+)
 from tests.plan_text_samples import PLAN_TEXT
 from tests.sync.test_shared_plan_documents_are_read_and_cleaned import _ReadingTest
 
@@ -191,3 +196,34 @@ class ALinkLandsOnlyOnARowStillAPlanTest(_LookupTest):
 
     def test_a_ready_row_still_gets_its_company(self):
         self.assertIsNotNone(self.link_after_marking(READY))
+
+
+class LinkPlanSponsorsTreatsATypedCompanyLikeTheSweepTest(_LookupTest):
+    def typed_then_command(self, company_source):
+        (doc,) = self.unfinished()
+        typed = Sponsor("Rebecca Lee Crumpler Clinic", "", source=SOURCE_PERSON)
+        link_sponsor(doc.pk, typed)
+        PolicyDocument.objects.filter(pk=doc.pk).update(
+            plan_sponsor_source=company_source
+        )
+        read = Sponsor("Crumpler Cooperative", "", source=SOURCE_MODEL)
+        with patch(
+            "fighthealthinsurance.management.commands.link_plan_sponsors.afind_company",
+            new=AsyncMock(return_value=PlanReading(read, True)),
+        ):
+            call_command(
+                "link_plan_sponsors", "--apply", stdout=StringIO(), stderr=StringIO()
+            )
+        doc.refresh_from_db()
+        return doc
+
+    def test_a_reading_replaces_the_company_the_person_typed(self):
+        doc = self.typed_then_command(SOURCE_PERSON)
+        self.assertEqual(doc.plan_sponsor.name, "Crumpler Cooperative")
+        self.assertEqual(doc.plan_sponsor_source, SOURCE_MODEL)
+        self.assertEqual(doc.company_lookup_failures, 0)
+
+    def test_a_company_staff_set_stays(self):
+        doc = self.typed_then_command("staff")
+        self.assertEqual(doc.plan_sponsor.name, "Rebecca Lee Crumpler Clinic")
+        self.assertEqual(doc.plan_sponsor_source, "staff")
