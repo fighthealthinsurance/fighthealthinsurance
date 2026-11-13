@@ -22,6 +22,9 @@ A run does three things, and a failure in one never stops the next:
    Counts only; run once, never retried.
 5. Makes again the copies ticked for research whose save failed and are
    due (shared_copy_retries), a few a run. Run once, never retried.
+6. Looks again for the companies of shared plans whose lookup did not
+   finish (plan_documents_processing.aretry_company_lookups), a few a run.
+   Run once, never retried.
 
 History holds the run's numbers, the reminders' row ids, true or false for
 each, the shares' uuids, the counts and whether the summary went.
@@ -61,6 +64,7 @@ SEND_PACING = timedelta(seconds=2)
 # lets them finish; each bounds its own work below this.
 FILE_CHECK_TIMEOUT = timedelta(minutes=4)
 COPY_RETRY_TIMEOUT = timedelta(minutes=4)
+COMPANY_LOOKUP_TIMEOUT = timedelta(minutes=4)
 
 
 @workflow.defn
@@ -78,7 +82,20 @@ class PlanDocumentsSweepWorkflow:
             result["files_checked"] = int(await self._check_files())
         if workflow.patched("plan-documents-copy-retries"):
             result["copies_saved"] = await self._retry_copies()
+        if workflow.patched("plan-documents-company-lookups"):
+            result["company_lookups"] = await self._retry_company_lookups()
         return result
+
+    async def _retry_company_lookups(self) -> int:
+        try:
+            return await workflow.execute_activity(
+                sweep_activities.retry_company_lookups,
+                start_to_close_timeout=COMPANY_LOOKUP_TIMEOUT,
+                retry_policy=SEND_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("company lookups failed; next run tries")
+            return 0
 
     async def _retry_copies(self) -> int:
         try:

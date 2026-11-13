@@ -63,10 +63,12 @@ class _Stubs:
         batches_fail=False,
         files_checked=True,
         copies_saved=0,
+        company_lookups=0,
     ):
         self.summary = summary
         self.files_checked = files_checked
         self.copies_saved = copies_saved
+        self.company_lookups = company_lookups
         self.batches_fail = batches_fail
         self.due = list(due)
         self.sent = sent or {}
@@ -122,6 +124,13 @@ class _Stubs:
                 raise stubs.copies_saved
             return stubs.copies_saved
 
+        @activity.defn(name="retry_company_lookups")
+        async def retry_company_lookups() -> int:
+            stubs.calls.append(("company_lookups",))
+            if isinstance(stubs.company_lookups, Exception):
+                raise stubs.company_lookups
+            return stubs.company_lookups
+
         return [
             find_due_plan_documents_reminders,
             send_plan_documents_reminder,
@@ -129,6 +138,7 @@ class _Stubs:
             send_plan_documents_staff_summary,
             check_shared_plan_document_files,
             retry_shared_copies,
+            retry_company_lookups,
         ]
 
 
@@ -164,8 +174,9 @@ async def test_due_reminders_are_sent_then_waiting_shares_are_started():
         ("summary",),
         ("file_check",),
         ("copy_retries",),
+        ("company_lookups",),
     ]
-    assert result == {"reminders_sent": 2, "readings_started": 2, "summary_sent": 1, "files_checked": 1, "copies_saved": 0}
+    assert result == {"reminders_sent": 2, "readings_started": 2, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
 
 
 @pytest.mark.asyncio
@@ -182,6 +193,7 @@ async def test_the_run_passes_its_numbers_on():
         ("summary",),
         ("file_check",),
         ("copy_retries",),
+        ("company_lookups",),
     ]
 
 
@@ -204,7 +216,7 @@ async def test_a_failed_send_is_not_tried_again_and_the_run_goes_on():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         _, result = await _run(env, stubs)
     assert [c for c in stubs.calls if c[0] == "send"] == [("send", 1), ("send", 2)]
-    assert result == {"reminders_sent": 1, "readings_started": 2, "summary_sent": 1, "files_checked": 1, "copies_saved": 0}
+    assert result == {"reminders_sent": 1, "readings_started": 2, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
 
 
 @pytest.mark.asyncio
@@ -222,7 +234,7 @@ async def test_a_failed_reminder_lookup_still_starts_the_readings():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         _, result = await _run(env, stubs)
     assert [c for c in stubs.calls if c[0] == "send"] == []
-    assert result == {"reminders_sent": 0, "readings_started": 2, "summary_sent": 1, "files_checked": 1, "copies_saved": 0}
+    assert result == {"reminders_sent": 0, "readings_started": 2, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
 
 
 @pytest.mark.asyncio
@@ -230,7 +242,7 @@ async def test_a_failed_lookup_of_waiting_shares_still_sends_the_summary():
     stubs = _Stubs(due=[], batches_fail=True)
     async with await WorkflowEnvironment.start_time_skipping() as env:
         _, result = await _run(env, stubs)
-    assert result == {"reminders_sent": 0, "readings_started": 0, "summary_sent": 1, "files_checked": 1, "copies_saved": 0}
+    assert result == {"reminders_sent": 0, "readings_started": 0, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
 
 
 @pytest.mark.asyncio
@@ -253,6 +265,19 @@ async def test_failed_copy_retries_are_not_retried_and_the_run_still_ends():
         _, result = await _run(env, stubs)
     assert [c for c in stubs.calls if c[0] == "copy_retries"] == [("copy_retries",)]
     assert result["copies_saved"] == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_company_lookups_are_not_retried_and_the_run_still_ends():
+    stubs = _Stubs(
+        due=[], batches=[], company_lookups=ApplicationError("OSError for lookups")
+    )
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        _, result = await _run(env, stubs)
+    assert [c for c in stubs.calls if c[0] == "company_lookups"] == [
+        ("company_lookups",)
+    ]
+    assert result["company_lookups"] == 0
 
 
 @pytest.mark.asyncio
@@ -311,7 +336,7 @@ async def test_a_share_whose_reading_is_running_is_left_to_it():
         # No release afterwards: the time-skipping server can time the held
         # run out first, and a signal to a closed run fails the test.
         _, result = await _run(env, stubs, before=a_reading_already_running)
-    assert result == {"reminders_sent": 0, "readings_started": 1, "summary_sent": 1, "files_checked": 1, "copies_saved": 0}
+    assert result == {"reminders_sent": 0, "readings_started": 1, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
 
 
 @pytest.mark.asyncio
@@ -332,7 +357,7 @@ async def test_a_share_whose_earlier_reading_has_closed_is_read_again():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         handle, result = await _run(env, stubs, before=an_earlier_reading_that_closed)
         history = await handle.fetch_history()
-    assert result == {"reminders_sent": 0, "readings_started": 1, "summary_sent": 1, "files_checked": 1, "copies_saved": 0}
+    assert result == {"reminders_sent": 0, "readings_started": 1, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
     (start,) = _child_starts(history)
     assert start.workflow_id == f"shared-plan-documents-{BATCH_A}"
     assert (
@@ -392,8 +417,10 @@ async def test_history_holds_numbers_ids_shares_and_counts_and_nothing_else():
         ("activity_task_completed_event_attributes", True),
         # The copy retries give back how many were saved, nothing else.
         ("activity_task_completed_event_attributes", 0),
+        # The company lookups give back how many finished, nothing else.
+        ("activity_task_completed_event_attributes", 0),
         (
             "workflow_execution_completed_event_attributes",
-            {"reminders_sent": 1, "readings_started": 1, "summary_sent": 1, "files_checked": 1, "copies_saved": 0},
+            {"reminders_sent": 1, "readings_started": 1, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0},
         ),
     ]

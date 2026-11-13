@@ -13,11 +13,15 @@ unless ``--apply``::
     python manage.py link_plan_sponsors --apply
 
 Only rows read and ready for review with no company yet, or with one of
-those facts empty, are looked at. A company staff set is never changed, and
-neither is a fact the person gave or staff set or cleared. Rows whose
-lookup failed during their reading (company_lookup_failures) are among
-them, and counted. Prints counts and company names only, never a
-document's text or the facts read from it.
+those facts empty, are looked at. A company the person typed gives way to
+the one a reading finds, as in the sweep (plan_sponsors.link_sponsor); a
+company staff set is never changed, and neither is a fact the person gave
+or staff set or cleared. Rows whose lookup did not finish
+(company_lookup_failures: an error, or no model answered and the fixed
+patterns found no company) are among them, and counted; the hourly sweep
+also looks again at those, a few at a time.
+Prints counts and company names only, never a document's text or the facts
+read from it.
 """
 
 import operator
@@ -34,9 +38,11 @@ from fighthealthinsurance.plan_documents_processing import (
     EMPTY_PLAN_FACTS,
     afill_plan_facts,
     afind_company,
+    lookup_finished,
     ready_row,
 )
 from fighthealthinsurance.plan_sponsors import (
+    SOURCE_PERSON,
     link_sponsor,
     match_sponsor,
     normalize_name,
@@ -84,18 +90,19 @@ class Command(BaseCommand):
         for pk in list(rows.values_list("pk", flat=True)):
             row = (
                 rows.filter(pk=pk)
-                .values_list("cleaned_text", "plan_sponsor_id")
+                .values_list("cleaned_text", "plan_sponsor_id", "plan_sponsor_source")
                 .first()
             )
             if row is None:
                 continue
-            text, company_id = row
+            text, company_id, company_source = row
             looked += 1
             try:
                 # The stored text is the cleaned one, so it is both.
                 reading = async_to_sync(afind_company)(text, text)
-                # Only a row with no company is linked, as before.
-                sponsor = reading.sponsor if company_id is None else None
+                # A row with no company, or one the person typed (link_sponsor).
+                open_to_link = company_id is None or company_source == SOURCE_PERSON
+                sponsor = reading.sponsor if open_to_link else None
                 linked = (
                     link_sponsor(pk, sponsor) if apply and sponsor is not None else None
                 )
@@ -109,9 +116,13 @@ class Command(BaseCommand):
                         and ready_row(pk).filter(empty).exists()
                     ]
             except Exception as e:
-                # Counted like a failure in a reading; the next row goes on.
+                failure = type(e).__name__
+            else:
+                failure = "" if lookup_finished(reading) else "no model answered"
+            if failure:
+                # Counted like one in a reading; the next row goes on.
                 failed_now += 1
-                self.stderr.write(f"  a lookup failed: {type(e).__name__}")
+                self.stderr.write(f"  a lookup did not finish: {failure}")
                 if apply:
                     ready_row(pk).update(
                         company_lookup_failures=F("company_lookup_failures") + 1

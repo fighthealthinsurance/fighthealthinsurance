@@ -137,3 +137,16 @@ async def retry_shared_copies() -> int:
     except Exception as e:
         logger.error(f"Retrying shared copies failed: {type(e).__name__}")
         raise _failure(e, "shared copy retries", retryable=False) from None
+
+
+@activity.defn
+async def retry_company_lookups() -> int:
+    """Look again for the companies of shared plan documents whose lookup
+    did not finish (plan_documents_processing.aretry_company_lookups).
+    Returns how many finished. Counts only; nothing about a file."""
+    await _aclose_old_connections()
+    try:
+        return await processing.aretry_company_lookups()
+    except Exception as e:
+        logger.error(f"Retrying company lookups failed: {type(e).__name__}")
+        raise _failure(e, "company lookups", retryable=False) from None

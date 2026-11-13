@@ -16,7 +16,9 @@ reading then skips this check.
 
 A plan's text is read for its company (alink_company), and in the same
 model reading for its insurer, plan year and plan type, which fill only
-the ones the row has empty (afill_plan_facts).
+the ones the row has empty (afill_plan_facts). A lookup that does not
+finish is counted on the row, and the hourly sweep looks again
+(aretry_company_lookups).
 
 A PDF page with no text, or with text that reads as garbage
 (text_quality.is_garbled: a font with its own encoding gives dots or shifted
@@ -38,6 +40,7 @@ SharedPlanDocumentsWorkflow activities wrap these
 import asyncio
 import datetime
 import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -479,13 +482,31 @@ async def afill_plan_facts(document_id: Any, facts: "PlanFacts") -> list[str]:
     return filled
 
 
-async def alink_company(document_id: str, text: str, cleaned_text: str) -> None:
+#: A company lookup that does not finish (lookup_finished) is counted on the
+#: row, and the hourly sweep looks again (aretry_company_lookups) until
+#: MAX_COMPANY_LOOKUPS have not finished, about seven hours; the row is then
+#: left for staff (link_plan_sponsors). A run looks again at
+#: MAX_LOOKUPS_PER_RUN rows at most and starts none after LOOKUP_RUN_SECONDS.
+MAX_COMPANY_LOOKUPS = 8
+MAX_LOOKUPS_PER_RUN = 5
+LOOKUP_RUN_SECONDS = 120
+
+
+def lookup_finished(reading: "PlanReading") -> bool:
+    """Whether a reading settled the company: a model answered, or the fixed
+    patterns found one. Not when no model answered and the patterns found
+    none: that is a lookup to try again, not a document naming no company."""
+    return reading.answered or reading.sponsor is not None
+
+
+async def alink_company(document_id: str, text: str, cleaned_text: str) -> bool:
     """Link the shared row to the company its text names as plan sponsor,
     adding the company to the list if it's new, and fill the insurer, plan
     year and plan type our model found where the row has none
     (afill_plan_facts), checked against ``cleaned_text``, the text as
-    stored. A failure is logged and leaves the rest undone: the reading
-    itself stands."""
+    stored. True when the lookup finished. One that did not (an
+    error, or not lookup_finished) is counted on the row
+    (company_lookup_failures); the reading itself stands."""
     from fighthealthinsurance.plan_sponsors import link_sponsor
 
     try:
@@ -499,14 +520,70 @@ async def alink_company(document_id: str, text: str, cleaned_text: str) -> None:
             f"Could not link policy document {document_id} to a company: "
             f"{type(e).__name__}"
         )
-        # Counted apart from "names no company", so staff can look again.
-        await ready_row(document_id).aupdate(
-            company_lookup_failures=F("company_lookup_failures") + 1
+        await _acount_lookup_failure(document_id)
+        return False
+    if not lookup_finished(found):
+        logger.info(
+            f"Company lookup for policy document {document_id} did not finish: "
+            "no model answered"
         )
-        return
+        await _acount_lookup_failure(document_id)
+        return False
     await ready_row(document_id).filter(company_lookup_failures__gt=0).aupdate(
         company_lookup_failures=0
     )
+    return True
+
+
+async def _acount_lookup_failure(document_id: Any) -> None:
+    # Counted apart from "names no company", so the sweep and staff look again.
+    await ready_row(document_id).aupdate(
+        company_lookup_failures=F("company_lookup_failures") + 1
+    )
+
+
+def _lookups_due():
+    # Fewest failed first, so one that keeps failing does not hold the rest.
+    # A row with no text has nothing to look up in; left in, it would keep
+    # its place at the front every run.
+    return (
+        _shared_rows()
+        .filter(
+            processing_status=PolicyDocument.PROCESSING_READY,
+            company_lookup_failures__gt=0,
+            company_lookup_failures__lt=MAX_COMPANY_LOOKUPS,
+        )
+        .exclude(plan_sponsor_source=SOURCE_STAFF)
+        .exclude(cleaned_text="")
+        .order_by("company_lookup_failures", "id")
+    )
+
+
+async def aretry_company_lookups(limit: int = MAX_LOOKUPS_PER_RUN) -> int:
+    """Look again, from their cleaned text, for the companies of up to
+    ``limit`` shared rows whose lookup did not finish, fewer than
+    MAX_COMPANY_LOOKUPS times. Starts none after LOOKUP_RUN_SECONDS, and
+    stops at the first that does not finish: the models are likely down,
+    and the rest keep their tries. Returns how many finished."""
+    started = time.monotonic()
+    ids = [pk async for pk in _lookups_due().values_list("pk", flat=True)[:limit]]
+    finished = 0
+    for pk in ids:
+        text = await ready_row(pk).values_list("cleaned_text", flat=True).afirst()
+        if not text:
+            continue
+        # Checked just before the lookup, so none starts past the bound.
+        if time.monotonic() - started >= LOOKUP_RUN_SECONDS:
+            logger.info("Company lookups hit the run's time bound; the rest wait")
+            break
+        # The stored text is the cleaned one, so it is both.
+        if not await alink_company(pk, text, text):
+            logger.info("A company lookup did not finish; the rest wait")
+            break
+        finished += 1
+    if ids:
+        logger.info(f"Company lookups looked at again: {finished} of {len(ids)}")
+    return finished
 
 
 def ready_row(document_id: Any):

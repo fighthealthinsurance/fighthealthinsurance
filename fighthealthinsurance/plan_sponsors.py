@@ -316,11 +316,16 @@ def link_sponsor(doc_id: Union[str, uuid.UUID], sponsor: Sponsor) -> PlanSponsor
         open_to_link = Q(plan_sponsor__isnull=True)
         if sponsor.source != SOURCE_PERSON:
             open_to_link |= Q(plan_sponsor_source=SOURCE_PERSON)
-        # A person's own papers keep no text, so no quoted line either.
+        # A person's own papers keep no text, so no quoted line either; a
+        # row marked potential spam, or read as not a plan, while it was
+        # being looked up gets no company. (The employer a person typed is
+        # linked at the save by link_typed_employer.)
         PolicyDocument.objects.filter(open_to_link, pk=doc_id).exclude(
             processing_status__in=(
                 PolicyDocument.PROCESSING_REMOVED,
                 PolicyDocument.PROCESSING_PERSONAL,
+                PolicyDocument.PROCESSING_SPAM,
+                PolicyDocument.PROCESSING_NOT_A_PLAN,
             )
         ).update(
             plan_sponsor=company,
