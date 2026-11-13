@@ -3174,11 +3174,11 @@ class ChooserViewSet(viewsets.ViewSet):
             )
 
         # A judge who skipped the case and has now voted on it reviewed it:
-        # drop the skip, matched as the vote's judge is (_judged_by, the
-        # address included for a request without a session), so settling
-        # never counts them as both a reviewer and a skipper. The vote
-        # keeps the case from being served to them again.
-        ChooserSkip.objects.filter(judged, task=task).delete()
+        # mark the skip superseded, matched as the vote's judge is
+        # (_judged_by, the address included for a request without a
+        # session), so settling never counts them as both a reviewer and a
+        # skipper. Kept, not deleted: the staff participation counts read it.
+        ChooserSkip.objects.filter(judged, task=task).update(superseded=True)
         self._settle(task.id)
 
         response_data = {

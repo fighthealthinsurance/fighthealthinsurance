@@ -210,11 +210,15 @@ def verdict(
 def counted_skips(task_id: int) -> int:
     """The task's skips that count toward settling it: made after the case
     was served to that session (ChooserSkip.served_at), by a judge who has
-    not since voted on it (by session or signed-in user, as the endpoints
-    tell judges apart), so nobody is both a reviewer and a skipper."""
+    not since voted on it, so nobody is both a reviewer and a skipper. The
+    vote endpoint marks such a skip ``superseded`` under its own judge
+    rules; the session and user exclusions here also cover votes cast
+    before it did."""
     votes = ChooserVote.objects.filter(task_id=task_id)
     return (
-        ChooserSkip.objects.filter(task_id=task_id, served_at__isnull=False)
+        ChooserSkip.objects.filter(
+            task_id=task_id, served_at__isnull=False, superseded=False
+        )
         .exclude(session_key__in=votes.values("session_key"))
         .exclude(user__in=votes.filter(user__isnull=False).values("user"))
         .count()

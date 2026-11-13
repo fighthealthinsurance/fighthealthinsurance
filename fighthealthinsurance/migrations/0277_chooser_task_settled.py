@@ -12,6 +12,11 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddField(
             model_name="chooserskip",
+            name="superseded",
+            field=models.BooleanField(default=False),
+        ),
+        migrations.AddField(
+            model_name="chooserskip",
             name="served_at",
             field=models.DateTimeField(blank=True, null=True),
         ),

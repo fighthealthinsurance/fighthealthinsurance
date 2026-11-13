@@ -560,8 +560,11 @@ one included: each is a *review*) and skips:
 - A skip counts only when it was of a case the next-task endpoint served
   that session (`ChooserSkip.served_at`), since a skip names nothing but a
   task id and could otherwise retire cases nobody read; and not when the
-  same judge (session or signed-in user) later voted on it, so nobody is
-  both a reviewer and a skipper. Skips from before `served_at` was recorded
+  same judge later voted on it, so nobody is both a reviewer and a skipper.
+  The vote marks the judge's skip `superseded`, matching the judge as the
+  vote endpoint does (session, signed-in user, and for a request without a
+  session the address); the skip is kept, since the staff participation
+  counts read it. Skips from before `served_at` was recorded
   don't count. Any skip still hides the case from that judge.
 
 A vote or skip only ever settles a case, never reopens one.

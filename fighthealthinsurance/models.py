@@ -5017,6 +5017,11 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
     # nobody read. NULL for a skip without a recorded serve, and on rows
     # written before this field.
     served_at = models.DateTimeField(null=True, blank=True)
+    # True once the same judge (as the vote endpoint matches judges) voted on
+    # the task after skipping it: they reviewed it after all, so the skip no
+    # longer counts toward settling the case. Kept rather than deleted, so
+    # the staff participation counts by window stay as they were.
+    superseded = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

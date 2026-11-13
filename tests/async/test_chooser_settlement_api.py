@@ -134,15 +134,25 @@ class ChooserSettlementAPITest(APITestCase):
 
         self.assertEqual(chooser_settlement.counted_skips(self.task.id), 0)
 
-    def test_a_vote_drops_the_same_judges_earlier_skip(self):
+    def test_a_vote_stops_the_same_judges_earlier_skip_counting(self):
         self._serve()
         self._skip()
 
         self._vote(self.a)
 
-        self.assertFalse(ChooserSkip.objects.filter(task=self.task).exists())
+        self.assertEqual(chooser_settlement.counted_skips(self.task.id), 0)
 
-    def test_a_cookieless_vote_drops_a_skip_from_the_same_address(self):
+    def test_a_superseded_skip_is_kept_for_the_staff_counts(self):
+        self._serve()
+        self._skip()
+
+        self._vote(self.a)
+
+        self.assertTrue(
+            ChooserSkip.objects.filter(task=self.task, superseded=True).exists()
+        )
+
+    def test_a_cookieless_vote_supersedes_a_skip_from_the_same_address(self):
         client_key = ChooserViewSet.client_key_for("203.0.113.7")
         ChooserSkip.objects.create(
             task=self.task,
