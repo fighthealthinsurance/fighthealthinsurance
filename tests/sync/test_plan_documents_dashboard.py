@@ -318,8 +318,11 @@ class TheReadingIsCountedTest(_DashboardTestCase):
             self.rows(self.page(), "reading-status"),
             [
                 ["Received, not read yet", "2"],
+                ["Of those, waiting to be read again after a failed reading", "0"],
                 ["Read and cleaned, ready for review", "1"],
                 ["No text could be read", "1"],
+                ["A person's own papers: file kept, no text", "0"],
+                ["Read, but not a plan document", "0"],
                 ["File and text deleted at the person's request", "1"],
                 ["Potential spam: kept, never read or counted", "1"],
             ],
