@@ -857,4 +857,6 @@ The case (summaries and `qa_pairs` included) rides along in `context`, and its
 (`clear_winner`, `undecided`, or blank while the case is still served) says
 why the case stopped being served, not who won: `chosen_candidate` stays the
 draft with the most credit, even on a case whose clear answer was "no usable
-draft" (then `all_bad_count` is the larger number).
+draft" (compare it with `all_bad_count`). Both are counted at export time,
+over every vote, including any cast after the case settled, so they can
+differ from what the votes showed when it settled.
