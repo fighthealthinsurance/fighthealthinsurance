@@ -214,6 +214,16 @@ class FactsAboutThePlanAreKeptTest(_RemovalTestCase):
         self.remove()
         self.assertEqual(self.after(doc).insurer_name, "")
 
+    def test_a_known_insurer_with_letters_the_matching_drops_goes(self):
+        doc = self.share({})
+        PolicyDocument.objects.filter(pk=doc.pk).update(
+            insurer_name="Crumpler Health Mutual 李",
+            insurer_name_source="model",
+            plan_year=2026,
+        )
+        self.remove()
+        self.assertEqual(self.after(doc).insurer_name, "")
+
     def test_an_insurer_the_person_typed_stays_though_we_do_not_know_it(self):
         doc = self.share({})
         PolicyDocument.objects.filter(pk=doc.pk).update(
