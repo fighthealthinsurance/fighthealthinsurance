@@ -3173,6 +3173,12 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # A judge who skipped the case and has now voted on it reviewed it:
+        # drop the skip, matched as the vote's judge is (_judged_by, the
+        # address included for a request without a session), so settling
+        # never counts them as both a reviewer and a skipper. The vote
+        # keeps the case from being served to them again.
+        ChooserSkip.objects.filter(judged, task=task).delete()
         self._settle(task.id)
 
         response_data = {

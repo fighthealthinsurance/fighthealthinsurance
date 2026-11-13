@@ -15,6 +15,7 @@ from rest_framework.test import APITestCase
 
 from fighthealthinsurance import chooser_settlement
 from fighthealthinsurance.chooser_tokens import candidate_token
+from fighthealthinsurance.rest_views import ChooserViewSet
 from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserSkip,
@@ -132,6 +133,48 @@ class ChooserSettlementAPITest(APITestCase):
         self._stored_skips(3, served=False)
 
         self.assertEqual(chooser_settlement.counted_skips(self.task.id), 0)
+
+    def test_a_vote_drops_the_same_judges_earlier_skip(self):
+        self._serve()
+        self._skip()
+
+        self._vote(self.a)
+
+        self.assertFalse(ChooserSkip.objects.filter(task=self.task).exists())
+
+    def test_a_cookieless_vote_drops_a_skip_from_the_same_address(self):
+        client_key = ChooserViewSet.client_key_for("203.0.113.7")
+        ChooserSkip.objects.create(
+            task=self.task,
+            session_key="lost-session",
+            client_key=client_key,
+            served_at=timezone.now(),
+        )
+        self.client.cookies.clear()
+
+        with patch.object(
+            ChooserViewSet, "_client_address", return_value="203.0.113.7"
+        ):
+            self._vote(self.a)
+
+        self.assertEqual(chooser_settlement.counted_skips(self.task.id), 0)
+
+    def test_a_vote_leaves_another_sessions_skip_from_the_same_address(self):
+        client_key = ChooserViewSet.client_key_for("203.0.113.7")
+        ChooserSkip.objects.create(
+            task=self.task,
+            session_key="another-browser",
+            client_key=client_key,
+            served_at=timezone.now(),
+        )
+        self._serve()
+
+        with patch.object(
+            ChooserViewSet, "_client_address", return_value="203.0.113.7"
+        ):
+            self._vote(self.a)
+
+        self.assertEqual(chooser_settlement.counted_skips(self.task.id), 1)
 
     def test_a_judge_who_skipped_then_voted_counts_as_a_reviewer_only(self):
         self._stored_skips(2)
