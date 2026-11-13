@@ -156,6 +156,15 @@ class TestThePlanYear:
         found = facts(PAGE_ONE + line, plan_year=given, plan_year_evidence=line)
         assert found.plan_year == kept
 
+    @pytest.mark.parametrize("given, kept", [(2025, 2025), (2026, None)])
+    def test_every_range_on_the_line_is_checked(self, given, kept):
+        line = (
+            "Open enrollment 11/01/2025 - 12/15/2025. "
+            "Coverage Period: 07/01/2025 - 06/30/2026"
+        )
+        found = facts(PAGE_ONE + line, plan_year=given, plan_year_evidence=line)
+        assert found.plan_year == kept
+
     def test_a_year_beside_a_range_within_one_year_is_kept(self):
         line = "Plan Year 2026. Open enrollment 11/01/2025 - 12/15/2025"
         found = facts(PAGE_ONE + line, plan_year=2026, plan_year_evidence=line)

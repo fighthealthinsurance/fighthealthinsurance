@@ -489,8 +489,7 @@ def _checked_year(data: dict, squashed_text: str) -> Optional[int]:
         return None
     if not _PLAN_YEAR_WORDS.search(line):
         return None
-    span = _DATE_RANGE.search(line)
-    if span is not None:
+    for span in _DATE_RANGE.finditer(line):
         start, end = (
             int(next(y for y in part if y))
             for part in (span.groups()[:3], span.groups()[3:])
