@@ -67,6 +67,22 @@ Additional Resources & Questions
     <input type="submit" value="Generate My Appeal &rarr;" id="submit" class="fhi-button fhi-button-primary">
   </div>
   </form>
+  {# A box with data-shown-when="name=value" shows only while that answer is #}
+  {# picked (e.g. the prior-auth number). Without script every box shows.   #}
+  <script>
+  document.querySelectorAll("[data-shown-when]").forEach(function (box) {
+    var rule = box.dataset.shownWhen.split("=");
+    var choices = box.form ? box.form.querySelectorAll('input[name="' + rule[0] + '"]') : [];
+    if (!choices.length) { return; }
+    var row = box.closest("tr") || box;
+    function update() {
+      var picked = box.form.querySelector('input[name="' + rule[0] + '"]:checked');
+      row.hidden = !(picked && picked.value === rule[1]);
+    }
+    choices.forEach(function (choice) { choice.addEventListener("change", update); });
+    update();
+  });
+  </script>
 
   <div class="alert-box alert-box-info" style="margin-top:1.5rem;">
     <h2 class="fhi-callout-title">Additional resources that might help</h2>

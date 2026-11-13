@@ -1815,6 +1815,10 @@ class FindNextStepsHelper:
                     if name in new_form.fields:
                         append_help_text(new_form.fields[name], letter_hint)
                 question_forms.append(new_form)
+        for question_form in list(question_forms):
+            fit_to_page = getattr(question_form, "fit_to_page", None)
+            if callable(fit_to_page):
+                fit_to_page(question_forms, answers)
 
         # Add generated questions form if available, and only if it was
         # generated for the inputs the row holds now (or predates the stamp):

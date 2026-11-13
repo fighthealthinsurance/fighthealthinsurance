@@ -759,11 +759,12 @@ class YesNoAnswerTest(QuestionsStepTestBase):
         super().setUp()
         self.denial.generated_questions = []
         self.denial.save(update_fields=["generated_questions"])
-        self.denial.denial_type.set(DenialTypes.objects.filter(pk=3))
+        # Emergency Services: a form of yes/no questions.
+        self.denial.denial_type.set(DenialTypes.objects.filter(pk=30))
 
     def test_every_yes_no_question_starts_on_not_sure(self):
         page = BeautifulSoup(self._rebuild().combined_form.as_table(), "html.parser")
-        for name in ("emergency", "contact_insurance_before", "urgent"):
+        for name in ("called_911", "stabilization_needed", "urgent"):
             with self.subTest(question=name):
                 checked = [
                     radio["value"]
@@ -773,37 +774,37 @@ class YesNoAnswerTest(QuestionsStepTestBase):
                 self.assertEqual(checked, ["not_sure"])
 
     def test_a_yes_is_stored_and_comes_back(self):
-        self._generate_appeal(emergency="yes")
+        self._generate_appeal(called_911="yes")
 
-        self.assertEqual(self._qa()["emergency"], "Yes")
+        self.assertEqual(self._qa()["called_911"], "Yes")
         combined = self._rebuild().combined_form
-        self.assertIs(combined.fields["emergency"].initial, True)
+        self.assertIs(combined.fields["called_911"].initial, True)
 
     def test_a_no_is_stored_as_an_answer(self):
-        self._generate_appeal(emergency="no", prior_auth_id="PA-1")
+        self._generate_appeal(called_911="no", prior_auth_id="PA-1")
 
-        self.assertEqual(self._qa()["emergency"], "No")
+        self.assertEqual(self._qa()["called_911"], "No")
 
     def test_not_sure_is_left_out_of_qa_context(self):
         """The bug: an unticked box was stored as "False", telling the
-        model emergency:False for someone who did not know."""
+        model called_911:False for someone who did not know."""
         self._generate_appeal(
-            emergency="not_sure",
-            contact_insurance_before="not_sure",
+            called_911="not_sure",
+            stabilization_needed="not_sure",
             prior_auth_id="PA-1",
         )
 
         stored = self._qa()
-        self.assertNotIn("emergency", stored)
-        self.assertNotIn("contact_insurance_before", stored)
+        self.assertNotIn("called_911", stored)
+        self.assertNotIn("stabilization_needed", stored)
 
     def test_an_answer_changed_to_not_sure_is_withdrawn(self):
-        self._generate_appeal(emergency="yes")
-        self._generate_appeal(emergency="not_sure", prior_auth_id="PA-1")
+        self._generate_appeal(called_911="yes")
+        self._generate_appeal(called_911="not_sure", prior_auth_id="PA-1")
 
-        self.assertNotIn("emergency", self._qa())
+        self.assertNotIn("called_911", self._qa())
         combined = self._rebuild().combined_form
-        self.assertIsNone(combined.fields["emergency"].initial)
+        self.assertIsNone(combined.fields["called_911"].initial)
 
     def test_an_answer_changed_to_not_sure_withdraws_the_sentence_it_derived(self):
         """A background run reads the stored answers, where nothing answers
@@ -820,17 +821,103 @@ class YesNoAnswerTest(QuestionsStepTestBase):
 
     def test_a_ticked_box_from_an_older_page_is_a_yes(self):
         """A page rendered before the change still posts "on"."""
-        self._generate_appeal(emergency="on")
+        self._generate_appeal(called_911="on")
 
-        self.assertEqual(self._qa()["emergency"], "Yes")
+        self.assertEqual(self._qa()["called_911"], "Yes")
 
     def test_a_false_stored_by_an_older_page_reads_as_no(self):
-        self.denial.qa_context = json.dumps({"emergency": "False"})
+        self.denial.qa_context = json.dumps({"called_911": "False"})
         self.denial.save(update_fields=["qa_context"])
 
         combined = self._rebuild().combined_form
 
-        self.assertIs(combined.fields["emergency"].initial, False)
+        self.assertIs(combined.fields["called_911"].initial, False)
+
+
+class PriorAuthQuestionStepTest(QuestionsStepTestBase):
+    """The one prior-auth question, on the page and through the POST."""
+
+    def setUp(self):
+        super().setUp()
+        self.denial.generated_questions = []
+        self.denial.save(update_fields=["generated_questions"])
+        self.denial.denial_type.set(DenialTypes.objects.filter(pk=3))
+
+    def _choices(self):
+        field = self._rebuild().combined_form.fields["prior_auth_status"]
+        return [value for value, _ in field.choices]
+
+    def test_the_question_starts_on_not_sure(self):
+        page = BeautifulSoup(self._rebuild().combined_form.as_table(), "html.parser")
+        checked = [
+            radio["value"]
+            for radio in page.find_all("input", attrs={"name": "prior_auth_status"})
+            if radio.has_attr("checked")
+        ]
+        self.assertEqual(checked, ["not_sure"])
+
+    def test_the_picked_answer_comes_back_picked(self):
+        self._generate_appeal(prior_auth_status="obtained", prior_auth_id="PA-1")
+
+        combined = self._rebuild().combined_form
+        self.assertEqual(combined.fields["prior_auth_status"].initial, "obtained")
+
+    def test_not_sure_is_left_out_of_qa_context(self):
+        self._generate_appeal(prior_auth_status="told_not_needed")
+        self._generate_appeal(prior_auth_status="not_sure")
+
+        self.assertNotIn("prior_auth_status", self._qa())
+
+    def test_the_number_is_kept_with_got_one(self):
+        self._generate_appeal(prior_auth_status="obtained", prior_auth_id="PA-1")
+
+        self.assertEqual(self._qa()["prior_auth_id"], "PA-1")
+
+    def test_another_answer_drops_the_number_the_hidden_box_still_posted(self):
+        self._generate_appeal(prior_auth_status="obtained", prior_auth_id="PA-1")
+        self._generate_appeal(
+            prior_auth_status="told_not_needed", prior_auth_id="PA-1"
+        )
+
+        self.assertNotIn("prior_auth_id", self._qa())
+
+    def test_the_number_box_is_shown_only_for_got_one(self):
+        field = self._rebuild().combined_form.fields["prior_auth_id"]
+        self.assertEqual(
+            field.widget.attrs["data-shown-when"], "prior_auth_status=obtained"
+        )
+
+    def test_answering_retires_the_old_yes_no_answers(self):
+        self.denial.qa_context = json.dumps({"emergency": "Yes"})
+        self.denial.save(update_fields=["qa_context"])
+
+        self._generate_appeal(prior_auth_status="told_not_needed")
+
+        self.assertNotIn("emergency", self._qa())
+
+    def test_an_old_yes_starts_the_question_picked(self):
+        self.denial.qa_context = json.dumps({"told_prior_auth_not_needed": "Yes"})
+        self.denial.save(update_fields=["qa_context"])
+
+        combined = self._rebuild().combined_form
+        self.assertEqual(
+            combined.fields["prior_auth_status"].initial, "told_not_needed"
+        )
+
+    def test_an_old_ticked_box_starts_the_question_picked(self):
+        self.denial.qa_context = json.dumps({"contact_insurance_before": "on"})
+        self.denial.save(update_fields=["qa_context"])
+
+        combined = self._rebuild().combined_form
+        self.assertEqual(combined.fields["prior_auth_status"].initial, "asked_insurer")
+
+    def test_the_emergency_answer_is_offered_on_its_own(self):
+        self.assertIn("emergency", self._choices())
+
+    def test_the_emergency_answer_is_dropped_beside_the_emergency_questions(self):
+        self.denial.denial_type.set(DenialTypes.objects.filter(pk__in=[3, 30]))
+
+        self.assertNotIn("emergency", self._choices())
 
 
 class DenialTypeQuestionTest(QuestionsStepTestBase):
