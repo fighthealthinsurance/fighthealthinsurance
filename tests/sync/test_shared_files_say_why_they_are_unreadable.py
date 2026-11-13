@@ -24,6 +24,8 @@ from temporalio.exceptions import ApplicationError
 from fighthealthinsurance import plan_documents_processing as processing
 from fighthealthinsurance.activities import shared_plan_documents as activities
 from fighthealthinsurance.models import PolicyDocument
+from fighthealthinsurance.plan_sponsor_reader import PlanReading
+from fighthealthinsurance.plan_sponsors import Sponsor
 from tests.pdf_fixtures import make_pdf_bytes
 from tests.plan_text_samples import PLAN_TEXT, dots_and_symbols
 from tests.sync.test_shared_plan_documents_are_read_and_cleaned import (
@@ -255,12 +257,16 @@ class CompanyLookupsThatFailAreCountedTest(_ReadingTest):
         self.assertEqual((status, doc.company_lookup_failures), (READY, 1))
 
     def test_a_lookup_that_finds_no_company_is_not_a_failure(self):
-        with patch.object(processing, "afind_company", new=AsyncMock(return_value=None)):
+        with patch.object(
+            processing,
+            "afind_company",
+            new=AsyncMock(return_value=PlanReading(None, True)),
+        ):
             _, doc = self.read("plan.txt", PLAN_TEXT.encode())
         self.assertEqual(doc.company_lookup_failures, 0)
 
     def test_a_failure_on_a_row_removed_meanwhile_is_not_written(self):
-        async def removed_then_fails(text):
+        async def removed_then_fails(text, cleaned_text):
             await PolicyDocument.objects.filter(pk=doc.pk).aupdate(
                 processing_status=PolicyDocument.PROCESSING_REMOVED
             )
@@ -309,7 +315,9 @@ class CompanyLookupsThatFailAreCountedTest(_ReadingTest):
         out, err = StringIO(), StringIO()
         with patch(
             "fighthealthinsurance.management.commands.link_plan_sponsors.afind_company",
-            new=AsyncMock(return_value=object()),
+            new=AsyncMock(
+                return_value=PlanReading(Sponsor("Crumpler Cooperative", ""), True)
+            ),
         ), patch(
             "fighthealthinsurance.management.commands.link_plan_sponsors.link_sponsor",
             side_effect=RuntimeError("Rebecca Lee Crumpler"),
@@ -326,7 +334,7 @@ class CompanyLookupsThatFailAreCountedTest(_ReadingTest):
         out = StringIO()
         with patch(
             "fighthealthinsurance.management.commands.link_plan_sponsors.afind_company",
-            new=AsyncMock(return_value=None),
+            new=AsyncMock(return_value=PlanReading(None, True)),
         ):
             call_command("link_plan_sponsors", "--apply", stdout=out)
         self.assertIn("1 of them had a company lookup fail before", out.getvalue())

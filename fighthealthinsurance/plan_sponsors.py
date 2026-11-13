@@ -188,19 +188,27 @@ def _is_insurer(normalized: str, insurers: Optional[frozenset[str]] = None) -> b
     return False
 
 
-def good_name(raw: str, insurers: Optional[frozenset[str]] = None) -> Optional[str]:
-    """``raw`` cleaned into a company name, or None when it isn't one: too
-    short, a phrase such as "the" or "summary", or an insurer we know.
-    ``insurers`` is known_insurers(), given when the caller can't read the
-    database itself (async code); without it the catalog is read here."""
+def organization_name(raw: str) -> Optional[str]:
+    """``raw`` cleaned into an organization's name, or None when it isn't
+    one: too short, or a phrase such as "the" or "summary"."""
     name = _clean_name(raw)
     normalized = normalize_name(name)
     if (
         len(normalized) < 2
         or normalized.split()[0] in _NOT_A_NAME
         or not re.search(r"[a-z]", normalized)
-        or _is_insurer(normalized, insurers)
     ):
+        return None
+    return name
+
+
+def good_name(raw: str, insurers: Optional[frozenset[str]] = None) -> Optional[str]:
+    """``raw`` cleaned into a company name, or None when it isn't one
+    (organization_name) or is an insurer we know. ``insurers`` is
+    known_insurers(), given when the caller can't read the database itself
+    (async code); without it the catalog is read here."""
+    name = organization_name(raw)
+    if name is None or _is_insurer(normalize_name(name), insurers):
         return None
     return name
 

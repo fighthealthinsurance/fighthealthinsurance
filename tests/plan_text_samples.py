@@ -154,3 +154,20 @@ def private_use_characters(length: int = 3000) -> str:
         chr(rng.randint(0xE000, 0xE0FF)) if rng.random() < 0.8 else " "
         for _ in range(length)
     )
+
+
+def long_spd(generic_blocks: int = 20) -> str:
+    """A long plan document whose plan information sits deep in the middle,
+    past many passages that name the plan in general words, where the
+    sponsor reader's first excerpt does not reach."""
+    head = "Summary Plan Description\n" + ("Covered services and what it pays. " * 200)
+    block = "The group health plan pays for covered care. " + (
+        "Deductibles and copays apply to each service. " * 40
+    )
+    plan_info = (
+        "\nPlan Sponsor: Crumpler Cooperative\n"
+        "Employer Identification Number: 12-3456789\n"
+    )
+    middle = ("Claims and appeals follow the rules in this booklet. " * 100) + "\n"
+    tail = "Your rights under federal law are described here. " * 100
+    return head + (block + "\n") * generic_blocks + plan_info + middle + tail

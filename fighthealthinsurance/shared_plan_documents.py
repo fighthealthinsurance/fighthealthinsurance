@@ -887,6 +887,10 @@ PLAN_FACT_FIELDS = (
     "plan_sponsor_source",
     "plan_sponsor_checked_at",
     "plan_sponsor_checked_by",
+    # Who gave the insurer, plan year and plan type: about the kept facts.
+    "insurer_name_source",
+    "plan_year_source",
+    "plan_category_source",
 )
 #: The record of the share itself, kept with the plan facts.
 SHARE_RECORD_FIELDS = (
@@ -937,6 +941,22 @@ def has_plan_facts(doc: PolicyDocument) -> bool:
     )
 
 
+#: plan_sponsors.SOURCE_MODEL: a fact our model read from the file.
+SOURCE_MODEL = "model"
+
+
+def known_insurer_read(name: str, insurers: frozenset[str]) -> bool:
+    """Whether ``name``, an insurer our model read, is one in the catalog
+    (plan_sponsors.known_insurers), whole: a catalog name with more words
+    after it may carry a person's name, and so may letters the matching
+    drops (it keeps a-z and 0-9 only; the catalog's names are all ASCII)."""
+    from fighthealthinsurance.plan_sponsors import normalize_name
+
+    if any(c.isalnum() and not c.isascii() for c in name):
+        return False
+    return normalize_name(name) in insurers
+
+
 def remove_shared_documents(hashed_email: str) -> None:
     """Remove-my-data for the plan documents shared with this scrambled email.
 
@@ -944,10 +964,14 @@ def remove_shared_documents(hashed_email: str) -> None:
     fingerprint and the scrambled email, and any copy still waiting to be
     made again (SharedCopyRetry). A row that holds facts about the
     plan (PLAN_FACT_FIELDS) keeps them and is marked removed, so no reading
-    writes to it again; a row with none is deleted whole. Rows shared with no email, or another
-    email, are untouched.
+    writes to it again; a row with none is deleted whole. An insurer our
+    model read is a fact only when it is one we know (known_insurer_read):
+    the cleaning takes out labelled details, so any other name read from the
+    file may be a person's, and it goes with the text. Rows shared with no
+    email, or another email, are untouched.
     """
     from fighthealthinsurance.models import SharedCopyRetry
+    from fighthealthinsurance.plan_sponsors import known_insurers
 
     with transaction.atomic():
         # A copy still waiting to be made is never made after a removal.
@@ -958,6 +982,15 @@ def remove_shared_documents(hashed_email: str) -> None:
                 source__in=PolicyDocument.SHARED_SOURCES,
             )
         )
+        insurers: Optional[frozenset[str]] = None
+        unknown_insurer = set()
+        for doc in rows:
+            if doc.insurer_name and doc.insurer_name_source == SOURCE_MODEL:
+                if insurers is None:
+                    insurers = known_insurers()
+                if not known_insurer_read(doc.insurer_name, insurers):
+                    doc.insurer_name, doc.insurer_name_source = "", ""
+                    unknown_insurer.add(doc.pk)
         nothing_to_keep = [doc.pk for doc in rows if not has_plan_facts(doc)]
         # The row's own delete signal takes its file.
         PolicyDocument.objects.filter(pk__in=nothing_to_keep).delete()
@@ -965,6 +998,8 @@ def remove_shared_documents(hashed_email: str) -> None:
             if doc.pk in nothing_to_keep:
                 continue
             values = dict(REMOVED_VALUES)
+            if doc.pk in unknown_insurer:
+                values.update(insurer_name="", insurer_name_source="")
             if doc.premium_amount is None:
                 # Without an amount these describe the household, not the plan.
                 values.update(premium_period="", who_is_covered="")

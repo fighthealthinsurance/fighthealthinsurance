@@ -48,8 +48,10 @@ READ_RETRY = RetryPolicy(
 )
 # The readers stop after 60s, OCR after 140s more
 # (plan_documents_processing.OCR_SECONDS plus the child's grace) and the
-# company lookup after 70s; this leaves room for fetching the file. The plan
-# documents Worker's drain covers it (run_temporal_worker).
+# company lookup, a second look at a long file included, after 70s
+# (plan_sponsor_reader.TOTAL_TIMEOUT_SECONDS); this leaves room for
+# fetching the file. The plan documents Worker's drain covers it
+# (run_temporal_worker).
 READ_TIMEOUT = timedelta(minutes=5)
 
 
