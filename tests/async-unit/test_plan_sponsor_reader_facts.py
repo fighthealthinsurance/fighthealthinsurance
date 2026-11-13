@@ -81,6 +81,19 @@ class TestTheInsurer:
         found = facts(PAGE_ONE + line, insurer="Crumpler Health Mutual", insurer_evidence=line)
         assert found.insurer_name == "Crumpler Health Mutual"
 
+    def test_an_insurer_with_letters_its_line_does_not_have_is_dropped(self):
+        found = facts(
+            insurer="Crumpler Health Mutual 李", insurer_evidence=INSURER_LINE
+        )
+        assert found.insurer_name == ""
+
+    def test_an_accented_insurer_its_line_names_is_taken(self):
+        line = "Cooperativa Médica Crumpler: Plan Oro"
+        found = facts(
+            PAGE_ONE + line, insurer="Cooperativa Médica Crumpler", insurer_evidence=line
+        )
+        assert found.insurer_name == "Cooperativa Médica Crumpler"
+
     def test_a_person_quoted_without_their_label_is_dropped(self):
         found = facts(
             insurer="Rebecca Lee Crumpler", insurer_evidence="Rebecca Lee Crumpler"
@@ -203,6 +216,7 @@ class TestThePlanType:
             ("employer_erisa", "This is not an ERISA plan."),
             ("medicare_advantage", "This is not a Medicare Advantage plan."),
             ("medicare_traditional", "If you have Medicare, this plan pays secondary."),
+            ("medicare_traditional", "This plan is secondary to Medicare."),
         ],
     )
     def test_a_line_that_rules_its_type_out_drops_it(self, kind, line):
@@ -217,6 +231,7 @@ class TestThePlanType:
             ("aca_marketplace", "This plan is sold on the Health Insurance Marketplace."),
             ("employer_non_erisa", "This is not an ERISA plan."),
             ("medicare_traditional", "Original Medicare Part A and Part B coverage."),
+            ("medicare_traditional", "Original Medicare pays primary for covered services."),
         ],
     )
     def test_a_line_that_names_its_type_keeps_it(self, kind, line):

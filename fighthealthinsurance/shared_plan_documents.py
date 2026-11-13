@@ -948,9 +948,12 @@ SOURCE_MODEL = "model"
 def known_insurer_read(name: str, insurers: frozenset[str]) -> bool:
     """Whether ``name``, an insurer our model read, is one in the catalog
     (plan_sponsors.known_insurers), whole: a catalog name with more words
-    after it may carry a person's name."""
+    after it may carry a person's name, and so may letters the matching
+    drops (it keeps a-z and 0-9 only; the catalog's names are all ASCII)."""
     from fighthealthinsurance.plan_sponsors import normalize_name
 
+    if any(c.isalnum() and not c.isascii() for c in name):
+        return False
     return normalize_name(name) in insurers
 
 

@@ -122,10 +122,12 @@ _PLAN_TYPE_WORDS = {
     "individual_off_exchange": _OFF_EXCHANGE,
     "short_term": re.compile(r"\bshort[\s-]*term\b", re.IGNORECASE),
 }
-#: A line about how a plan works alongside Medicare ("if you have Medicare,
-#: this plan pays secondary"), which names Medicare without being it.
+#: A line about another plan working alongside Medicare ("if you have
+#: Medicare, this plan pays secondary"), which names Medicare without being
+#: it. Not "Original Medicare pays primary", which is about Medicare itself.
 _ALONGSIDE_MEDICARE = re.compile(
-    r"\bpays?\s+(?:as\s+)?(?:primary|secondary)|\b(?:primary|secondary)\s+(?:payer|to)\b"
+    r"\b(?:this|the|our|your)\s+(?:plan|coverage|policy)\s+(?:pays|is|will\s+pay)"
+    r"\s+(?:as\s+)?(?:primary|secondary)|\b(?:primary|secondary)\s+to\s+medicare"
     r"|coordinat\w*\s+(?:of\s+)?benefits|if\s+you\s+(?:have|are\s+(?:eligible|enrolled))"
     r"|eligible\s+for\s+medicare",
     re.IGNORECASE,
@@ -299,7 +301,8 @@ def _squash(s: str) -> str:
 
 
 def _letters(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+    # Every letter and digit, in any script: none may go unchecked.
+    return re.sub(r"[\W_]+", " ", s.casefold()).strip()
 
 
 _PLAN_WORDS_AT_END = re.compile(
