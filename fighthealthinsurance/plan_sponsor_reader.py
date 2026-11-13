@@ -142,11 +142,15 @@ _PLAN_TYPE_DENIED: dict[str, tuple[re.Pattern[str], ...]] = {
     ),
 }
 #: Words that make a quoted line give the plan's own year (its coverage
-#: period or plan year), not a revision or print date.
+#: period or plan year, or a title such as "2026 Evidence of Coverage"),
+#: not a revision or print date.
 _PLAN_YEAR_WORDS = re.compile(
     r"plan\s+year|coverage\s+(?:period|year|begins|beginning|starts)"
     r"|(?:benefit|policy|contract)\s+(?:period|year)|calendar\s+year"
     r"|effective|begins|beginning"
+    r"|evidence\s+of\s+coverage|certificate\s+of\s+coverage|summary\s+of\s+benefits"
+    r"|benefits?\s+(?:booklet|guide|summary)|open\s+enrollment"
+    r"|evidencia\s+de\s+cobertura|resumen\s+de\s+beneficios"
     r"|per[ií]odo\s+de\s+cobertura|a[ñn]o\s+del\s+plan|vigen(?:te|cia)",
     re.IGNORECASE,
 )

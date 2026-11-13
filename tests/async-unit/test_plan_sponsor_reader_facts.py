@@ -137,6 +137,20 @@ class TestThePlanYear:
         )
         assert found.plan_year is None
 
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "2026 Evidence of Coverage",
+            "2026 Summary of Benefits",
+            "Benefits Booklet 2026",
+            "Open Enrollment 2026",
+            "2026 Certificate of Coverage",
+        ],
+    )
+    def test_a_year_in_the_documents_title_is_taken(self, line):
+        found = facts(PAGE_ONE + line, plan_year=2026, plan_year_evidence=line)
+        assert found.plan_year == 2026
+
     def test_a_year_from_a_line_that_is_not_the_plans_year_is_dropped(self):
         line = "Revision date: 2026"
         found = facts(PAGE_ONE + line, plan_year=2026, plan_year_evidence=line)
