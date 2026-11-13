@@ -76,6 +76,11 @@ class TestTheInsurer:
         )
         assert found.insurer_name == ""
 
+    def test_an_insurer_whose_quote_holds_an_email_is_still_taken(self):
+        line = "Crumpler Health Mutual: Gold PPO  questions: rebecca@example.com"
+        found = facts(PAGE_ONE + line, insurer="Crumpler Health Mutual", insurer_evidence=line)
+        assert found.insurer_name == "Crumpler Health Mutual"
+
     def test_a_person_quoted_without_their_label_is_dropped(self):
         found = facts(
             insurer="Rebecca Lee Crumpler", insurer_evidence="Rebecca Lee Crumpler"
@@ -132,6 +137,11 @@ class TestThePlanYear:
         )
         assert found.plan_year is None
 
+    def test_a_year_from_a_line_that_is_not_the_plans_year_is_dropped(self):
+        line = "Revision date: 2026"
+        found = facts(PAGE_ONE + line, plan_year=2026, plan_year_evidence=line)
+        assert found.plan_year is None
+
     def test_a_birth_date_quoted_without_its_label_is_dropped(self):
         found = facts(plan_year=2001, plan_year_evidence="03/14/2001")
         assert found.plan_year is None
@@ -178,6 +188,7 @@ class TestThePlanType:
             ("individual_off_exchange", "This individual plan is sold on the Marketplace."),
             ("employer_erisa", "This is not an ERISA plan."),
             ("medicare_advantage", "This is not a Medicare Advantage plan."),
+            ("medicare_traditional", "If you have Medicare, this plan pays secondary."),
         ],
     )
     def test_a_line_that_rules_its_type_out_drops_it(self, kind, line):
@@ -191,6 +202,7 @@ class TestThePlanType:
             ("individual_off_exchange", "This individual plan is sold off-exchange."),
             ("aca_marketplace", "This plan is sold on the Health Insurance Marketplace."),
             ("employer_non_erisa", "This is not an ERISA plan."),
+            ("medicare_traditional", "Original Medicare Part A and Part B coverage."),
         ],
     )
     def test_a_line_that_names_its_type_keeps_it(self, kind, line):

@@ -122,14 +122,34 @@ _PLAN_TYPE_WORDS = {
     "individual_off_exchange": _OFF_EXCHANGE,
     "short_term": re.compile(r"\bshort[\s-]*term\b", re.IGNORECASE),
 }
+#: A line about how a plan works alongside Medicare ("if you have Medicare,
+#: this plan pays secondary"), which names Medicare without being it.
+_ALONGSIDE_MEDICARE = re.compile(
+    r"\bpays?\s+(?:as\s+)?(?:primary|secondary)|\b(?:primary|secondary)\s+(?:payer|to)\b"
+    r"|coordinat\w*\s+(?:of\s+)?benefits|if\s+you\s+(?:have|are\s+(?:eligible|enrolled))"
+    r"|eligible\s+for\s+medicare",
+    re.IGNORECASE,
+)
 #: Words in a quoted line that rule a type out though its own words are
-#: there: Medicare Advantage is not Original Medicare, an off-exchange plan
-#: is not a Marketplace one.
-_PLAN_TYPE_DENIED = {
-    "employer_erisa": _ERISA_DENIED,
-    "aca_marketplace": _OFF_EXCHANGE,
-    "medicare_traditional": _PLAN_TYPE_WORDS["medicare_advantage"],
+#: there: Medicare Advantage, or a plan working alongside Medicare, is not
+#: Original Medicare; an off-exchange plan is not a Marketplace one.
+_PLAN_TYPE_DENIED: dict[str, tuple[re.Pattern[str], ...]] = {
+    "employer_erisa": (_ERISA_DENIED,),
+    "aca_marketplace": (_OFF_EXCHANGE,),
+    "medicare_traditional": (
+        _PLAN_TYPE_WORDS["medicare_advantage"],
+        _ALONGSIDE_MEDICARE,
+    ),
 }
+#: Words that make a quoted line give the plan's own year (its coverage
+#: period or plan year), not a revision or print date.
+_PLAN_YEAR_WORDS = re.compile(
+    r"plan\s+year|coverage\s+(?:period|year|begins|beginning|starts)"
+    r"|(?:benefit|policy|contract)\s+(?:period|year)|calendar\s+year"
+    r"|effective|begins|beginning"
+    r"|per[ií]odo\s+de\s+cobertura|a[ñn]o\s+del\s+plan|vigen(?:te|cia)",
+    re.IGNORECASE,
+)
 #: A type's words right after "not" ("not an ERISA plan") deny it.
 _NEGATED = re.compile(r"\bnot\s+(?:an?\s+|the\s+)?$", re.IGNORECASE)
 #: Each model's answer, and all of them together, a second look included:
@@ -404,13 +424,15 @@ def checked_facts(answer: str, cleaned_text: str) -> PlanFacts:
 
 def _quoted_line(data: dict, key: str, squashed_text: str) -> str:
     """The line an answer quotes under ``key``, with personal details taken
-    out, when it is in the document word for word; "" otherwise."""
+    out, when it is word for word in the stored text; "" otherwise. The
+    model reads the text before cleaning, so its quote is cleaned first."""
     line = data.get(key)
     if not isinstance(line, str) or len(line.strip()) < 4:
         return ""
-    if _squash(line) not in squashed_text:
+    scrubbed = _scrubbed(line)
+    if _squash(scrubbed) not in squashed_text:
         return ""
-    return _scrubbed(line)
+    return scrubbed
 
 
 def _checked_insurer(data: dict, squashed_text: str) -> str:
@@ -446,6 +468,8 @@ def _checked_year(data: dict, squashed_text: str) -> Optional[int]:
     # The year whole, not part of a longer number; a birth date is cleaned out.
     if not re.search(rf"(?<![0-9]){year}(?![0-9])", line):
         return None
+    if not _PLAN_YEAR_WORDS.search(line):
+        return None
     return year
 
 
@@ -460,8 +484,7 @@ def _checked_plan_type(data: dict, squashed_text: str) -> str:
     line = _quoted_line(data, "plan_type_evidence", squashed_text)
     if not any(not _NEGATED.search(line, 0, m.start()) for m in words.finditer(line)):
         return ""
-    denied = _PLAN_TYPE_DENIED.get(kind)
-    if denied is not None and denied.search(line):
+    if any(denied.search(line) for denied in _PLAN_TYPE_DENIED.get(kind, ())):
         return ""
     return kind
 
@@ -494,6 +517,12 @@ async def aread_plan(text: str, cleaned_text: str) -> PlanReading:
         second = await _aask(more, text, insurers, deadline) if more else None
         if second is not None:
             sponsor = second[0]
+    if sponsor is not None and normalize_name(sponsor.name) == normalize_name(
+        facts.insurer_name
+    ):
+        # A self-funded plan's employer is not its insurer, by the sponsor's
+        # name as checked, from either reading.
+        facts = facts._replace(insurer_name="")
     return PlanReading(sponsor, True, facts)
 
 
