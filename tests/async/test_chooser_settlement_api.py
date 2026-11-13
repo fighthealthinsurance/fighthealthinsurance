@@ -2,6 +2,7 @@
 whose votes show a clear winner, or that is clearly undecided, stops being
 served (chooser_settlement)."""
 
+import datetime
 import io
 import json
 from unittest.mock import patch
@@ -16,6 +17,7 @@ from rest_framework.test import APITestCase
 from fighthealthinsurance import chooser_settlement
 from fighthealthinsurance.chooser_tokens import candidate_token
 from fighthealthinsurance.rest_views import ChooserViewSet
+from fighthealthinsurance.staff_views import ModelUsageDashboardView
 from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserSkip,
@@ -150,6 +152,29 @@ class ChooserSettlementAPITest(APITestCase):
 
         self.assertTrue(
             ChooserSkip.objects.filter(task=self.task, superseded=True).exists()
+        )
+
+    def test_a_later_vote_leaves_the_earlier_windows_staff_counts_alone(self):
+        self._serve()
+        self._skip()
+        now = timezone.now()
+        ChooserSkip.objects.filter(task=self.task).update(
+            created_at=now - datetime.timedelta(days=2)
+        )
+        window = [
+            (
+                "earlier",
+                "Earlier",
+                now - datetime.timedelta(days=3),
+                now - datetime.timedelta(days=1),
+            )
+        ]
+        before = ModelUsageDashboardView._chooser_participation(window)
+
+        self._vote(self.a)
+
+        self.assertEqual(
+            ModelUsageDashboardView._chooser_participation(window), before
         )
 
     def test_a_cookieless_vote_supersedes_a_skip_from_the_same_address(self):
