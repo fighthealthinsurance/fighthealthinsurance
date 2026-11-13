@@ -486,6 +486,25 @@ class Base(Configuration):
     CHOOSER_WARMUP_SATURATION_VOTES = _env_int(
         "CHOOSER_WARMUP_SATURATION_VOTES", 5, minimum=1, maximum=100000
     )
+    # Settling a case (chooser_settlement): once its votes show a clear
+    # winner, or show it is clearly undecided, it stops being served so new
+    # judges' reviews go to cases that still need them. The minimum reviews
+    # before either is called; the reviews after which an even split at the
+    # top counts as undecided; the reviews after which no clear winner at all
+    # does; and the share of judges skipping it that does.
+    CHOOSER_SETTLE_TASKS = os.getenv("CHOOSER_SETTLE_TASKS", "true").lower() != "false"
+    CHOOSER_SETTLE_MIN_REVIEWS = _env_int(
+        "CHOOSER_SETTLE_MIN_REVIEWS", 5, minimum=1, maximum=100000
+    )
+    CHOOSER_UNDECIDED_REVIEWS = _env_int(
+        "CHOOSER_UNDECIDED_REVIEWS", 10, minimum=1, maximum=100000
+    )
+    CHOOSER_UNDECIDED_MAX_REVIEWS = _env_int(
+        "CHOOSER_UNDECIDED_MAX_REVIEWS", 20, minimum=1, maximum=100000
+    )
+    CHOOSER_UNDECIDED_SKIP_SHARE = _env_float(
+        "CHOOSER_UNDECIDED_SKIP_SHARE", 0.5, minimum=0.05, maximum=1.0
+    )
     CONDITION_RANKING_MIN_PEOPLE = int(os.getenv("CONDITION_RANKING_MIN_PEOPLE", "5"))
     CONDITION_RANKING_LOOKUP_BUDGET = int(
         os.getenv("CONDITION_RANKING_LOOKUP_BUDGET", "30")
@@ -1400,6 +1419,12 @@ class _TestBase(Dev):
     # the ordering tests are served.
     CHOOSER_WARMUP_ROUNDS_PER_LEVEL = 1
     CHOOSER_WARMUP_SATURATION_VOTES = 5
+    # Settling is pinned the same way, for the tests that count votes.
+    CHOOSER_SETTLE_TASKS = True
+    CHOOSER_SETTLE_MIN_REVIEWS = 5
+    CHOOSER_UNDECIDED_REVIEWS = 10
+    CHOOSER_UNDECIDED_MAX_REVIEWS = 20
+    CHOOSER_UNDECIDED_SKIP_SHARE = 0.5
 
     @classmethod
     def pre_setup(cls):

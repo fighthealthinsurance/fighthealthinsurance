@@ -4773,6 +4773,18 @@ class ChooserTask(ExportModelOperationsMixin("ChooserTask"), models.Model):  # t
         blank=True,
         validators=[MinValueValidator(1), MaxValueValidator(5)],
     )
+    # Why the task stopped being served once its votes said enough
+    # (chooser_settlement): it has a clear winner, or it is clearly
+    # undecided (judges split evenly, or keep skipping it). Set with status
+    # EXHAUSTED; blank for a task never settled. Its votes keep counting.
+    SETTLED_REASON_CHOICES = [
+        ("clear_winner", "Clear winner"),
+        ("undecided", "Clearly undecided"),
+    ]
+    settled_reason = models.CharField(
+        max_length=20, choices=SETTLED_REASON_CHOICES, blank=True, default=""
+    )
+    settled_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -4998,6 +5010,18 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
         related_name="+",
     )
     client_key = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    # When the next-task endpoint served this session the task, as on
+    # ChooserVote. A skip counts toward settling the task as undecided
+    # (chooser_settlement) only with it: a skip names nothing but a task id,
+    # so without proof the case was shown, a few sessions could retire cases
+    # nobody read. NULL for a skip without a recorded serve, and on rows
+    # written before this field.
+    served_at = models.DateTimeField(null=True, blank=True)
+    # True once the same judge (as the vote endpoint matches judges) voted on
+    # the task after skipping it: they reviewed it after all, so the skip no
+    # longer counts toward settling the case. Kept rather than deleted, so
+    # the staff participation counts by window stay as they were.
+    superseded = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
