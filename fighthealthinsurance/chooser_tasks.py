@@ -1893,11 +1893,13 @@ async def launch_backfill(
     """
     if force_target is None:
         force_target = CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET
-    if force_target and force_target > 0:
-        forced = await _forced_backfill(task_type, force_target, count)
-        if isinstance(forced, dict):
-            return forced
-        count, reason = forced
+    target = force_target or 0
+    forced = target > 0
+    if forced:
+        shortfall = await _forced_backfill(task_type, target, count)
+        if isinstance(shortfall, dict):
+            return shortfall
+        count, reason = shortfall
     else:
         if count is None:
             count = CHOOSER_LAUNCH_BACKFILL_SIZE
@@ -1930,9 +1932,21 @@ async def launch_backfill(
         return {"skipped": "another process holds the generation claim"}
     started = time.monotonic()
     async with claim:
-        # Asked under the claim, so nothing that honours it can add one
-        # between this count and the batch.
-        written = await _tasks_written_since(task_type, decided_at)
+        if forced:
+            # A forced backfill is sized by the pool, so it counts the pool
+            # again now that it holds the claim: a case a refill was writing
+            # when it decided was created before then, so
+            # _tasks_written_since would miss it, and cases settled while it
+            # waited have left the pool.
+            shortfall = await _forced_backfill(task_type, target, count)
+            if isinstance(shortfall, dict):
+                return shortfall
+            count, reason = shortfall
+            written = 0
+        else:
+            # Asked under the claim, so nothing that honours it can add one
+            # between this count and the batch.
+            written = await _tasks_written_since(task_type, decided_at)
         if written >= count:
             logger.info(
                 f"Chooser {task_type} backfill not needed: {written} task(s) "

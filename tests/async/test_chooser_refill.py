@@ -1481,6 +1481,29 @@ class TestLaunchBackfill:
 
         assert result == {"requested": 2, "ready": 2}
 
+    async def test_a_forced_backfill_counts_the_pool_again_once_it_has_the_claim(self):
+        """A refill was writing a case when the backfill decided; it goes
+        READY while the backfill waits for the claim. Created before the
+        decision, it is not one _tasks_written_since would count."""
+        held = await _claim_generation("appeal")
+        await _make_task()
+        in_progress = await _make_task(status="QUEUED")
+
+        async def finish_then_free(*args, **kwargs):
+            await ChooserTask.objects.filter(id=in_progress.id).aupdate(
+                status="READY"
+            )
+            await held.release()
+            return await _claim_generation("appeal")
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks._wait_for_backfill_claim",
+            new=finish_then_free,
+        ), _generating() as generate:
+            result = await launch_backfill(force_target=3)
+
+        assert (result, generate.await_count) == ({"requested": 1, "ready": 1}, 1)
+
     async def test_a_count_caps_a_forced_backfill(self):
         with _generating():
             result = await launch_backfill(count=2, force_target=10)
