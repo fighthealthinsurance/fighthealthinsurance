@@ -3,12 +3,18 @@
 
 {% block title %}Page Not Found - Fight Health Insurance{% endblock title %}
 
+{% block metadescription %}This page doesn't exist. Professor Timbit checked.{% endblock metadescription %}
+
 {% block content %}
 <div class="status-page-container">
+    <img src="{% static 'images/timbit-404.jpg' %}" class="timbit-404-photo" width="480" height="480"
+         alt="Professor Timbit, a sheltie, looking straight at the camera">
     <div class="status-code">404</div>
-    <h1 class="status-title">Page Not Found</h1>
+    <h1 class="status-title">Professor Timbit sniffed everywhere</h1>
+    <pre class="timbit-404-terminal" aria-label="The page you asked for was not found"><span class="timbit-404-prompt">$</span> sniff {{ request_path|default:"/"|truncatechars:60 }}
+sniff: no such page here. Good dog, though.</pre>
     <p class="status-message">
-        Sorry, we couldn't find the page you're looking for. It might have been moved or doesn't exist.
+        Shelties can herd almost anything. This page got away. It may have moved, or it never existed.
     </p>
 
     <div class="status-cta-box">
