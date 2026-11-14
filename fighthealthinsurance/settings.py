@@ -981,12 +981,13 @@ class Base(Configuration):
         # First, so every request is stamped with the thread its cleanup
         # runs on before anything can raise; see error_views.
         "fighthealthinsurance.middleware.RequestThreadMiddleware",
-        # Early so short-circuit responses (redirects, /metrics 404s) carry it.
+        # Early so short-circuit responses (redirects, /metrics 404s) carry
+        # these headers too.
         "fighthealthinsurance.middleware.PermissionsPolicyMiddleware",
+        "fighthealthinsurance.middleware.NoIndexOffMainHostMiddleware",
         # /metrics is gated before any session/auth/audit work happens.
         "fighthealthinsurance.middleware.MetricsAccessMiddleware",
         "fighthealthinsurance.middleware.DomainRedirectMiddleware",
-        "fighthealthinsurance.middleware.NoIndexOffMainHostMiddleware",
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",

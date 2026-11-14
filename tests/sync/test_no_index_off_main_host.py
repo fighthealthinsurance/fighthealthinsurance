@@ -41,3 +41,15 @@ class NoIndexOffMainHostTest(TestCase):
         )
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response["X-Robots-Tag"], "noindex, nofollow")
+
+    def test_noindex_reaches_early_answers(self):
+        with self.settings(
+            DOMAIN_REDIRECTS={"old.example.com": "www.fighthealthinsurance.com"}
+        ):
+            from fighthealthinsurance.middleware import DomainRedirectMiddleware
+
+            middleware = DomainRedirectMiddleware(lambda r: None)
+            self.assertIn("old.example.com", middleware.redirects)
+            response = self.client.get("/", HTTP_HOST="old.example.com")
+        self.assertEqual(response.status_code, 301)
+        self.assertEqual(response["X-Robots-Tag"], "noindex, nofollow")
