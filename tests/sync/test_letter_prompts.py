@@ -163,12 +163,17 @@ class HeadToHeadTest(TestCase):
                 (apv.PROMPT_V1, apv.PROMPT_V3),
                 (apv.PROMPT_V1, apv.PROMPT_V4),
                 (apv.PROMPT_V1, apv.PROMPT_V5),
+                (apv.PROMPT_V1, apv.PROMPT_V6),
                 (apv.PROMPT_V2, apv.PROMPT_V3),
                 (apv.PROMPT_V2, apv.PROMPT_V4),
                 (apv.PROMPT_V2, apv.PROMPT_V5),
+                (apv.PROMPT_V2, apv.PROMPT_V6),
                 (apv.PROMPT_V3, apv.PROMPT_V4),
                 (apv.PROMPT_V3, apv.PROMPT_V5),
+                (apv.PROMPT_V3, apv.PROMPT_V6),
                 (apv.PROMPT_V4, apv.PROMPT_V5),
+                (apv.PROMPT_V4, apv.PROMPT_V6),
+                (apv.PROMPT_V5, apv.PROMPT_V6),
             ],
         )
 
