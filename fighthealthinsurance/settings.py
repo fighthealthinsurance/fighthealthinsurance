@@ -901,6 +901,12 @@ class Base(Configuration):
     # Map of alternate hosts to canonical hosts; matching requests are
     # permanent-redirected by DomainRedirectMiddleware.
     DOMAIN_REDIRECTS: dict[str, str] = {}
+    # Hosts in DOMAIN_REDIRECTS that redirect GET/HEAD only, so POSTs such as
+    # webhooks (which don't follow redirects) keep reaching the app.
+    DOMAIN_REDIRECTS_SAFE_METHODS_ONLY: set[str] = set()
+
+    # Browser features the site never uses, turned off for every response.
+    PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     # Application definition
@@ -967,6 +973,8 @@ class Base(Configuration):
         # First, so every request is stamped with the thread its cleanup
         # runs on before anything can raise; see error_views.
         "fighthealthinsurance.middleware.RequestThreadMiddleware",
+        # Early so short-circuit responses (redirects, /metrics 404s) carry it.
+        "fighthealthinsurance.middleware.PermissionsPolicyMiddleware",
         # /metrics is gated before any session/auth/audit work happens.
         "fighthealthinsurance.middleware.MetricsAccessMiddleware",
         "fighthealthinsurance.middleware.DomainRedirectMiddleware",
@@ -1758,7 +1766,9 @@ class Prod(Base):
         "www.fuckhealthinsurance.com": "www.fighthealthinsurance.com",
         "fightinsurance.ai": "www.fighthealthinsurance.com",
         "www.fightinsurance.ai": "www.fighthealthinsurance.com",
+        "fighthealthinsurance.com": "www.fighthealthinsurance.com",
     }
+    DOMAIN_REDIRECTS_SAFE_METHODS_ONLY = {"fighthealthinsurance.com"}
 
     # HSTS - tell browsers to always use HTTPS
     SECURE_HSTS_SECONDS = 31536000  # 1 year

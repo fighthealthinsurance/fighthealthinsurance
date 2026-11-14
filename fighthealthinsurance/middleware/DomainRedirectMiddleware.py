@@ -18,6 +18,8 @@ class DomainRedirectMiddleware:
     The map is configured via settings.DOMAIN_REDIRECTS as {alt_host: canonical_host}.
     Hostnames are matched case-insensitively and ignore the port. GET/HEAD use 301
     (better understood by crawlers); other methods use 308 so the body is preserved.
+    Hosts listed in settings.DOMAIN_REDIRECTS_SAFE_METHODS_ONLY redirect GET/HEAD
+    only; other methods on them are served in place.
     """
 
     _SAFE_METHODS = frozenset({"GET", "HEAD"})
@@ -27,14 +29,19 @@ class DomainRedirectMiddleware:
         self.redirects = {
             k.lower(): v for k, v in getattr(settings, "DOMAIN_REDIRECTS", {}).items()
         }
+        self.safe_methods_only = {
+            h.lower()
+            for h in getattr(settings, "DOMAIN_REDIRECTS_SAFE_METHODS_ONLY", ())
+        }
 
     def __call__(self, request: HttpRequest) -> HttpResponse:
         if self.redirects:
             host = request.get_host().split(":")[0].lower()
             target = self.redirects.get(host)
-            if target:
+            safe = request.method in self._SAFE_METHODS
+            if target and (safe or host not in self.safe_methods_only):
                 location = f"https://{target}{request.get_full_path()}"
-                if request.method in self._SAFE_METHODS:
+                if safe:
                     return HttpResponsePermanentRedirect(location)
                 return HttpResponsePermanentRedirectKeepMethod(location)
         return self.get_response(request)

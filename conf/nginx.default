@@ -34,6 +34,12 @@ server {
     location /static/ {
 	root /opt/fighthealthinsurance/;
     }
+    # django-compressor output (name.<12 hex>.css|js) is content-hashed, so
+    # cache it for a year; listed after the deny regexes, which match first.
+    location ~ "^/static/CACHE/(css|js)/([^/]+\.)?[0-9a-f]{12}\.(css|js)$" {
+	root /opt/fighthealthinsurance/;
+	add_header Cache-Control "public, max-age=31536000, immutable";
+    }
     location /media/ {
 	root /opt/fighthealthinsurance/;
     }
