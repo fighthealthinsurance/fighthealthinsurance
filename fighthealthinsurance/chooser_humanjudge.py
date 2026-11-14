@@ -33,7 +33,7 @@ from typing import Any, Iterable, Optional
 
 import httpx
 from django.conf import settings
-from django.db.models import Count, Q
+from django.db.models import Case, Count, Exists, IntegerField, OuterRef, Q, Value, When
 from django.utils import timezone
 from loguru import logger
 
@@ -54,9 +54,11 @@ TRACE_NAME = "fhi-appeal-arena"
 # Cases whose drafts have been in front of our voters. Never QUEUED (still
 # being written) or DISABLED (not fit to show anyone).
 SENDABLE_STATUSES = ("READY", "IN_USE", "EXHAUSTED")
-# Cases one upload may send: each draft is its own request, and the admin
-# waits on them all.
-MAX_TASKS_PER_UPLOAD = 25
+# Cases one upload may send. Each draft is its own request, so the admin
+# runs up to INLINE_UPLOAD_LIMIT cases while the page waits and anything
+# bigger in a background thread (see start_upload).
+INLINE_UPLOAD_LIMIT = 25
+MAX_TASKS_PER_UPLOAD = 300
 _HTTP_TIMEOUT_SECONDS = 20.0
 # HumanJudge's page cap (the SDK's PAGE_SIZE), and how many pages one download reads.
 _PAGE_SIZE = 1000
@@ -333,6 +335,15 @@ class UploadResult:
 
 
 async def _send(client: HumanJudgeClient, submission: HumanJudgeSubmission) -> bool:
+    """Send one draft; returns whether it went. Two uploads can hold the
+    same draft (a second click while a background upload runs): sending it
+    twice is harmless, since HumanJudge de-duplicates on the inference id,
+    but a failure must never overwrite another upload's SENT, so a draft
+    already SENT is skipped and FAILED is written only over a row not SENT."""
+    if await HumanJudgeSubmission.objects.filter(
+        pk=submission.pk, status="SENT"
+    ).aexists():
+        return True
     candidate = submission.candidate
     submission.attempts += 1
     try:
@@ -349,7 +360,13 @@ async def _send(client: HumanJudgeClient, submission: HumanJudgeSubmission) -> b
     except (HumanJudgeError, httpx.HTTPError) as e:
         submission.status = "FAILED"
         submission.last_error = f"{type(e).__name__}: {e}"[:200]
-        await submission.asave(update_fields=["status", "attempts", "last_error"])
+        await HumanJudgeSubmission.objects.filter(pk=submission.pk).exclude(
+            status="SENT"
+        ).aupdate(
+            status="FAILED",
+            attempts=submission.attempts,
+            last_error=submission.last_error,
+        )
         return False
     submission.status = "SENT"
     submission.sent_at = timezone.now()
@@ -360,6 +377,74 @@ async def _send(client: HumanJudgeClient, submission: HumanJudgeSubmission) -> b
     return True
 
 
+def unsent_task_ids(limit: int) -> list[int]:
+    """Up to ``limit`` sendable cases with an active draft not yet sent:
+    clearly undecided ones first (the Arena's voters split on them, so a
+    second opinion helps most; see chooser_settlement), then the newest."""
+    unsent_draft = ChooserCandidate.objects.filter(
+        task=OuterRef("pk"), is_active=True
+    ).exclude(humanjudge_submission__status="SENT")
+    return list(
+        sendable_tasks()
+        .filter(Exists(unsent_draft))
+        .annotate(
+            undecided_first=Case(
+                When(settled_reason="undecided", then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        )
+        .order_by("undecided_first", "-created_at", "-id")
+        .values_list("id", flat=True)[: max(0, limit)]
+    )
+
+
+def start_upload(task_ids: list[int]) -> Optional[UploadResult]:
+    """Upload these cases from a sync caller (the admin): while the caller
+    waits when there are at most INLINE_UPLOAD_LIMIT of them, returning the
+    result; otherwise in a background thread, returning None at once. Checks
+    first, so a refusal (not configured, too many) is raised to the caller
+    either way. The thread's progress shows as HumanJudgeSubmission rows."""
+    from asgiref.sync import async_to_sync
+
+    from fighthealthinsurance.utils import run_in_registered_daemon_thread
+
+    ids = list(dict.fromkeys(task_ids))
+    _check_upload(ids)
+    if len(ids) <= INLINE_UPLOAD_LIMIT:
+        return async_to_sync(upload_tasks)(ids)
+    logger.info(f"HumanJudge upload of {len(ids)} cases started in the background")
+    run_in_registered_daemon_thread(async_to_sync(_upload_in_background), ids)
+    return None
+
+
+async def _upload_in_background(task_ids: list[int]) -> None:
+    """upload_tasks for start_upload's thread, where no page is waiting to
+    show a refused key: the drafts this upload had not sent yet are marked
+    FAILED with the reason, so HumanJudge Submissions shows why it stopped
+    (and "Upload again" retries them once the key is fixed)."""
+    try:
+        await upload_tasks(task_ids)
+    except HumanJudgeAuthError as e:
+        logger.error(f"HumanJudge background upload stopped: the key was refused ({e})")
+        await HumanJudgeSubmission.objects.filter(task_id__in=task_ids).exclude(
+            status="SENT"
+        ).aupdate(
+            status="FAILED",
+            last_error=f"Upload stopped: HumanJudge refused the key ({e})"[:200],
+        )
+
+
+def _check_upload(task_ids: list[int]) -> None:
+    if not enabled():
+        raise HumanJudgeError("HumanJudge is not configured (HUMANJUDGE_API_KEY)")
+    if len(task_ids) > MAX_TASKS_PER_UPLOAD:
+        raise HumanJudgeError(
+            f"Upload at most {MAX_TASKS_PER_UPLOAD} cases at a time "
+            f"({len(task_ids)} selected)"
+        )
+
+
 async def upload_tasks(
     task_ids: Iterable[int],
     transport: Optional[httpx.AsyncBaseTransport] = None,
@@ -367,14 +452,8 @@ async def upload_tasks(
     """Send the active drafts of these cases that have not gone yet (failed
     ones again). Raises HumanJudgeError when HumanJudge is not configured,
     HumanJudgeAuthError when it refuses the key."""
-    if not enabled():
-        raise HumanJudgeError("HumanJudge is not configured (HUMANJUDGE_API_KEY)")
     wanted = set(task_ids)
-    if len(wanted) > MAX_TASKS_PER_UPLOAD:
-        raise HumanJudgeError(
-            f"Upload at most {MAX_TASKS_PER_UPLOAD} cases at a time "
-            f"({len(wanted)} selected)"
-        )
+    _check_upload(list(wanted))
     sendable = [
         task_id
         async for task_id in sendable_tasks()

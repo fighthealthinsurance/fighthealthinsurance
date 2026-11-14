@@ -667,12 +667,27 @@ set; `CHOOSER_HUMANJUDGE=false` turns it off with the key in place.
 
 Staff run it from the admin; nothing goes out or comes back on a timer:
 
-- **Upload.** Select cases on the Chooser Task list (the **HumanJudge**
-  filter shows which have gone) and run **Upload to HumanJudge**. Up to 25
-  cases at a time (`MAX_TASKS_PER_UPLOAD`). Drafts already sent are skipped,
-  so uploading a case again sends only what failed. Failures are listed under
-  HumanJudge Submissions with their status code, where **Upload again**
-  retries them.
+- **Upload.** Three ways, all from the admin, all the same upload:
+  - **HumanJudge: [N] unsent cases [Upload]** at the top of the Chooser Task
+    list sends the next N cases waiting to go: clearly undecided ones first
+    (`settled_reason="undecided"`; the Arena's voters split on them, so a
+    second opinion helps most), then the newest
+    (`chooser_humanjudge.unsent_task_ids`). N is 1 to 300
+    (`MAX_TASKS_PER_UPLOAD`); 25 is filled in.
+  - **Upload to HumanJudge** at the top of a case's own page sends that
+    case's drafts not yet sent. It shows only on a case that may go, and
+    says how many of its drafts are already there.
+  - The **Upload to HumanJudge** action sends the cases ticked on the list
+    (the **HumanJudge** filter shows which have gone).
+
+  Up to 25 cases (`INLINE_UPLOAD_LIMIT`) are sent while the page waits, and
+  it says how it went. More go in a background thread
+  (`chooser_humanjudge.start_upload`): the page says so at once, and
+  HumanJudge Submissions shows each draft as it goes; a web pod restarting
+  mid-upload leaves the rest unsent, ready for the next upload. Drafts
+  already sent are skipped, so uploading a case again sends only what
+  failed. Failures are listed under HumanJudge Submissions with their status
+  code, where **Upload again** retries them.
 - **Only the Arena, only synthetic appeals.** HumanJudge's reviewers read
   what they are sent, so only the active drafts of `source="synthetic"`,
   `task_type="appeal"` cases that have reached voters (READY, IN_USE or
