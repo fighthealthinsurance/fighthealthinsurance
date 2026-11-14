@@ -161,3 +161,35 @@ class BlogDatesTest(TestCase):
         self.assertEqual(
             node["author"], {"@id": "https://www.fighthealthinsurance.com/#organization"}
         )
+
+
+class FrontMatterFallbackTest(TestCase):
+    """Without blog_posts.json, front matter is read as YAML like the generator."""
+
+    def test_quoted_values_lose_their_quotes(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from fighthealthinsurance import agent_docs
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "a-post.md").write_text(
+                "---\ntitle: 'A post'\ndate: 2026-01-01\n"
+                "updated: '2026-01-02'\nauthor: 'FHI Team'\n---\n\nBody.\n",
+                encoding="utf-8",
+            )
+            with patch.object(agent_docs, "_static_path", return_value=tmp):
+                posts = agent_docs._blog_posts_from_sources()
+        self.assertEqual(
+            posts,
+            [
+                {
+                    "title": "A post",
+                    "date": "2026-01-01",
+                    "updated": "2026-01-02",
+                    "author": "FHI Team",
+                    "slug": "a-post",
+                }
+            ],
+        )

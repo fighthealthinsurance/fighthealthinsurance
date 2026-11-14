@@ -31,6 +31,7 @@ from django.urls import Resolver404, resolve, reverse
 from django.views import View
 from django.views.decorators.cache import cache_control, cache_page
 
+import yaml
 from bs4 import BeautifulSoup, NavigableString, Tag
 from loguru import logger
 
@@ -423,9 +424,6 @@ class MarkdownTwinView(View):
         return response
 
 
-_FRONT_MATTER_LINE = re.compile(r'^([A-Za-z_]+):\s*"?(.*?)"?\s*$')
-
-
 def _blog_posts_from_sources() -> list[dict[str, Any]]:
     """Post list read straight from the blog/*.md front matter, newest first.
     blog_posts.json (what the site itself uses) is generated from these files
@@ -444,18 +442,18 @@ def _blog_posts_from_sources() -> list[dict[str, Any]]:
         end = text.find("\n---", 3)
         if end < 0:
             continue
-        meta: dict[str, Any] = {}
-        for line in text[3:end].splitlines():
-            m = _FRONT_MATTER_LINE.match(line.strip())
-            if m and m.group(1) in (
-                "title",
-                "date",
-                "updated",
-                "author",
-                "description",
-                "excerpt",
-            ):
-                meta[m.group(1)] = m.group(2)
+        # Same YAML parse as generate_blog_metadata, front matter only.
+        try:
+            front = yaml.safe_load(text[3:end]) or {}
+        except yaml.YAMLError:
+            continue
+        if not isinstance(front, dict):
+            continue
+        meta: dict[str, Any] = {
+            key: str(front[key])
+            for key in ("title", "date", "updated", "author", "description", "excerpt")
+            if front.get(key) not in (None, "")
+        }
         # The page URL comes from the file name, as in generate_blog_metadata.
         meta["slug"] = md.stem
         posts.append(meta)
