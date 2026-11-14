@@ -856,6 +856,11 @@ def prepare_document_fields(
     # the model's default (none).
     if isinstance(record.get("notes"), str):
         fields["notes"] = record["notes"]
+    # Staff deactivate a wrong document in the admin; a record that doesn't
+    # say otherwise must not undo that on the next import. A new row gets the
+    # model's default (active).
+    if "is_active" not in record:
+        del fields["is_active"]
     return PreparedDocument(
         document_key=key,
         fields=fields,

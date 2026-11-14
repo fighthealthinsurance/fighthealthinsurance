@@ -292,10 +292,53 @@ class RegulatorEscalationReasonsTest(TestCase):
             "We denied your first-level appeal; we received your second-level appeal.",
             "Your second-level appeal concerns our original denial decision and is being processed.",
             "This responds to your third-level appeal.",
+            "Your level 1 appeal has been denied and a level 2 appeal is available within 60 days.",
+            "We denied your first-level appeal, and a second-level appeal is available.",
+            "Your first-level appeal was denied, and your second-level appeal, which is pending, will be decided next month.",
         ):
             with self.subTest(text=text):
                 denial = _FakeDenial(state="", denial_text=text)
                 self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_exhaustion_as_a_prerequisite_is_not_a_reason(self):
+        for text in (
+            "This is not medically necessary. You may appeal this decision within 180 days. External review is available after internal appeals are exhausted.",
+            "External review is available only after internal appeals have been exhausted.",
+            "Before requesting external review, internal appeals must be exhausted.",
+            "Typically, internal appeals must be exhausted before external review.",
+            "You are not required to have exhausted your appeals before contacting the Department.",
+            "Your plan requires that internal appeals be exhausted prior to filing a lawsuit.",
+            "Upon a final adverse determination, you may request an external review.",
+            "Following a final adverse benefit determination, you can request external review.",
+            "A final adverse determination is required to request external review.",
+            "You must obtain a final adverse determination to request external review.",
+            "A final adverse determination is a prerequisite for external review.",
+            "A final adverse determination must be obtained before you request external review.",
+            "State rules require that you notify the Department of a final adverse determination.",
+            "You are required to notify the Department of a final adverse determination.",
+            "State rules require that we notify you of a final adverse determination.",
+            "State rules require that we notify you of your appeal rights and obtain a final adverse determination to request external review.",
+            "State rules require that we notify you of your appeal rights and your application is incomplete without a final adverse determination.",
+            "We are required to inform you that your appeal was denied or that this is our final adverse determination.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertEqual(regulator_escalation_reasons(denial), [])
+
+    def test_a_final_determination_after_an_opening_phrase_is_a_reason(self):
+        for text in (
+            "After careful review, this is our final adverse determination.",
+            "We upheld our first-level decision and denied your second-level appeal.",
+            "As required by law, this is our final adverse determination.",
+            "We are required to inform you that this is our final adverse determination.",
+            "The law requires that we tell you this is our final adverse determination.",
+            "We are required to notify you that your internal appeals are exhausted.",
+            "We are required to inform you that your appeal was denied and this is our final adverse determination.",
+            "We are required to notify you of your final adverse determination: your appeal was denied.",
+        ):
+            with self.subTest(text=text):
+                denial = _FakeDenial(state="", denial_text=text)
+                self.assertTrue(regulator_escalation_reasons(denial))
 
     def test_more_ways_to_say_the_internal_appeals_are_done(self):
         for text in (
@@ -304,6 +347,8 @@ class RegulatorEscalationReasonsTest(TestCase):
             "We received and denied your second-level appeal.",
             "Your second-level appeal was denied and we will mail you the written decision.",
             "We denied your second-level appeal; you can request an external review.",
+            "Your first-level appeal was denied, and your second-level appeal was denied, and you can request external review.",
+            "Your first-level appeal was denied, and your second-level appeal was denied, and your external review is pending.",
             "After review of your second level appeal we have once again upheld the denial; this is our final decision.",
             "We have once again reached our final adverse determination.",
         ):

@@ -292,15 +292,24 @@ _DECISION_RE = re.compile(
     r"|affirmed|reaffirmed|maintained|overturn(ed)?)\b",
     re.IGNORECASE,
 )
-_PENDING_OR_RIGHTS_RE = re.compile(
-    r"\b(right to|you can|to request|request (a|an)|to file|to submit"
-    r"|under review|being reviewed|being processed|processing|pending"
+# Wording for a decision still under way or still to come (not "we will
+# mail you the decision").
+_PENDING_WORDS = (
+    r"under review|being reviewed|being processed|processing|pending"
     r"|in progress|are reviewing|is reviewing"
-    # A decision still to come, not "we will mail you the decision".
     r"|will (be )?(review|decid|consider|issue|make|notify|respond)\w*"
-    r"|decision will)\b",
+    r"|decision will"
+)
+_PENDING_OR_RIGHTS_RE = re.compile(
+    r"\b(right to|you can|to request|request (a|an)|to file|to submit|"
+    + _PENDING_WORDS
+    + r")\b",
     re.IGNORECASE,
 )
+# Only the still-under-way part of that: a rights notice later in the
+# clause ("…, and you can request external review") says nothing about
+# whether this appeal was decided.
+_PENDING_RE = re.compile(r"\b(" + _PENDING_WORDS + r")\b", re.IGNORECASE)
 # The same words in a clause about what could happen, not what did: the
 # rights notice on a first denial says "If our decision is upheld you may
 # request an external review", and "once you have exhausted your internal
@@ -347,6 +356,20 @@ def _says_in_own_voice(pattern: re.Pattern, denial_text: str) -> bool:
     return next(_own_voice_matches(pattern, denial_text), None) is not None
 
 
+_SUBCLAUSE_BREAK_RE = re.compile(r",|\b(?:and|but)\b", re.IGNORECASE)
+_AND_BUT_RE = re.compile(r"\b(?:and|but)\b", re.IGNORECASE)
+
+
+def _subclause_breaks(denial_text: str, start: int, end: int) -> List[int]:
+    """Comma and "and"/"but" breaks between *start* and *end*, with the
+    clause's own edges, for splitting a clause that names two appeals."""
+    return (
+        [start - 1]
+        + [m.start() for m in _SUBCLAUSE_BREAK_RE.finditer(denial_text, start, end)]
+        + [end]
+    )
+
+
 def _later_level_decided(denial_text: str) -> bool:
     """Whether the letter states a decision on a second- or third-level
     appeal (see _LATER_LEVEL_RE).
@@ -373,7 +396,27 @@ def _later_level_decided(denial_text: str) -> bool:
     for match in _own_voice_matches(_LATER_LEVEL_RE, denial_text):
         _, s_end = bounds(sentence_breaks, match.start(), match.end())
         c_start, c_end = bounds(clause_breaks, match.start(), match.end())
-        if _PENDING_OR_RIGHTS_RE.search(denial_text[c_start:c_end]):
+        clause_end = c_end
+        if _OTHER_APPEAL_RE.search(denial_text[c_start:c_end]):
+            # Another appeal in the same clause ("your level 1 appeal has
+            # been denied and a level 2 appeal is available"): its decision
+            # is not this one's, so read only this appeal's part.
+            c_start, c_end = bounds(
+                _subclause_breaks(denial_text, c_start, c_end),
+                match.start(),
+                match.end(),
+            )
+        # Pending wording after this appeal's part, up to the next "and" or
+        # "but" (which starts something else: "…, and your external review
+        # is pending"), still speaks of it: "your second-level appeal, which
+        # is pending, will be decided next month".
+        rest = denial_text[c_end:clause_end]
+        next_part = _AND_BUT_RE.search(rest)
+        if next_part:
+            rest = rest[: next_part.start()]
+        if _PENDING_OR_RIGHTS_RE.search(
+            denial_text[c_start:c_end]
+        ) or _PENDING_RE.search(rest):
             continue
         if _DECISION_RE.search(denial_text[c_start:c_end]):
             return True
@@ -400,6 +443,49 @@ def _internal_appeals_done(denial_text: str) -> bool:
 _REASON_WORD_RE = re.compile(
     r"\b(?:because|since|given that|now that)\b", re.IGNORECASE
 )
+# Exhaustion or a final determination named as what must come first, not
+# as what happened: "external review is available after internal appeals
+# are exhausted", "upon a final adverse determination, you may...", "your
+# plan requires that appeals be exhausted". A first-level rights notice
+# says this. The preposition must end the clause, so "After careful review,
+# this is our final adverse determination" still counts.
+_PREREQUISITE_BEFORE_RE = re.compile(
+    r"\b(?:after|upon|following|before|prior\s+to)\s+"
+    r"(?:(?:a|an|the|your|all|any|internal)\s+)*$"
+    # "required to have exhausted", "requires that appeals be exhausted",
+    # "rules require that you notify the Department of a final...": not "as
+    # required by law, this is our final adverse determination" or "we are
+    # required to inform you that this is our final...", which reports this
+    # letter's own decision to the reader, as does "notify you of your final
+    # adverse determination" ("notify you of a final adverse determination"
+    # is still only a requirement).
+    r"|\brequire[sd]?\s+(?:that|(?:you\s+)?to)\b"
+    r"(?!.*\b(?:(?:inform|notify|tell|advise)\s+you|let\s+you\s+know)"
+    r"\s+(?:that|this|your|of\s+(?:your|our|this))\b"
+    # ...and only when that notice governs the match: "notify you of your
+    # appeal rights and obtain a final adverse determination" is still a
+    # requirement, while "inform you that your appeal was denied and this is
+    # our final adverse determination" adds another statement about the
+    # decision to the notice. "Or" offers an alternative, so it always ends
+    # the notice, and an unrelated clause ("and your application is
+    # incomplete without a final...") does too.
+    r"(?:(?!\bor\b|\b(?:and|but)\s+(?!(?:(?:this|that|it)\s+|(?:your|our|the)\s+"
+    r"(?:\w+\s+){0,2}?(?:appeals?|determination|decision|denial)\s+)"
+    r"(?:is|was|are|were|constitutes?|(?:has|have)\s+been)\b)).)*$)"
+    # "You must obtain a final adverse determination to request...".
+    r"|\b(?:must|need\s+to)\s+(?:obtain|receive|get|have)\s+"
+    r"(?:(?:a|an|the|your)\s+)*$",
+    re.IGNORECASE,
+)
+_PREREQUISITE_MATCH_RE = re.compile(r"\b(?:must|be|need\s+to)\b", re.IGNORECASE)
+# After the match: "...exhausted before external review", "a final adverse
+# determination is required (is a prerequisite, must be obtained) to request
+# external review".
+_PREREQUISITE_AFTER_RE = re.compile(
+    r"\s*(?:before|prior\s+to|(?:is|are)\s+(?:required|needed|a\s+prerequisite)"
+    r"|must\s+(?:first\s+)?be\s+(?:obtained|issued|received))\b",
+    re.IGNORECASE,
+)
 
 
 def _final_word_stated(denial_text: str) -> bool:
@@ -416,6 +502,12 @@ def _final_word_stated(denial_text: str) -> bool:
             max(0, match.start() - _CLAUSE_LOOKBACK_CHARS) : match.start()
         ]
         clause = _CLAUSE_BREAK_RE.split(before)[-1]
+        if (
+            _PREREQUISITE_BEFORE_RE.search(clause)
+            or _PREREQUISITE_MATCH_RE.search(match.group(0))
+            or _PREREQUISITE_AFTER_RE.match(denial_text, match.end())
+        ):
+            continue
         if not _PENDING_OR_RIGHTS_RE.search(_REASON_WORD_RE.split(clause)[-1]):
             return True
     return False

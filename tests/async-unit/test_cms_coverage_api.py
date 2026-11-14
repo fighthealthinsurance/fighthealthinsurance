@@ -272,11 +272,30 @@ class TestFilterByKeyword:
         assert results == []
 
 
+    def test_a_retired_ncd_is_never_matched(self):
+        docs = self._docs(
+            "Cardiac Rehabilitation Programs - RETIRED",
+            "Intensive Cardiac Rehabilitation (ICR) Programs",
+            "PET Scans (RETIRED)",
+        )
+        results = _filter_by_keyword(docs, "cardiac rehabilitation", max_results=3)
+        assert [d.title for d in results] == [
+            "Intensive Cardiac Rehabilitation (ICR) Programs"
+        ]
+        assert _filter_by_keyword(docs, "PET scans", max_results=3) == []
+
+    def test_a_plural_ache_matches_its_singular(self):
+        docs = self._docs("Migraine Headache Treatment")
+        assert _filter_by_keyword(docs, "migraine headaches", max_results=3) == docs
+
+
 class TestSingular:
     def test_plain_plurals(self):
         assert _singular("replacements") == "replacement"
         assert _singular("therapies") == "therapy"
         assert _singular("patches") == "patch"
+        assert _singular("headaches") == "headache"
+        assert _singular("backaches") == "backache"
         assert _singular("x") == "x"
 
     def test_singular_words_ending_in_s_are_kept(self):

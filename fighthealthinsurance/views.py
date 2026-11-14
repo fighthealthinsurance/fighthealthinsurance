@@ -2564,20 +2564,39 @@ class OCRView(View):
 
     def _ocr(self, uploader):
         def ocr_upload(x):
+            # Image.open reads only the header, so the size is known before
+            # anything is decoded; an image past the pixel cap is skipped
+            # rather than decoded here or by the fallback below. Checked
+            # outside the fallback's try: Pillow refuses a huge image with
+            # DecompressionBombError, which must not hand it to EasyOCR.
+            try:
+                img = Image.open(x)
+            except Image.DecompressionBombError:
+                logger.warning("Skipped an OCR upload over the pixel cap")
+                return ""
+            except Exception:
+                img = None
+            if img is not None and (
+                img.width * img.height > upload_limits.MAX_OCR_IMAGE_PIXELS
+            ):
+                logger.warning("Skipped an OCR upload over the pixel cap")
+                return ""
             try:
                 import pytesseract
 
-                # Image.open reads only the header, so the size is known
-                # before anything is decoded; an image past the pixel cap is
-                # skipped rather than decoded here or by the fallback below.
-                img = Image.open(x)
-                if img.width * img.height > upload_limits.MAX_OCR_IMAGE_PIXELS:
-                    logger.warning("Skipped an OCR upload over the pixel cap")
-                    return ""
+                if img is None:
+                    raise ValueError("not an image Pillow can read")
                 return pytesseract.image_to_string(
                     img, timeout=upload_limits.OCR_SECONDS_PER_IMAGE
                 )
-            except Exception:
+            except Exception as e:
+                # pytesseract's timeout is a bare RuntimeError naming the
+                # timeout (its TesseractError is a RuntimeError too, and that
+                # one still falls back): EasyOCR has no time limit, so don't
+                # hand it the image that ran out of time.
+                if type(e) is RuntimeError and "timeout" in str(e).lower():
+                    logger.warning("OCR timed out on an upload")
+                    return ""
                 easy_ocr_reader = getattr(self, "_easy_ocr_reader", None)
                 if easy_ocr_reader is None:
                     # Fail closed to empty OCR text so users can continue manually.

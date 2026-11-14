@@ -171,7 +171,20 @@ _PRACTICE_AREA_TERMS = {
         "genderqueer",
         "wpath",
         "feminiz*",
+        # Not "feminis*"/"masculinis*": those read "feminist"/"masculinist".
+        "feminisation",
+        "feminising",
+        "feminised",
         "masculiniz*",
+        "masculinisation",
+        "masculinising",
+        "masculinised",
+        "transmasc*",
+        # Not "transfem*": that reads "transfemoral" (an amputation, a
+        # catheter route) as gender-affirming care.
+        "transfem",
+        "transfemme*",
+        "transfemin*",
         "top surgery",
         "bottom surgery",
         "vaginoplasty",
@@ -310,6 +323,7 @@ _PRACTICE_AREA_TERMS = {
 _PRACTICE_AREA_SHARED_TERMS = {
     "gender-affirming-care": (
         "hormone therapy",
+        "hormone replacement therapy",
         "hrt",
         "estradiol",
         "estrogen",
@@ -328,6 +342,13 @@ _PRACTICE_AREA_SHARED_TERMS = {
         "mastectom*",
         "hysterectom*",
         "breast augmentation",
+        "breast reduction",
+        "chest reconstruction",
+        "gonadectom*",
+        "scrotectom*",
+        "voice therapy",
+        "laryngoplasty",
+        "glottoplasty",
         "electrolysis",
         "hair removal",
     ),

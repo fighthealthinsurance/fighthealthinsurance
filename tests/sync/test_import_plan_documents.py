@@ -375,6 +375,24 @@ class NewUpdatedUnchangedTest(_ImportTestCase):
         self.assertEqual(PublicPlanDocument.objects.count(), 1)
 
 
+class ReimportKeepsStaffChangesTest(_ImportTestCase):
+    def test_a_reimport_keeps_a_staff_deactivation_and_notes(self):
+        self.run_import([self.record()])
+        PublicPlanDocument.objects.update(is_active=False, notes="wrong region")
+        self.run_import([self.record()])
+        doc = self.the_document()
+        self.assertFalse(doc.is_active)
+        self.assertEqual(doc.notes, "wrong region")
+
+    def test_a_record_that_says_active_reactivates_the_document(self):
+        self.run_import([self.record()])
+        PublicPlanDocument.objects.update(is_active=False)
+        self.run_import([self.record(is_active=True)])
+        self.assertTrue(self.the_document().is_active)
+
+    def test_a_new_record_without_is_active_is_active(self):
+        self.run_import([self.record()])
+        self.assertTrue(self.the_document().is_active)
 class ReimportAndMatchRowsTest(_ImportTestCase):
     def test_reimport_with_changed_text_deletes_the_documents_match_rows(self):
         self.run_import([self.record()])

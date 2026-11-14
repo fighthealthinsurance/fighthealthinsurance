@@ -670,6 +670,41 @@ class TestDeleteConfirmationLinkStaysOutOfSentry:
         event = before_send_filter(_confirm_delete_error(), {})
         assert "db hiccup" in json.dumps((event or {}).get("exception"))
 
+    def _opened_from_the_link(self) -> dict:
+        """The next page, opened from the confirmation page: same-origin, so
+        the Referer is the whole link."""
+        return {
+            "type": "transaction",
+            "transaction": "/about-us",
+            "request": {
+                "url": "https://www.fighthealthinsurance.com/about-us",
+                "query_string": "utm_source=nav",
+                "headers": {"Referer": CONFIRM_URL},
+            },
+        }
+
+    def test_a_page_opened_from_the_link_carries_neither_value(self):
+        for send in (before_send_transaction_filter, before_send_filter):
+            event = send(self._opened_from_the_link(), {})
+            assert event is not None
+            assert _confirm_delete_values_left(event) == []
+
+    def test_a_page_opened_from_the_link_scrubs_the_values_outside_the_referer(
+        self,
+    ):
+        """The Referer's query is cut first, so a breadcrumb carrying the
+        link shows the values are found and replaced everywhere else too."""
+        event = self._opened_from_the_link()
+        event["breadcrumbs"] = {
+            "values": [{"category": "navigation", "data": {"from": CONFIRM_URL}}]
+        }
+        event = before_send_transaction_filter(event, {})
+        assert _confirm_delete_values_left(event) == []
+
+    def test_a_page_opened_from_the_link_keeps_its_own_query_string(self):
+        event = before_send_transaction_filter(self._opened_from_the_link(), {})
+        assert event["request"]["query_string"] == "utm_source=nav"
+
     def test_other_pages_keep_their_query_string(self):
         event = _transaction("route", name="/scan")
         event["request"] = {"url": "https://x/scan", "query_string": "email=a@b.com"}
