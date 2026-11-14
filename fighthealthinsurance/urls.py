@@ -31,6 +31,7 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic.base import RedirectView
 
 from fhi_users.fight_paperwork import fight_paperwork_only
+from fighthealthinsurance.blog import BlogFeed
 from fighthealthinsurance import (
     agent_docs,
     assistant_handoff_views,
@@ -412,6 +413,8 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.AboutView.as_view(),
         name="about",
     ),
+    # Search engines found /about and /about/ linked from elsewhere.
+    re_path(r"^about/?$", RedirectView.as_view(pattern_name="about", permanent=True)),
     path(
         "about-ai",
         views.AboutAIView.as_view(),
@@ -509,6 +512,17 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "blog/",
         views.BlogView.as_view(),
         name="blog",
+    ),
+    # Before the post route, which would otherwise take "feed" as a slug.
+    path(
+        "blog/feed/",
+        cache_control(public=True, max_age=1800)(BlogFeed()),
+        name="blog-feed",
+    ),
+    # The MRI post's old address, still linked from outside.
+    path(
+        "blog/imaging-access-cd-mri-2025/",
+        RedirectView.as_view(url="/blog/250806-mri-digital-cd-access/", permanent=True),
     ),
     path(
         "blog/<slug:slug>/",

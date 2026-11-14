@@ -96,6 +96,8 @@ class Command(BaseCommand):
                             "tags": frontmatter.get("tags", []),
                             "readTime": frontmatter.get("readTime", "5 min read"),
                         }
+                        if frontmatter.get("updated"):
+                            post["updated"] = str(frontmatter["updated"])
                         posts.append(post)
         except Exception as e:
             self.stderr.write(

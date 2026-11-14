@@ -23,6 +23,7 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import ImproperlyConfigured
 from django.db import transaction
 from django.http import (
+    Http404,
     HttpRequest,
     HttpResponse,
     HttpResponseBase,
@@ -55,7 +56,9 @@ from loguru import logger
 from PIL import Image
 
 from fighthealthinsurance import (
+    agent_docs,
     assistant_handoff_views,
+    blog,
     upload_limits,
     upload_rate_limit,
     common_view_logic,
@@ -167,6 +170,7 @@ class BlogPostMetadata(TypedDict, total=False):
     excerpt: str
     tags: list[str]
     readTime: str
+    updated: str
 
 
 # Insurance Bullshit Bingo phrases - humorous but factual common denial reasons
@@ -1110,64 +1114,28 @@ class BlogPostView(StaticIshView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         slug = kwargs.get("slug", "")
-        # Validate slug format
-        if not re.match(r"^[a-zA-Z0-9_-]+$", slug):
-            logger.warning(f"Invalid slug format: {slug}")
-            context.update({"slug": slug, "post_title": None, "post_excerpt": None})
-            return context
+        # A made-up slug must 404, not render an empty post page.
+        if not re.match(r"^[a-zA-Z0-9_-]+$", slug) or not agent_docs._static_path(
+            f"blog/{slug}.md"
+        ):
+            raise Http404("No such blog post")
 
-        try:
-            # Securely find the path to the blog post markdown file.
-            # staticfiles_storage.path() will handle finding the file and prevent
-            # path traversal attacks. It raises an error if the file is not found.
-            mdx_path = staticfiles_storage.path(f"blog/{slug}.md")
-        except Exception:
-            logger.warning(f"Blog post markdown file not found for slug: {slug}")
-            context.update({"slug": slug, "post_title": None, "post_excerpt": None})
-            return context
-
-        # Load blog metadata from blog_posts.json
-        blog_json_path = staticfiles_storage.path("blog_posts.json")
         post_info: BlogPostMetadata = {}
-        try:
-            with open(blog_json_path, "r", encoding="utf-8") as f:
-                posts = json.load(f)
-
-            if not isinstance(posts, list):
-                logger.error(
-                    f"Invalid blog metadata format in {blog_json_path}: expected list"
-                )
-                post_info = {}
-            else:
-                for post in posts:
-                    if post.get("slug") == slug:
-                        post_info = post
-                        break
-                else:
-                    logger.info(f"Blog post not found for slug: {slug}")
-
-        except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.warning(f"Could not load blog metadata from {blog_json_path}: {e}")
-            post_info = {}
-        except PermissionError as e:
-            logger.error(
-                f"Permission denied accessing blog metadata file {blog_json_path}: {e}"
-            )
-            post_info = {}
-        except UnicodeDecodeError as e:
-            logger.error(
-                f"Invalid file encoding for blog metadata file {blog_json_path}: {e}"
-            )
-            post_info = {}
-        except Exception as e:
-            logger.error(f"Unexpected error loading blog metadata: {e}")
-            post_info = {}
+        for post in agent_docs._blog_posts():
+            if post.get("slug") == slug:
+                post_info = typing.cast(BlogPostMetadata, post)
+                break
+        else:
+            logger.info(f"Blog post metadata not found for slug: {slug}")
 
         context.update(
             {
                 "slug": slug,
                 "post_title": post_info.get("title"),
                 "post_excerpt": post_info.get("excerpt"),
+                "json_ld": render_json_ld(
+                    blog.blog_posting_json_ld(dict(post_info), slug)
+                ),
             }
         )
         return context
