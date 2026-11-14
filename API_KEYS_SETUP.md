@@ -279,10 +279,12 @@ when they start. The Ray pods do not need it.
 
 ### Behavior
 
-- **With the key set:** the Chooser Task list's **Upload to HumanJudge**
-  action sends the selected cases' drafts, and the HumanJudge Verdict
-  list's **Download verdicts from HumanJudge** button fetches the new
-  verdicts. Nothing is sent or fetched on its own.
+- **With the key set:** the Chooser Task list's **HumanJudge: [N] unsent
+  cases [Upload]** button sends the next N cases waiting to go (up to 300;
+  more than 25 upload in the background), a case's page has an **Upload to
+  HumanJudge** button, and the HumanJudge Verdict list's **Download
+  verdicts from HumanJudge** button fetches the new verdicts. Nothing is
+  sent or fetched on its own.
 - **Without it:** both say HumanJudge is not configured, and nothing is
   sent anywhere.
 - To check the setup, upload one case, then download. A message that votes

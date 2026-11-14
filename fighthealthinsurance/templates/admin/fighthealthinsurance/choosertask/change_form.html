@@ -1,0 +1,15 @@
+{% extends "admin/change_form.html" %}
+{% comment %} ChooserTaskAdmin.humanjudge_upload_one_view sends this case's
+drafts that have not gone to HumanJudge yet. Only synthetic appeal cases that
+have reached voters can go (chooser_humanjudge.sendable_tasks). {% endcomment %}
+{% block object-tools-items %}
+{% if humanjudge_sendable %}
+<li>
+    <form id="humanjudge-upload-one" method="post" action="{% url 'admin:fighthealthinsurance_choosertask_humanjudge_upload' original.pk %}" style="margin: 0;">
+        {% csrf_token %}
+        <button type="submit" class="button" title="{{ humanjudge_sent }} of {{ humanjudge_drafts }} draft{{ humanjudge_drafts|pluralize }} already sent">{% if humanjudge_sent and humanjudge_sent == humanjudge_drafts %}On HumanJudge ({{ humanjudge_drafts }} draft{{ humanjudge_drafts|pluralize }}){% elif humanjudge_sent %}Upload the rest to HumanJudge ({{ humanjudge_sent }}/{{ humanjudge_drafts }} sent){% else %}Upload to HumanJudge{% endif %}</button>
+    </form>
+</li>
+{% endif %}
+{{ block.super }}
+{% endblock %}

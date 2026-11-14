@@ -1616,16 +1616,31 @@ class HumanJudgeUploadedFilter(admin.SimpleListFilter):
 
 
 def _humanjudge_upload(model_admin, request, task_ids) -> None:
-    """Send these Arena cases' drafts to HumanJudge and say how it went.
-    Lazy import: the module pulls in the ML router."""
-    from asgiref.sync import async_to_sync
-
+    """Send these Arena cases' drafts to HumanJudge and say how it went:
+    while the page waits for a few cases, in the background for more
+    (chooser_humanjudge.start_upload). Lazy import: the module pulls in the
+    ML router."""
     from fighthealthinsurance import chooser_humanjudge
 
+    ids = list(task_ids)
+    if not ids:
+        model_admin.message_user(
+            request, "Nothing to upload: no case is waiting to go.", messages.INFO
+        )
+        return
     try:
-        result = async_to_sync(chooser_humanjudge.upload_tasks)(list(task_ids))
+        result = chooser_humanjudge.start_upload(ids)
     except chooser_humanjudge.HumanJudgeError as e:
         model_admin.message_user(request, f"Nothing uploaded: {e}", messages.ERROR)
+        return
+    if result is None:
+        model_admin.message_user(
+            request,
+            f"Uploading {len(ids)} case(s) to HumanJudge in the background. "
+            "HumanJudge Submissions shows each draft as it goes; any that fail "
+            "can be sent again from there.",
+            messages.SUCCESS,
+        )
         return
     level = messages.WARNING if result.failed else messages.SUCCESS
     parts = [f"Uploaded {result.sent} draft(s) to HumanJudge."]
@@ -1641,6 +1656,18 @@ def _humanjudge_upload(model_admin, request, task_ids) -> None:
             "that have reached voters may go."
         )
     model_admin.message_user(request, " ".join(parts), level)
+
+
+def _humanjudge_count(raw: Optional[str], default: int) -> Optional[int]:
+    """The "how many cases" field: a whole number from 1 to the upload cap,
+    or None for anything else."""
+    from fighthealthinsurance.chooser_humanjudge import MAX_TASKS_PER_UPLOAD
+
+    try:
+        count = int(raw) if raw else default
+    except ValueError:
+        return None
+    return count if 1 <= count <= MAX_TASKS_PER_UPLOAD else None
 
 
 @admin.register(ChooserTask)
@@ -1672,10 +1699,100 @@ class ChooserTaskAdmin(admin.ModelAdmin):
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at", "updated_at")
     actions = ("upload_to_humanjudge",)
+    # The HumanJudge buttons: "Upload ... cases" on the list, "Upload to
+    # HumanJudge" on a case (chooser_humanjudge).
+    change_list_template = "admin/fighthealthinsurance/choosertask/change_list.html"
+    change_form_template = "admin/fighthealthinsurance/choosertask/change_form.html"
 
     @admin.action(description="Upload to HumanJudge (synthetic appeal cases only)")
     def upload_to_humanjudge(self, request, queryset):
         _humanjudge_upload(self, request, queryset.values_list("id", flat=True))
+
+    def get_urls(self):
+        return [
+            path(
+                "humanjudge/upload-unsent/",
+                self.admin_site.admin_view(self.humanjudge_upload_unsent_view),
+                name="fighthealthinsurance_choosertask_humanjudge_upload_unsent",
+            ),
+            path(
+                "<int:object_id>/humanjudge/upload/",
+                self.admin_site.admin_view(self.humanjudge_upload_one_view),
+                name="fighthealthinsurance_choosertask_humanjudge_upload",
+            ),
+        ] + super().get_urls()
+
+    def changelist_view(self, request, extra_context=None):
+        from fighthealthinsurance.chooser_humanjudge import (
+            INLINE_UPLOAD_LIMIT,
+            MAX_TASKS_PER_UPLOAD,
+        )
+
+        return super().changelist_view(
+            request,
+            {
+                **(extra_context or {}),
+                "humanjudge_default_count": INLINE_UPLOAD_LIMIT,
+                "humanjudge_inline_limit": INLINE_UPLOAD_LIMIT,
+                "humanjudge_max_count": MAX_TASKS_PER_UPLOAD,
+            },
+        )
+
+    def change_view(self, request, object_id, form_url="", extra_context=None):
+        from fighthealthinsurance.chooser_humanjudge import sendable_tasks
+
+        context = dict(extra_context or {})
+        if str(object_id).isdigit():
+            drafts = ChooserCandidate.objects.filter(task_id=object_id, is_active=True)
+            context.update(
+                {
+                    "humanjudge_sendable": sendable_tasks()
+                    .filter(id=object_id)
+                    .exists(),
+                    "humanjudge_drafts": drafts.count(),
+                    "humanjudge_sent": drafts.filter(
+                        humanjudge_submission__status="SENT"
+                    ).count(),
+                }
+            )
+        return super().change_view(request, object_id, form_url, context)
+
+    def humanjudge_upload_unsent_view(self, request):
+        """POST: upload the next ``count`` cases waiting to go (undecided
+        first, then newest; chooser_humanjudge.unsent_task_ids)."""
+        from fighthealthinsurance.chooser_humanjudge import (
+            INLINE_UPLOAD_LIMIT,
+            MAX_TASKS_PER_UPLOAD,
+            unsent_task_ids,
+        )
+
+        changelist = reverse("admin:fighthealthinsurance_choosertask_changelist")
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        count = _humanjudge_count(request.POST.get("count"), INLINE_UPLOAD_LIMIT)
+        if count is None:
+            self.message_user(
+                request,
+                f"Nothing uploaded: how many must be a whole number from 1 to "
+                f"{MAX_TASKS_PER_UPLOAD}.",
+                messages.ERROR,
+            )
+            return HttpResponseRedirect(changelist)
+        _humanjudge_upload(self, request, unsent_task_ids(count))
+        return HttpResponseRedirect(changelist)
+
+    def humanjudge_upload_one_view(self, request, object_id):
+        """POST: upload this case's drafts not sent yet."""
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        _humanjudge_upload(self, request, [object_id])
+        return HttpResponseRedirect(
+            reverse("admin:fighthealthinsurance_choosertask_change", args=[object_id])
+        )
 
 
 @admin.register(ChooserCandidate)
