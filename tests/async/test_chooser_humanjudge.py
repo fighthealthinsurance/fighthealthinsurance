@@ -192,6 +192,79 @@ async def test_failed_send_is_retried_with_the_same_inference_id():
 
 
 @ON
+async def test_a_failure_never_overwrites_another_uploads_sent():
+    task, candidates = await _task(count=1)
+    submission = await HumanJudgeSubmission.objects.acreate(
+        task=task, candidate=candidates[0], inference_id="gj_inf_1_race"
+    )
+    stale = await HumanJudgeSubmission.objects.select_related(
+        "candidate", "task"
+    ).aget(pk=submission.pk)
+    # Another upload sends it while this one's request is in flight, and
+    # this one's request then fails.
+
+    async def handler(request):
+        await HumanJudgeSubmission.objects.filter(pk=submission.pk).aupdate(
+            status="SENT"
+        )
+        return httpx.Response(500, json={})
+
+    async with chooser_humanjudge.HumanJudgeClient(
+        transport=httpx.MockTransport(handler)
+    ) as client:
+        went = await chooser_humanjudge._send(client, stale)
+
+    assert went is False
+    await submission.arefresh_from_db()
+    assert submission.status == "SENT"
+
+
+@ON
+async def test_a_draft_already_sent_by_another_upload_is_not_sent_again():
+    task, candidates = await _task(count=1)
+    submission = await HumanJudgeSubmission.objects.acreate(
+        task=task, candidate=candidates[0], inference_id="gj_inf_1_twice"
+    )
+    stale = await HumanJudgeSubmission.objects.select_related(
+        "candidate", "task"
+    ).aget(pk=submission.pk)
+    await HumanJudgeSubmission.objects.filter(pk=submission.pk).aupdate(
+        status="SENT"
+    )
+    fake = FakeHumanJudge()
+
+    async with chooser_humanjudge.HumanJudgeClient(transport=fake.transport) as client:
+        await chooser_humanjudge._send(client, stale)
+
+    assert fake.traces == []
+
+
+@ON
+async def test_a_refused_key_in_a_background_upload_is_recorded_on_its_drafts():
+    task, _ = await _task(count=2)
+    fake = FakeHumanJudge()
+    fake.ingest_status = [401]
+
+    real_upload = chooser_humanjudge.upload_tasks
+    with patch.object(
+        chooser_humanjudge,
+        "upload_tasks",
+        new=lambda ids: real_upload(ids, fake.transport),
+    ):
+        await chooser_humanjudge._upload_in_background([task.id])
+
+    rows = {
+        (status, error)
+        async for status, error in HumanJudgeSubmission.objects.values_list(
+            "status", "last_error"
+        )
+    }
+    assert rows == {
+        ("FAILED", "Upload stopped: HumanJudge refused the key (trace ingest: HTTP 401)")
+    }
+
+
+@ON
 async def test_refused_key_stops_the_upload_without_spending_attempts():
     task, candidates = await _task(count=2)
     fake = FakeHumanJudge()

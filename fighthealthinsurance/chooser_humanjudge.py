@@ -335,6 +335,15 @@ class UploadResult:
 
 
 async def _send(client: HumanJudgeClient, submission: HumanJudgeSubmission) -> bool:
+    """Send one draft; returns whether it went. Two uploads can hold the
+    same draft (a second click while a background upload runs): sending it
+    twice is harmless, since HumanJudge de-duplicates on the inference id,
+    but a failure must never overwrite another upload's SENT, so a draft
+    already SENT is skipped and FAILED is written only over a row not SENT."""
+    if await HumanJudgeSubmission.objects.filter(
+        pk=submission.pk, status="SENT"
+    ).aexists():
+        return True
     candidate = submission.candidate
     submission.attempts += 1
     try:
@@ -351,7 +360,13 @@ async def _send(client: HumanJudgeClient, submission: HumanJudgeSubmission) -> b
     except (HumanJudgeError, httpx.HTTPError) as e:
         submission.status = "FAILED"
         submission.last_error = f"{type(e).__name__}: {e}"[:200]
-        await submission.asave(update_fields=["status", "attempts", "last_error"])
+        await HumanJudgeSubmission.objects.filter(pk=submission.pk).exclude(
+            status="SENT"
+        ).aupdate(
+            status="FAILED",
+            attempts=submission.attempts,
+            last_error=submission.last_error,
+        )
         return False
     submission.status = "SENT"
     submission.sent_at = timezone.now()
@@ -399,8 +414,25 @@ def start_upload(task_ids: list[int]) -> Optional[UploadResult]:
     if len(ids) <= INLINE_UPLOAD_LIMIT:
         return async_to_sync(upload_tasks)(ids)
     logger.info(f"HumanJudge upload of {len(ids)} cases started in the background")
-    run_in_registered_daemon_thread(async_to_sync(upload_tasks), ids)
+    run_in_registered_daemon_thread(async_to_sync(_upload_in_background), ids)
     return None
+
+
+async def _upload_in_background(task_ids: list[int]) -> None:
+    """upload_tasks for start_upload's thread, where no page is waiting to
+    show a refused key: the drafts this upload had not sent yet are marked
+    FAILED with the reason, so HumanJudge Submissions shows why it stopped
+    (and "Upload again" retries them once the key is fixed)."""
+    try:
+        await upload_tasks(task_ids)
+    except HumanJudgeAuthError as e:
+        logger.error(f"HumanJudge background upload stopped: the key was refused ({e})")
+        await HumanJudgeSubmission.objects.filter(task_id__in=task_ids).exclude(
+            status="SENT"
+        ).aupdate(
+            status="FAILED",
+            last_error=f"Upload stopped: HumanJudge refused the key ({e})"[:200],
+        )
 
 
 def _check_upload(task_ids: list[int]) -> None:
