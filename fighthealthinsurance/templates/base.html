@@ -3,6 +3,23 @@
 {% load static %}
 <!DOCTYPE html>
 <html lang="en">
+<!--
+       / \__
+      (    @\___
+      /         O
+     /   (_____/
+    /_____/   U
+
+  Woof. Professor Timbit here. You looked under the hood,
+  so you might be one of us.
+
+  Fight Health Insurance is open source, and we could use a hand:
+  code, design, writing, or telling us what broke.
+
+  https://github.com/fighthealthinsurance/fighthealthinsurance
+
+  Treats are not required, but they are accepted.
+-->
 
 <head>
     {% block scriptmagic %}
@@ -357,6 +374,7 @@
          with no script. -->
     {% compress js file %}
     <script src="{% static 'js/smoothscroll.js' %}"></script>
+    <script src="{% static 'js/source_note.js' %}"></script>
     {% endcompress %}
 </body>
 

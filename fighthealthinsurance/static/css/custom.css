@@ -2007,6 +2007,35 @@ section:not(.slider) .share-subcopy,
     border-radius: 8px;
     margin-bottom: 2rem;
 }
+.timbit-404-photo {
+    display: block;
+    width: 220px;
+    max-width: 100%;
+    height: auto;
+    margin: 0 auto 0.5rem;
+    border-radius: 50%;
+    box-shadow: 0 0 0 6px #fff, 0 0 0 10px var(--fhi-pink);
+}
+.status-page-container h1.status-title {
+    font-size: clamp(1.8rem, 4vw, 2.4rem);
+    line-height: 1.2;
+}
+.timbit-404-terminal {
+    display: inline-block;
+    max-width: 100%;
+    margin: 0 auto 1.5rem;
+    padding: 0.9rem 1.2rem;
+    background: #1f1630;
+    color: #e8f6b0;
+    border-radius: 8px;
+    text-align: left;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-size: 0.95rem;
+}
+.timbit-404-prompt {
+    color: var(--fhi-pink);
+}
 
 /* Table styling (outside help) */
 .simple-table {
