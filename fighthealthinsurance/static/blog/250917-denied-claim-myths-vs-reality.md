@@ -51,4 +51,4 @@ A denial isn't final. It's a hurdle — and one you can often clear. Whether it'
 ### References
 - [KFF: Claims Denials and Appeals in ACA Marketplace Plans, 2023](https://www.kff.org/private-insurance/issue-brief/claims-denials-and-appeals-in-aca-marketplace-plans/)
 - [KFF: Over 35 Million Prior Authorization Requests in Medicare Advantage, 2022](https://www.kff.org/medicare/issue-brief/over-35-million-prior-authorization-requests-were-submitted-to-medicare-advantage-plans-in-2021/)
-- [KFF Health News: Health Insurance Customers Who Appeal Their Claims Often Win, 2023](https://kffhealthnews.org/news/article/health-insurance-customers-appeals-claims-win/)
+- [KFF Health News: Health Insurance Customers Who Appeal Their Claims Often Win, 2023](https://kffhealthnews.org/morning-breakout/health-insurance-customers-who-appeal-their-claims-often-win/)

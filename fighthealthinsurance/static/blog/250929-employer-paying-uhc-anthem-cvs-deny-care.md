@@ -22,7 +22,7 @@ To be fair, there can be benefits to TPAs and PBMs, most employers normally do n
 
 Often, TPAs pitch themselves to employers on reduced costs which have to come from somewhere. While these savings could come from better contract negotiations, we believe that so-called "[utilization management](https://www.cms.gov/medicare/utilization-and-quality/utilization-management)" (or how aggressively they say no) is a large part of the savings that these TPAs are able to offer.
 
-As with TPAs, PBMs focus on cost savings but where those come from can be much more complicated. PBMs often receive [rebates](https://www.ftc.gov/news-events/news/press-releases/2024/07/ftc-finds-top-pharmacy-benefit-managers-inflated-drug-costs-over-1000) (or less charitably kick-backs) on certain drugs which can influence their selection of which drugs they will pay for (and how much). If you've ever had an interaction with your health plan where they couldn't tell you what medication would be covered it could be because the PBM and the TPA are not talking to each other.
+As with TPAs, PBMs focus on cost savings but where those come from can be much more complicated. PBMs often receive [rebates](https://www.ftc.gov/news-events/news/press-releases/2024/07/ftc-releases-interim-staff-report-prescription-drug-middlemen) (or less charitably kick-backs) on certain drugs which can influence their selection of which drugs they will pay for (and how much). If you've ever had an interaction with your health plan where they couldn't tell you what medication would be covered it could be because the PBM and the TPA are not talking to each other.
 
 ## Why This Matters to You
 
@@ -47,6 +47,6 @@ If you're in HR, maybe take the time to let your employees know that you're ther
 - [Healthcare.gov: Glossary](https://www.healthcare.gov/glossary/)
 - [CMS: Pharmacy Benefit Manager Transparency Measures](https://www.cms.gov/newsroom/fact-sheets/pharmacy-benefit-manager-transparency-measures-fact-sheet)
 - [CMS: Utilization Management](https://www.cms.gov/medicare/utilization-and-quality/utilization-management)
-- [FTC: PBM Report - Drug Costs Inflation](https://www.ftc.gov/news-events/news/press-releases/2024/07/ftc-finds-top-pharmacy-benefit-managers-inflated-drug-costs-over-1000)
+- [FTC: PBM Report - Drug Costs Inflation](https://www.ftc.gov/news-events/news/press-releases/2024/07/ftc-releases-interim-staff-report-prescription-drug-middlemen)
 - [Healthcare.gov: External Review](https://www.healthcare.gov/appeal-insurance-company-decision/external-review/)
 - [DOL: Employee Benefits Security Administration](https://www.dol.gov/agencies/ebsa)
