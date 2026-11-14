@@ -1,15 +1,18 @@
 {% load compress %}
 {% load bundles %}
 {% load static %}
+{% load capture %}
 <!DOCTYPE html>
 <html lang="en">
 
 <head>
     {% block scriptmagic %}
     {% endblock scriptmagic %}
-    <title>{% block title %}{{ title }}{% endblock title %}</title>
+    {% capture as page_title %}{% block title %}{{ title }}{% endblock title %}{% endcapture %}
+    {% capture as page_description %}{% block metadescription %}{% endblock metadescription %}{% endcapture %}
+    <title>{{ page_title }}</title>
     <meta name="description"
-	  content="{% block metadescription %}{% endblock metadescription %}">
+	  content="{{ page_description }}">
     <meta name="title"
 	  content="{% block metatitle %}{{ title }}{% endblock metatitle %}">
     <meta charset="UTF-8">
@@ -19,6 +22,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <!-- Canonical URL -->
     {% if canonical_url %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
+    <!-- Share previews (Open Graph + X/Twitter cards) -->
+    <meta property="og:type" content="{% block og_type %}website{% endblock og_type %}">
+    <meta property="og:site_name" content="Fight Health Insurance">
+    <meta property="og:title" content="{{ page_title|default:'Fight Health Insurance' }}">
+    <meta property="og:description" content="{{ page_description|default:'A free tool that helps patients appeal health insurance denials.' }}">
+    {% if canonical_url %}<meta property="og:url" content="{{ canonical_url }}">{% endif %}
+    <meta property="og:image" content="https://www.fighthealthinsurance.com/static/images/og-share.jpg">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Fight Health Insurance logo">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{{ page_title|default:'Fight Health Insurance' }}">
+    <meta name="twitter:description" content="{{ page_description|default:'A free tool that helps patients appeal health insurance denials.' }}">
+    <meta name="twitter:image" content="https://www.fighthealthinsurance.com/static/images/og-share.jpg">
+    <link rel="alternate" type="application/rss+xml" title="Fight Health Insurance blog" href="{% url 'blog-feed' %}">
     <!-- Agent directives (llms.txt v2): markdown twin of this page + the site index -->
     {% if markdown_twin_url %}<link rel="alternate" type="text/markdown" href="{{ markdown_twin_url }}">{% endif %}
     <link rel="describedby" href="{% url 'llms_txt' %}">

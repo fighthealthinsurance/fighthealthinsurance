@@ -447,9 +447,17 @@ def _blog_posts_from_sources() -> list[dict[str, Any]]:
         meta: dict[str, Any] = {}
         for line in text[3:end].splitlines():
             m = _FRONT_MATTER_LINE.match(line.strip())
-            if m and m.group(1) in ("title", "slug", "date", "description", "excerpt"):
+            if m and m.group(1) in (
+                "title",
+                "date",
+                "updated",
+                "author",
+                "description",
+                "excerpt",
+            ):
                 meta[m.group(1)] = m.group(2)
-        meta.setdefault("slug", md.stem)
+        # The page URL comes from the file name, as in generate_blog_metadata.
+        meta["slug"] = md.stem
         posts.append(meta)
     posts.sort(key=lambda p: str(p.get("date", "")), reverse=True)
     return posts

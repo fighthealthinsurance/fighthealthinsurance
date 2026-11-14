@@ -13,7 +13,8 @@ domain (www.fighthealthinsurance.com) in production.
 """
 
 import json
-from typing import Any
+from datetime import date
+from typing import Any, Optional
 
 from django.contrib.sitemaps import Sitemap
 from django.contrib.sites.requests import RequestSite
@@ -23,6 +24,7 @@ from django.urls import reverse
 
 from loguru import logger
 
+from fighthealthinsurance.blog import last_changed
 from fighthealthinsurance.utils import (
     ai_assistants_page_enabled,
     arena_rankings_page_enabled,
@@ -146,6 +148,10 @@ class BlogSitemap(Sitemap):
             logger.warning(f"Blog post item missing slug: {item}")
             return reverse("blog")
         return reverse("blog-post", kwargs={"slug": slug})
+
+    def lastmod(self, item: dict[str, Any]) -> Optional[date]:
+        """The post's ``updated`` front matter date, else its publish date."""
+        return last_changed(item)
 
 
 class StateHelpSitemap(Sitemap):

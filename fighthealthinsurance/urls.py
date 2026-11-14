@@ -31,6 +31,7 @@ from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic.base import RedirectView
 
 from fhi_users.fight_paperwork import fight_paperwork_only
+from fighthealthinsurance.blog import BlogFeed
 from fighthealthinsurance import (
     agent_docs,
     assistant_handoff_views,
@@ -509,6 +510,12 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "blog/",
         views.BlogView.as_view(),
         name="blog",
+    ),
+    # Before the post route, which would otherwise take "feed" as a slug.
+    path(
+        "blog/feed/",
+        cache_control(public=True, max_age=1800)(BlogFeed()),
+        name="blog-feed",
     ),
     path(
         "blog/<slug:slug>/",
