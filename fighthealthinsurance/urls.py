@@ -413,6 +413,8 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.AboutView.as_view(),
         name="about",
     ),
+    # Search engines found /about and /about/ linked from elsewhere.
+    re_path(r"^about/?$", RedirectView.as_view(pattern_name="about", permanent=True)),
     path(
         "about-ai",
         views.AboutAIView.as_view(),
@@ -516,6 +518,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "blog/feed/",
         cache_control(public=True, max_age=1800)(BlogFeed()),
         name="blog-feed",
+    ),
+    # The MRI post's old address, still linked from outside.
+    path(
+        "blog/imaging-access-cd-mri-2025/",
+        RedirectView.as_view(url="/blog/250806-mri-digital-cd-access/", permanent=True),
     ),
     path(
         "blog/<slug:slug>/",

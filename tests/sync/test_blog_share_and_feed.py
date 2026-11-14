@@ -204,3 +204,20 @@ class MetaTitleTest(TestCase):
             reverse("blog-post", kwargs={"slug": slug})
         ).content.decode()
         self.assertTrue(_meta(html, "name", "title").strip())
+
+
+class OldAddressRedirectTest(TestCase):
+    def test_old_mri_post_address_redirects_to_the_post(self):
+        response = self.client.get("/blog/imaging-access-cd-mri-2025/")
+        self.assertEqual(response.status_code, 301)
+        self.assertEqual(response["Location"], "/blog/250806-mri-digital-cd-access/")
+
+    def test_about_redirects_to_about_us(self):
+        for path in ("/about", "/about/"):
+            response = self.client.get(path)
+            self.assertEqual(response.status_code, 301, path)
+            self.assertEqual(response["Location"], reverse("about"), path)
+
+    def test_mri_post_target_exists(self):
+        response = self.client.get("/blog/250806-mri-digital-cd-access/")
+        self.assertEqual(response.status_code, 200)
