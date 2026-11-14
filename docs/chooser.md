@@ -660,9 +660,10 @@ Four things write tasks, all under one generation claim per type
   pool is there already, and what the refill writes while it waits for the
   claim counts toward it, as usual. The launch command reads it (the launch
   job loads the settings; the Ray actor's pod does not) and hands it to the
-  actor. `scripts/start-server.sh` passes `--force-target 300` for a one-off
-  top-up; remove it once the pool is stocked, or every deploy tops it up
-  again.
+  actor. For a one-off top-up, add `--force-target N` to the launch line in
+  `scripts/start-server.sh` for a deploy and take it out once the pool is
+  stocked (as #1423 and its follow-up did for 300), or every deploy tops the
+  pool up again.
   `manage.py launch_chooser_backfill --inline` runs the same backfill in the
   current process (a dev machine without Ray); `--count` and `--min-votes`
   override the settings.
@@ -836,7 +837,7 @@ environment variables of the same name.
 | `CHOOSER_PENDING_RETRY_SECONDS` | `15` | What the next-task endpoint tells the page to wait while a case is being written |
 | `CHOOSER_LAUNCH_BACKFILL_SIZE` | `100` | Appeal tasks the launch backfill writes (`0` turns it off) |
 | `CHOOSER_LAUNCH_BACKFILL_MIN_VOTES` | `2` | Votes every current appeal task needs before the launch backfill is due |
-| `CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET` | `0` | Above 0, the launch backfill skips the votes check and tops the READY appeal pool up to this many. Read only when the command is not given `--force-target`, which wins; `scripts/start-server.sh` passes it, so changing this setting does not change the deploy's forced backfill |
+| `CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET` | `0` | Above 0, the launch backfill skips the votes check and tops the READY appeal pool up to this many. Read only when the command is not given `--force-target`, which wins |
 | `CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS` | `3600` | How long a due launch backfill waits for a generation claim another process holds |
 | `CHOOSER_FORCE_MODEL` | DeepSeek 4.1 Flash, GLM-5.3, Claude Opus 5.5, GPT-6.1 Sol, DeepSeek V4 Pro (`""` in tests) | Registered model names seated in every new arena task; with more than `CHOOSER_NUM_CANDIDATES`, the pool every slot is drawn from |
 | `CHOOSER_WARMUP_ROUNDS_PER_LEVEL` | `1` | Votes a judge casts before the complexity of the cases served to them may rise a level; `0` turns the warm-up off |
