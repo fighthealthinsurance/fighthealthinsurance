@@ -5,7 +5,10 @@
 {{ post_title|default:"Blog Post" }} - Fight Health Insurance
 {% endblock title %}
 {% block metadescription %}{{ post_excerpt|default:"Read insights and strategies for fighting health insurance denials." }}{% endblock metadescription %}
+{% block og_type %}article{% endblock og_type %}
 {% block content %}
+{# json_ld is a hardened <script type="application/ld+json"> tag from render_json_ld (escapes <, >, &). #}
+{{ json_ld }}
 <div id="blog-post-root" data-slug="{{ slug }}">
     <!-- React component will be mounted here -->
 </div>
