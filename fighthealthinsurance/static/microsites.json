@@ -454,7 +454,7 @@
     "assistance_programs": [
       {
         "name": "Grifols Patient Assistance (Gamunex-C)",
-        "url": "https://www.gamunex-c.com/patient-resources",
+        "url": "https://www.gamunex-c.com/en/cidp/gamunex-support-program",
         "description": "Help with deductibles, copays, and coinsurance. Call 1-888-MYGAMUNEX (1-888-694-2686)."
       },
       {
@@ -4797,7 +4797,7 @@
       },
       {
         "name": "We CU",
-        "url": "https://www.wecu.org/",
+        "url": "https://chronic-urticaria.org/",
         "description": "Nonprofit dedicated to empowering those affected by chronic urticaria."
       }
     ]
@@ -5754,7 +5754,7 @@
     "assistance_programs": [
       {
         "name": "Merck Patient Assistance",
-        "url": "https://www.merck.com/company-overview/responsibility/access-to-health/patient-assistance-programs/",
+        "url": "https://www.merck.com/patients/patient-support-programs/",
         "description": "Merck offers patient assistance programs for eligible patients. Contact Merck for Enflonsia-specific assistance information."
       }
     ],
@@ -6848,7 +6848,7 @@
       },
       {
         "name": "Asthma and Allergy Foundation of America (AAFA)",
-        "url": "https://aafa.org/allergies/allergy-treatments/immunotherapy/",
+        "url": "https://aafa.org/allergies/allergy-treatments/",
         "description": "Resources on insurance coverage, patient advocacy, and understanding immunotherapy options."
       }
     ]
@@ -6905,7 +6905,7 @@
     "advocacy_resources": [
       {
         "name": "North American Spine Society (NASS)",
-        "url": "https://www.spine.org/Portals/0/assets/downloads/ResearchClinicalCare/Guidelines/LumbarFusion.pdf",
+        "url": "https://www.spine.org/Coverage",
         "description": "Evidence-based clinical guidelines for lumbar fusion surgery."
       },
       {
@@ -7095,7 +7095,7 @@
     "assistance_programs": [
       {
         "name": "Breztri Savings Program",
-        "url": "https://www.breztri.com/savings-and-support.html",
+        "url": "https://www.breztri.com/patient-savings-support",
         "description": "Eligible commercially insured patients may pay as little as $0 per fill for Breztri. Restrictions apply; not valid for government insurance."
       },
       {
