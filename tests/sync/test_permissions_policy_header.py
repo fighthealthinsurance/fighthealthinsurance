@@ -41,6 +41,13 @@ class PermissionsPolicyHeaderTest(TestCase):
         self.assertEqual(response.status_code, 301)
         self.assertIn("Permissions-Policy", response)
 
+    def test_blocked_metrics_response_carries_the_policy(self):
+        response = self.client.get(
+            "/metrics", REMOTE_ADDR="203.0.113.5", HTTP_X_FORWARDED_FOR="203.0.113.5"
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("Permissions-Policy", response)
+
     def test_header_set_by_a_view_is_kept(self):
         def view(_request):
             response = HttpResponse("ok")

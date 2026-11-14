@@ -973,10 +973,10 @@ class Base(Configuration):
         # First, so every request is stamped with the thread its cleanup
         # runs on before anything can raise; see error_views.
         "fighthealthinsurance.middleware.RequestThreadMiddleware",
+        # Early so short-circuit responses (redirects, /metrics 404s) carry it.
+        "fighthealthinsurance.middleware.PermissionsPolicyMiddleware",
         # /metrics is gated before any session/auth/audit work happens.
         "fighthealthinsurance.middleware.MetricsAccessMiddleware",
-        # Before DomainRedirect so redirects carry the header too.
-        "fighthealthinsurance.middleware.PermissionsPolicyMiddleware",
         "fighthealthinsurance.middleware.DomainRedirectMiddleware",
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
