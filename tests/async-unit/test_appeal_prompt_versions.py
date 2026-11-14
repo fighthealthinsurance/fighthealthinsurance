@@ -199,6 +199,7 @@ def test_only_the_split_modes_draw_at_random():
         apv.MODE_SPLIT,
         apv.MODE_THIRDS,
         apv.MODE_THIRDS_V2_V4_V5,
+        apv.MODE_SPLIT_V2_V6,
     }
 
 

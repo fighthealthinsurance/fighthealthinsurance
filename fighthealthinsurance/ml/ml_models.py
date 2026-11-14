@@ -182,8 +182,19 @@ from fighthealthinsurance.ml.bad_output_utils import (
     is_bad_output,
     strip_boilerplate_service,
 )
+from fighthealthinsurance.ml.appeal_context import (
+    ENTITY_TASKS,
+    SHARED_APPEAL_INSTRUCTIONS,
+    AppealContext,
+    AppealPrompt,
+    citations_task,
+    questions_task,
+    research_text,
+)
 from fighthealthinsurance.ml.appeal_prompt_versions import (
     TIGHT_SYSTEM_PROMPT,
+    ashared_context_stages_enabled,
+    uses_shared_context_prompt,
     uses_tight_system_prompt,
 )
 from fighthealthinsurance.letter_openings import (
@@ -234,6 +245,25 @@ def is_blank_context(value: Any) -> bool:
     if isinstance(value, (list, tuple)):
         return all(is_blank_context(v) for v in value)
     return not str(value).strip()
+
+
+def shared_stage_prompt(
+    prompt: AppealPrompt, stage_system_prompts: List[str]
+) -> Tuple[AppealPrompt, List[str]]:
+    """A shared-context call's prompt and system prompts (ml/appeal_context).
+
+    The system prompt is always SHARED_APPEAL_INSTRUCTIONS, whatever the
+    stage, so the cached prefix before the denial never changes. The
+    stage's own instructions -- what this backend would have sent as the
+    system prompt for it -- go at the start of the task instead. A stage
+    that already sends the shared prompt (the v6 letter) is left as is.
+    Only the first stage prompt is used: the others would be alternatives
+    asked one after another, and the shared layout asks once.
+    """
+    legacy = [p for p in stage_system_prompts if p != SHARED_APPEAL_INSTRUCTIONS]
+    if not legacy:
+        return prompt, [SHARED_APPEAL_INSTRUCTIONS]
+    return prompt.with_task_prefix(legacy[0]), [SHARED_APPEAL_INSTRUCTIONS]
 
 
 def context_already_in_prompt(prompt: Optional[str], value: Any) -> bool:
@@ -2043,6 +2073,26 @@ class RemoteModelLike(DenialBase):
         await asyncio.sleep(0)  # yield
         return None
 
+    async def _shared_context_prompt(
+        self,
+        denial_text: Optional[str],
+        task: str,
+        *,
+        patient_history: Optional[str] = None,
+        research: Optional[str] = None,
+    ) -> Optional[AppealPrompt]:
+        """The shared appeal context prompt for one stage (ml/appeal_context)
+        when the staff setting has every stage send it, else None (the
+        caller sends its own prompt). The backend folds the stage's own
+        system prompt into the task on the way out (shared_stage_prompt)."""
+        if not await ashared_context_stages_enabled():
+            return None
+        return AppealContext(
+            denial_letter=denial_text or "",
+            patient_history=patient_history,
+            research=research,
+        ).prompt(task)
+
     async def _infer_no_context(
         self,
         system_prompts: list[str],
@@ -3506,6 +3556,10 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             The system prompt as a string, or the first prompt if multiple are available
         """
+        if prompt_type == "full" and uses_shared_context_prompt(prompt_version):
+            # v6: the shared appeal context's one system prompt, for every
+            # backend and both voices; the voice is in the task, at the end.
+            return [SHARED_APPEAL_INSTRUCTIONS]
         if prompt_type == "full" and uses_tight_system_prompt(prompt_version):
             return [
                 (
@@ -3727,6 +3781,8 @@ class RemoteOpenLike(RemoteModel):
                 # diversity. Keep one leg rather than pay twice for it.
                 temperatures = [0.6]
         system_prompts = self.get_system_prompts(infer_type, prof_pov, prompt_version)
+        if isinstance(prompt, AppealPrompt):
+            prompt, system_prompts = shared_stage_prompt(prompt, system_prompts)
         calls = itertools.chain.from_iterable(
             map(
                 lambda temperature: map(
@@ -4157,11 +4213,13 @@ class RemoteOpenLike(RemoteModel):
         return None
 
     async def get_fax_number(self, denial: str) -> Optional[str]:
+        shared = await self._shared_context_prompt(denial, ENTITY_TASKS["fax_number"])
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             timeout=ml_task_timeout("entity"),
             raise_on_unavailable=True,
-            prompt=f"When possible output in the same format as is found in the denial. Tell me the appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
+            prompt=shared
+            or f"When possible output in the same format as is found in the denial. Tell me the appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         return result
 
@@ -4211,11 +4269,15 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             Extracted insurance company name or None
         """
+        shared = await self._shared_context_prompt(
+            denial, ENTITY_TASKS["insurance_company"]
+        )
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             timeout=ml_task_timeout("entity"),
             raise_on_unavailable=True,
-            prompt=f"When possible output in the same format as is found in the denial. Tell me which insurance company is within the provided denial. If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. Remember: DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
+            prompt=shared
+            or f"When possible output in the same format as is found in the denial. Tell me which insurance company is within the provided denial. If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. Remember: DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The insurance company is" in result:
             return result.split("The insurance company is")[1].strip()
@@ -4231,11 +4293,13 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             Extracted plan ID or None
         """
+        shared = await self._shared_context_prompt(denial, ENTITY_TASKS["plan_id"])
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             timeout=ml_task_timeout("entity"),
             raise_on_unavailable=True,
-            prompt=f"Extract the plan ID (an alphanumeric identifier code containing digits, like 'H5521-001', 'PLAN987654', 'GRP12345') from the following denial letter. Plan IDs are NOT common English words -- they are codes assigned by insurance companies. Output ONLY the ID value exactly as it appears in the document, nothing else. If no plan ID is present or you are unsure, write UNKNOWN. DO NOT GUESS. The denial follows: {denial}. Remember: output ONLY the identifier code, DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
+            prompt=shared
+            or f"Extract the plan ID (an alphanumeric identifier code containing digits, like 'H5521-001', 'PLAN987654', 'GRP12345') from the following denial letter. Plan IDs are NOT common English words -- they are codes assigned by insurance companies. Output ONLY the ID value exactly as it appears in the document, nothing else. If no plan ID is present or you are unsure, write UNKNOWN. DO NOT GUESS. The denial follows: {denial}. Remember: output ONLY the identifier code, DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The plan ID is" in result:
             return result.split("The plan ID is")[1].strip()
@@ -4251,11 +4315,13 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             Extracted claim ID or None
         """
+        shared = await self._shared_context_prompt(denial, ENTITY_TASKS["claim_id"])
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             timeout=ml_task_timeout("entity"),
             raise_on_unavailable=True,
-            prompt=f"Extract the claim ID (an alphanumeric identifier code containing digits, like 'CLM2024001234', '2024-12345-A', 'C987654321') from the following denial letter. Claim IDs are NOT common English words -- they are reference codes. It could be multiple but is normally just one. Output ONLY the ID value exactly as it appears in the document, nothing else. If no claim ID is present or you are unsure, write UNKNOWN. DO NOT GUESS. The denial follows: {denial}. REMEMBER DO NOT GUESS.",
+            prompt=shared
+            or f"Extract the claim ID (an alphanumeric identifier code containing digits, like 'CLM2024001234', '2024-12345-A', 'C987654321') from the following denial letter. Claim IDs are NOT common English words -- they are reference codes. It could be multiple but is normally just one. Output ONLY the ID value exactly as it appears in the document, nothing else. If no claim ID is present or you are unsure, write UNKNOWN. DO NOT GUESS. The denial follows: {denial}. REMEMBER DO NOT GUESS.",
         )
         if result and "Claim ID is" in result:
             return result.split("Claim ID is")[1].strip()
@@ -4271,11 +4337,15 @@ class RemoteOpenLike(RemoteModel):
         Returns:
             Extracted date of service or None
         """
+        shared = await self._shared_context_prompt(
+            denial, ENTITY_TASKS["date_of_service"]
+        )
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
             timeout=ml_task_timeout("entity"),
             raise_on_unavailable=True,
-            prompt=f"When possible output in the same format as is found in the denial. Tell me the what the date of service was within the provided denial (it could be multiple or a date range, but it can also just be one day). If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
+            prompt=shared
+            or f"When possible output in the same format as is found in the denial. Tell me the what the date of service was within the provided denial (it could be multiple or a date range, but it can also just be one day). If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
         )
         if result and "Date of service is" in result:
             return result.split("Date of service is")[1].strip()
@@ -4287,6 +4357,9 @@ class RemoteOpenLike(RemoteModel):
         logger.debug(
             f"Getting procedure and diagnosis for {self} ({len(prompt)} chars)"
         )
+        # The denial is the whole prompt here and the stage's instructions
+        # are its system prompt, which the backend folds into the task.
+        prompt = await self._shared_context_prompt(prompt, "") or prompt
         try:
             model_response = await self._infer_no_context(
                 system_prompts=self.get_system_prompts("procedure"),
@@ -4355,6 +4428,8 @@ class RemoteOpenLike(RemoteModel):
         ``raise_on_unavailable`` turns the three ways of not reaching the
         provider (below) into ProviderUnavailable instead of None.
         """
+        if isinstance(prompt, AppealPrompt):
+            prompt, system_prompts = shared_stage_prompt(prompt, system_prompts)
         # Filled in by __infer for each attempt that could not reach the
         # provider; those return None so the backup can be tried.
         transport_failures: list[str] = []
@@ -5269,7 +5344,21 @@ class RemoteOpenLike(RemoteModel):
                     system_extra = f"System prompt: {system_prompt}\n\n"
                 if history:
                     messages.extend(history)
-                if prompt:
+                if isinstance(prompt, AppealPrompt):
+                    # The shared appeal context (ml/appeal_context): sent as
+                    # is, one turn, with the call's own context copies in
+                    # their fixed sections rather than a "System context"
+                    # preamble ahead of the denial, which would move the
+                    # cached prefix on every call.
+                    shared = self._shared_prompt_with_call_context(
+                        prompt,
+                        patient_context,
+                        pubmed_context,
+                        plan_context,
+                        ml_citations_context,
+                    )
+                    messages += [{"role": "user", "content": f"{system_extra}{shared}"}]
+                elif prompt:
                     messages += [
                         {
                             "role": "user",
@@ -5748,6 +5837,39 @@ class RemoteOpenLike(RemoteModel):
 
         return formatted_citations
 
+    def _shared_prompt_with_call_context(
+        self,
+        prompt: AppealPrompt,
+        patient_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        ml_citations_context: Optional[Union[str, List[str]]] = None,
+    ) -> AppealPrompt:
+        """``prompt`` with the context the call carries beside it, each
+        piece in its fixed section of the shared layout (see
+        AppealPrompt.with_call_context): what ``_build_context_extra`` does
+        for an ordinary prompt, without putting anything ahead of the denial.
+        The patient history keeps that preamble's cap."""
+        if patient_context is not None and len(patient_context) > 3:
+            patient_context = patient_context[0 : int(self.max_len / 2)]
+        else:
+            patient_context = None
+        citations_text = render_citations_context(ml_citations_context)
+        research = research_text(
+            pubmed=None if is_blank_context(pubmed_context) else pubmed_context,
+            citations=None if is_blank_context(citations_text) else citations_text,
+        )
+        additional = (
+            f"The patient's insurance plan details: {plan_context}"
+            if plan_context is not None and len(plan_context) > 3
+            else None
+        )
+        return prompt.with_call_context(
+            patient_context=patient_context,
+            research=research,
+            additional=additional,
+        )
+
     def _build_context_extra(
         self,
         patient_context: Optional[str] = None,
@@ -5818,17 +5940,23 @@ class RemoteOpenLike(RemoteModel):
 # the server), and the recipient line is the one every letter prompt carries:
 # see letter_openings for why models need telling. Citation rules travel in
 # the user turn, which says in every build what may be cited.
-TIGHT_PATIENT_LETTER_PROMPT = (
-    TIGHT_SYSTEM_PROMPT + " Write as the patient, in the first person (I, my), using"
+# The voice, placeholders and recipient alone: the tight prompts' tail, and
+# the voice line of v6's task (ml/appeal_context), where the system prompt
+# is shared by every stage and so cannot carry it.
+PATIENT_VOICE_INSTRUCTION = (
+    "Write as the patient, in the first person (I, my), using"
     ' "{{FIRST_NAME}} {{LAST_NAME}}" as your name, "{{SCSID}}" for the'
     ' subscriber ID and "{{GPID}}" for the group ID. ' + APPEAL_SALUTATION_INSTRUCTION
 )
-TIGHT_PROFESSIONAL_LETTER_PROMPT = (
-    TIGHT_SYSTEM_PROMPT
-    + " Write as the patient's healthcare professional, not the patient: use"
+PROFESSIONAL_VOICE_INSTRUCTION = (
+    "Write as the patient's healthcare professional, not the patient: use"
     ' "I" only for yourself and refer to the patient in the third person'
     ' ("the patient", "they"). Sign as "{{Your Name}}" unless you are given'
     " a name. " + APPEAL_SALUTATION_INSTRUCTION
+)
+TIGHT_PATIENT_LETTER_PROMPT = TIGHT_SYSTEM_PROMPT + " " + PATIENT_VOICE_INSTRUCTION
+TIGHT_PROFESSIONAL_LETTER_PROMPT = (
+    TIGHT_SYSTEM_PROMPT + " " + PROFESSIONAL_VOICE_INSTRUCTION
 )
 
 
@@ -6006,6 +6134,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
             if denial_text
             else ""
         )
+        shared_task = questions_task(procedure, diagnosis, bool(denial_text))
+        shared = await self._shared_context_prompt(
+            denial_text, shared_task, patient_history=patient_context
+        )
         # Procedure opt is in their multiple times intentionally. ~computers~
         prompt = f"""
         Some context which can help you in your task:
@@ -6028,7 +6160,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
         result = await self._infer_no_context(
             system_prompts=system_prompts,
-            prompt=prompt,
+            prompt=shared or prompt,
             patient_context=patient_context,
             plan_context=plan_context,
             temperature=0.6,
@@ -6211,11 +6343,20 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
         logger.debug(f"Generating citations on backend {self}")
 
+        # The research stage: the PubMed results it reads are research for
+        # this denial, so they go in <research>, where the letter calls will
+        # send them too.
+        shared = await self._shared_context_prompt(
+            denial_text,
+            citations_task(procedure, diagnosis),
+            patient_history=patient_context,
+            research=research_text(pubmed=pubmed_context),
+        )
         system_prompts: list[str] = self.get_system_prompts("citations")
 
         result = await self._infer(
             system_prompts=system_prompts,
-            prompt=prompt,
+            prompt=shared or prompt,
             patient_context=patient_context,
             plan_context=plan_context,
             pubmed_context=pubmed_context,
@@ -7713,6 +7854,8 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         if prompt is None:
             logger.debug("No prompt supplied; skipping inference")
             return None
+        if isinstance(prompt, AppealPrompt):
+            prompt, system_prompts = shared_stage_prompt(prompt, system_prompts)
         # The same skips as the shared transport. The router trusts this
         # backend's in-memory signal over the sweep, so without them a dead
         # or misdeployed Foundry endpoint kept its fan-out slot until the
@@ -7751,20 +7894,40 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             "anthropic-version": self.ANTHROPIC_VERSION,
             "content-type": "application/json",
         }
+        shared: Optional[AppealPrompt] = (
+            self._shared_prompt_with_call_context(
+                prompt,
+                patient_context,
+                pubmed_context,
+                plan_context,
+                ml_citations_context,
+            )
+            if isinstance(prompt, AppealPrompt)
+            else None
+        )
         for system_prompt in system_prompts:
-            messages: List[dict[str, str]] = []
+            messages: List[dict[str, Any]] = []
             if history:
                 messages.extend(history)
-            messages.append(
-                {
-                    "role": "user",
-                    "content": f"{context_extra}\n\n User prompt: {prompt}",
-                }
-            )
+            if shared is None:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": f"{context_extra}\n\n User prompt: {prompt}",
+                    }
+                )
             messages = ensure_message_alternation(messages)
-            cleaned_messages = [
+            cleaned_messages: List[dict[str, Any]] = [
                 {"role": m.get("role"), "content": m.get("content")} for m in messages
             ]
+            if shared is not None:
+                # The shared layout: one text block per section, cache
+                # breakpoints after the denial (boundary A) and after the
+                # gathered evidence (boundary B), and the shared system
+                # prompt cached with them (it precedes both).
+                cleaned_messages.append(
+                    {"role": "user", "content": shared.anthropic_content_blocks()}
+                )
             body: dict[str, Any] = {
                 "model": self.model,
                 "max_tokens": self.MAX_OUTPUT_TOKENS,

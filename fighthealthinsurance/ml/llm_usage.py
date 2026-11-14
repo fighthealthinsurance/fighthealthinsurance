@@ -575,6 +575,24 @@ def parse_usage(usage: Any) -> Optional[Tuple[int, int]]:
     return (min((given or 0) + cached, _TOKEN_CAP), output or 0)
 
 
+def parse_cached_prompt_tokens(usage: Any) -> Optional[int]:
+    """How many of a response's prompt tokens the provider served from its
+    prompt cache, or None when it does not say. Reads the Anthropic shape
+    (cache_read_input_tokens) and the OpenAI one, which vLLM, DeepInfra and
+    OpenRouter also send (prompt_tokens_details.cached_tokens). Counted
+    apart from the prompt tokens (which include them), so the shared
+    appeal context's prefix reuse (ml/appeal_context) can be seen."""
+    if not isinstance(usage, Mapping):
+        return None
+    read = _count(usage.get("cache_read_input_tokens"))
+    if read is not None:
+        return read
+    details = usage.get("prompt_tokens_details")
+    if isinstance(details, Mapping):
+        return _count(details.get("cached_tokens"))
+    return None
+
+
 # --- recording ------------------------------------------------------------------
 
 # Requests answered, by where they came from. ``usage`` says whether the
@@ -591,6 +609,12 @@ LLM_TOKENS_TOTAL = Counter(
     "Tokens providers reported, by model, tier, surface, task and kind "
     "(prompt, completion).",
     labelnames=("model", "tier", "surface", "task", "kind"),
+)
+LLM_CACHED_PROMPT_TOKENS_TOTAL = Counter(
+    "fhi_llm_cached_prompt_tokens_total",
+    "Prompt tokens providers reported serving from their prompt cache, by "
+    "model, tier and task (a subset of the prompt kind of fhi_llm_tokens_total).",
+    labelnames=("model", "tier", "task"),
 )
 # The network view, without the model: a class only, never an address, a
 # key, an ASN or a country.
@@ -683,6 +707,11 @@ def record_llm_usage(
                     network_class=network_class,
                     kind=kind,
                 ).inc(amount)
+        cached = parse_cached_prompt_tokens(usage)
+        if cached:
+            LLM_CACHED_PROMPT_TOKENS_TOTAL.labels(
+                model=model_label, tier=tier_label, task=task_label
+            ).inc(cached)
         if not getattr(settings, "FHI_LLM_USAGE_DB", True):
             return
         from fighthealthinsurance.ml import llm_usage_ledger

@@ -27,9 +27,10 @@ from fighthealthinsurance.ml.appeal_prompt_versions import (
     PROMPT_V3,
     PROMPT_V4,
     PROMPT_V5,
+    PROMPT_V6,
 )
 
-VERSIONS = (PROMPT_V1, PROMPT_V2, PROMPT_V3, PROMPT_V4, PROMPT_V5)
+VERSIONS = (PROMPT_V1, PROMPT_V2, PROMPT_V3, PROMPT_V4, PROMPT_V5, PROMPT_V6)
 
 # Every pair of versions, earlier version first: v1-v2, v1-v3, ... v4-v5.
 # The dashboard shows the pairs the current mode draws and any pair with

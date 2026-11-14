@@ -167,6 +167,8 @@ def _questions_model():
     model = MagicMock(spec=RemoteFullOpenLike)
     model._infer_no_context = AsyncMock(return_value="1. What is the patient's age?")
     model.get_system_prompts = MagicMock(return_value=["Test system prompt"])
+    # The staff setting's shared layout is off: the legacy prompt is sent.
+    model._shared_context_prompt = AsyncMock(return_value=None)
     model.model = "test-model"
     return model
 

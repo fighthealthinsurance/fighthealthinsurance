@@ -36,6 +36,18 @@ row cannot be read, letters use original; so does a pod running code from
 before a mode existed, which reads that mode as unknown. Every draft
 records the version that wrote it, so the staff page can compare how often
 people pick each version's letters.
+
+v6 is the shared appeal context (ml/appeal_context): the same inputs as v3,
+split into the cache-friendly layout every stage shares -- one fixed system
+prompt (SHARED_APPEAL_INSTRUCTIONS), then the denial letter, the patient
+history, the gathered research and the intake answers as fixed sections,
+then the letter task (point of view, details, plan and payer context, the
+output contract) last. AppealGenerator.make_shared_context_prompt builds it.
+Two modes run it: shared_context (v6 for every letter, and every other stage
+-- entity extraction, follow-up questions, citations -- sends the same
+prefix, so a provider can reuse the denial across all of them) and
+split_v2_v6 (each letter draws v2 or v6, half and half; the other stages
+keep their own prompts, so the letter comparison is the only change).
 """
 
 from __future__ import annotations
@@ -52,6 +64,7 @@ PROMPT_V2 = "v2"
 PROMPT_V3 = "v3"
 PROMPT_V4 = "v4"
 PROMPT_V5 = "v5"
+PROMPT_V6 = "v6"
 
 PROMPT_VERSION_CHOICES = (
     (PROMPT_V1, "v1: original prompt"),
@@ -59,10 +72,11 @@ PROMPT_VERSION_CHOICES = (
     (PROMPT_V3, "v3: sectioned prompt plus the output contract"),
     (PROMPT_V4, "v4: v2 under the evaluation's tight system prompt"),
     (PROMPT_V5, "v5: v3 under the evaluation's tight system prompt"),
+    (PROMPT_V6, "v6: the shared appeal context (cache-friendly sections)"),
 )
 
 # The versions whose prompt ends with OUTPUT_CONTRACT.
-_CONTRACT_VERSIONS = frozenset({PROMPT_V2, PROMPT_V3, PROMPT_V4, PROMPT_V5})
+_CONTRACT_VERSIONS = frozenset({PROMPT_V2, PROMPT_V3, PROMPT_V4, PROMPT_V5, PROMPT_V6})
 
 # The September 2026 evaluation's output contract (eval/RUNS.md, "The
 # tightened output contract"), less its opening "You write health insurance
@@ -83,6 +97,8 @@ MODE_SPLIT = "split"
 MODE_SECTIONED = "sectioned"
 MODE_THIRDS = "thirds"
 MODE_THIRDS_V2_V4_V5 = "thirds_v2_v4_v5"
+MODE_SHARED_CONTEXT = "shared_context"
+MODE_SPLIT_V2_V6 = "split_v2_v6"
 
 # Stored on LetterPromptMode rows, so a value keeps its meaning for good: add
 # modes, never repurpose one.
@@ -96,6 +112,14 @@ MODE_CHOICES = (
         MODE_THIRDS_V2_V4_V5,
         "v2, v4 or v5: each draft is written with v2, v4 or v5 at random",
     ),
+    (
+        MODE_SHARED_CONTEXT,
+        "Shared appeal context (v6) for every letter and every other stage",
+    ),
+    (
+        MODE_SPLIT_V2_V6,
+        "Half and half: each draft is written with v2 or v6 at random",
+    ),
 )
 
 _MODES = frozenset(m for m, _label in MODE_CHOICES)
@@ -108,6 +132,8 @@ MODE_VERSIONS = {
     MODE_SECTIONED: (PROMPT_V3,),
     MODE_THIRDS: (PROMPT_V1, PROMPT_V2, PROMPT_V3),
     MODE_THIRDS_V2_V4_V5: (PROMPT_V2, PROMPT_V4, PROMPT_V5),
+    MODE_SHARED_CONTEXT: (PROMPT_V6,),
+    MODE_SPLIT_V2_V6: (PROMPT_V2, PROMPT_V6),
 }
 
 # The modes that draw a version at random for each call: the runs the staff
@@ -127,9 +153,15 @@ def apply_prompt_version(prompt: str, version: Optional[str]) -> str:
 
     v2 to v5 append the contract after everything else, so it is the last
     thing the model reads, and so context shedding (which swaps out the start
-    of a prompt and keeps what follows it) keeps it too. Any other version
-    leaves the prompt as it is.
+    of a prompt and keeps what follows it) keeps it too. v6's prompt is an
+    AppealPrompt: the contract goes at the end of its task, which is still
+    the last thing the model reads and leaves the shared prefix alone. Any
+    other version leaves the prompt as it is.
     """
+    from fighthealthinsurance.ml.appeal_context import AppealPrompt
+
+    if version in _CONTRACT_VERSIONS and isinstance(prompt, AppealPrompt):
+        return prompt.with_task_suffix(OUTPUT_CONTRACT)
     if version in _CONTRACT_VERSIONS:
         return f"{prompt}\n\n{OUTPUT_CONTRACT}"
     return prompt
@@ -139,6 +171,18 @@ def uses_tight_system_prompt(version: Optional[str]) -> bool:
     """Whether ``version`` is written under the evaluation's tight system
     prompt rather than the app's persona prompt."""
     return version in (PROMPT_V4, PROMPT_V5)
+
+
+def uses_shared_context_prompt(version: Optional[str]) -> bool:
+    """Whether ``version`` is built in the shared appeal context layout
+    (make_shared_context_prompt) under SHARED_APPEAL_INSTRUCTIONS."""
+    return version == PROMPT_V6
+
+
+def shared_context_stages(mode: str) -> bool:
+    """Whether every stage, not just the letter, sends the shared appeal
+    context under ``mode``."""
+    return mode == MODE_SHARED_CONTEXT
 
 
 def uses_sectioned_prompt(version: Optional[str]) -> bool:
@@ -168,6 +212,10 @@ def choose_prompt_version(mode: str) -> str:
         if draw < 2 / 3:
             return PROMPT_V2
         return PROMPT_V3
+    if mode == MODE_SHARED_CONTEXT:
+        return PROMPT_V6
+    if mode == MODE_SPLIT_V2_V6:
+        return PROMPT_V6 if _split_draw() < 0.5 else PROMPT_V2
     if mode == MODE_THIRDS_V2_V4_V5:
         draw = _split_draw()
         if draw < 1 / 3:
@@ -210,6 +258,16 @@ class _ModeCache:
                 self._read_at = time.monotonic()
                 self._refreshing = False
         return value
+
+    def peek(self) -> Optional[str]:
+        """The cached mode while it is fresh, else None; never reads."""
+        with self._lock:
+            if (
+                self._value is not None
+                and time.monotonic() - self._read_at < MODE_CACHE_SECONDS
+            ):
+                return self._value
+        return None
 
     def reset(self) -> None:
         with self._lock:
@@ -269,6 +327,30 @@ def current_letter_prompt_mode() -> str:
     (make_appeals runs on one), not from the event loop.
     """
     return _mode_cache.get()
+
+
+async def acurrent_letter_prompt_mode() -> str:
+    """current_letter_prompt_mode for async callers: a fresh cached value is
+    returned on the event loop; a refresh runs on a worker thread (it reads
+    the database), so the loop never blocks on it. Like the sync read,
+    anything unexpected is original: the bridge itself manages DB
+    connections outside _read_mode's guard, and a model call must never
+    fail because the setting could not be read."""
+    fresh = _mode_cache.peek()
+    if fresh is not None:
+        return fresh
+    try:
+        from channels.db import database_sync_to_async
+
+        return str(await database_sync_to_async(current_letter_prompt_mode)())
+    except Exception as e:
+        logger.warning(f"Letter prompt mode unreadable, using original: {e}")
+        return MODE_ORIGINAL
+
+
+async def ashared_context_stages_enabled() -> bool:
+    """Whether the non-letter stages send the shared appeal context now."""
+    return shared_context_stages(await acurrent_letter_prompt_mode())
 
 
 def reset_letter_prompt_mode_cache() -> None:
