@@ -164,6 +164,11 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
+        "real_ocr: reads with the real OCR; without it, sync tests stand OCR in "
+        "with an empty reading (tests/sync/conftest.py)",
+    )
+    config.addinivalue_line(
+        "markers",
         f"{PANDOC_PDF_MARKER}: renders a real PDF with pandoc; skipped (outside "
         "CI) when no PDF engine on this machine can, decided lazily the first "
         "time such a test is about to run",
@@ -184,6 +189,13 @@ def pytest_runtest_setup(item):
 skip_if_no_pandoc = pytest.mark.skipif(
     shutil.which("pandoc") is None,
     reason="pandoc is not installed",
+)
+
+# Tests that OCR a page need tesseract. CI installs it, so there they never
+# skip: a broken install must fail them rather than quietly drop them.
+skip_if_no_tesseract = pytest.mark.skipif(
+    shutil.which("tesseract") is None and not os.environ.get("CI"),
+    reason="tesseract is not installed",
 )
 
 skip_if_no_nice_api_key = pytest.mark.skipif(

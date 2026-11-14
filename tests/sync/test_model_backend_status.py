@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -296,9 +296,7 @@ class ModelBackendStatusContentTest(StatusPageTestCase):
         health = self.cell(response, name, "Last health check")
         self.assertIn("not checked", health)
         self.assertNotIn("NOT_CONFIGURED", health)
-        self.assertIn(
-            "ANTHROPIC_API_KEY not set", self.cell(response, name, "Config")
-        )
+        self.assertIn("ANTHROPIC_API_KEY not set", self.cell(response, name, "Config"))
 
 
 MAY = "fhi-2025-may-0.3-float16-q8-vllm-compressed"
@@ -473,6 +471,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.assertFalse(sonar["has_traits"])
         self.assertTrue(sonar["context_only"])
 
+    # Today's internal-first passes; side by side is tested on its own.
+    @override_settings(FHI_APPEAL_SIDE_BY_SIDE=False)
     def test_internal_backends(self):
         self.configure(**ALPHA, **LEGACY)
         response = self.get_page()
@@ -508,6 +508,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
         self.assertEqual(self.labels(legacy), ["Appeals: primary"])
         self.assertContains(response, "appeal-only fine-tune")
 
+    # Today's internal-first passes; side by side is tested on its own.
+    @override_settings(FHI_APPEAL_SIDE_BY_SIDE=False)
     def test_backends_sharing_a_name_show_only_their_own_roles(self):
         """ALPHA and NEW set to the same model path both register as
         fhi-local. With ALPHA marked down by the sweep, the router picks only
@@ -708,6 +710,8 @@ class ModelBackendStatusRoutingTest(StatusPageTestCase):
             self.names(self.plan(response, "Chat").internal_only), ["fhi-local"]
         )
 
+    # Today's internal-first passes; side by side is tested on its own.
+    @override_settings(FHI_APPEAL_SIDE_BY_SIDE=False)
     def test_a_forced_external_model_is_skipped_with_external_off(self):
         """The banner and the lists agree on what FORCE_MODEL does to a
         person who has not allowed external models."""

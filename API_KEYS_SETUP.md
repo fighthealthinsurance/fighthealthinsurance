@@ -20,6 +20,8 @@ the rest of the app keeps working.
 | `NCBI_API_KEY` | NCBI / PubMed | Optional | Higher PubMed rate limits (3 to 10 requests per second) |
 | none | RxNav / RxNorm | No key needed | Drug-name normalization (brand and generic names, misspellings) |
 | `LOG_ANALYTICS_WORKSPACE_ID`, `LOG_ANALYTICS_WORKSPACE_KEY` | Azure Log Analytics | Optional | Ship app logs to a Log Analytics workspace |
+| `HUMANJUDGE_API_KEY`, `HUMANJUDGE_TOKEN`, `HUMANJUDGE_MODEL_ID` | HumanJudge | Optional | Outside human review of Appeal Arena drafts, from the admin |
+| `RENTAHUMAN_API_KEY`, `RENTAHUMAN_WEBHOOK_SECRET` | RentAHuman | Optional | Paid reviewers judging in the Appeal Arena itself |
 | See [docs/ml-backends.md](docs/ml-backends.md) | Model backends | At least one | Appeal generation |
 
 ## Setting the variables
@@ -227,6 +229,123 @@ export LOG_ANALYTICS_LOG_TYPE="FightHealthInsurance"
   added, and no network calls are made.
 - Shipping errors are swallowed so logging can't break a request. Records are
   dropped if the in-memory send queue is full.
+
+---
+
+## HumanJudge (`HUMANJUDGE_API_KEY` / `_TOKEN` / `_MODEL_ID`)
+
+Optional: lets staff send the Appeal Arena's synthetic appeal drafts to
+[HumanJudge](https://humanjudge.com), whose reviewers (people, blind to the
+model) pass or flag each one, and download their verdicts. Only synthetic
+Arena drafts can be sent; real denials and appeals never are. How it works:
+[docs/chooser.md](docs/chooser.md), "HumanJudge, an outside human judge".
+
+### Sign up
+
+1. Sign up as a developer at <https://humanjudge.com/auth?role=builder>
+   (free during their beta).
+2. In the developer hub, create one model for the Arena, standalone: not
+   enrolled in any of their public benchmarks. Copy its API key, which
+   starts with `gj_sk_`. That is `HUMANJUDGE_API_KEY`; it sends the drafts
+   and can read their verdicts.
+3. Optional: on <https://humanjudge.com/profile>, create a personal access
+   token (starts with `gj_pat_`). That is `HUMANJUDGE_TOKEN`; when set, it is
+   used to read verdicts instead of the model key. Set it if downloading
+   verdicts fails with an access error.
+4. Only if the account has more than one model: the Arena model's id (a
+   UUID, shown in the developer hub) is `HUMANJUDGE_MODEL_ID`. With one
+   model, the app finds it.
+
+### Configure
+
+```bash
+export HUMANJUDGE_API_KEY="gj_sk_live_your-key"
+# Optional, see above.
+export HUMANJUDGE_TOKEN="gj_pat_your-token"
+export HUMANJUDGE_MODEL_ID="00000000-0000-0000-0000-000000000000"
+# Optional: CHOOSER_HUMANJUDGE=false turns it off with the key in place.
+```
+
+In production, add the keys to the shared `fight-health-insurance-secret`
+Secret (namespace `totallylegitco`), for example:
+
+```bash
+kubectl -n totallylegitco patch secret fight-health-insurance-secret \
+  --type merge -p '{"stringData":{"HUMANJUDGE_API_KEY":"gj_sk_live_your-key"}}'
+```
+
+then restart the web pods (the admin runs there): they read the Secret only
+when they start. The Ray pods do not need it.
+
+### Behavior
+
+- **With the key set:** the Chooser Task list's **HumanJudge: [N] unsent
+  cases [Upload]** button sends the next N cases waiting to go (up to 300;
+  more than 25 upload in the background), a case's page has an **Upload to
+  HumanJudge** button, and the HumanJudge Verdict list's **Download
+  verdicts from HumanJudge** button fetches the new verdicts. Nothing is
+  sent or fetched on its own.
+- **Without it:** both say HumanJudge is not configured, and nothing is
+  sent anywhere.
+- To check the setup, upload one case, then download. A message that votes
+  "matched no draft we uploaded" means verdicts are arriving but cannot be
+  tied to drafts; report it, as the vote format is not fully documented.
+
+## RentAHuman (`RENTAHUMAN_API_KEY` / `RENTAHUMAN_WEBHOOK_SECRET`)
+
+Optional: hires paid reviewers through [RentAHuman](https://rentahuman.ai)
+to judge in the Appeal Arena itself, as a bounty with a join link; their
+votes are ordinary Arena votes tagged with the paid run. Only the Arena's
+synthetic cases are shown. How it works: [docs/chooser.md](docs/chooser.md),
+"Paid reviewers (RentAHuman)".
+
+### Sign up
+
+RentAHuman's website screens out people, so sign up the way it asks agents
+to: `POST https://rentahuman.ai/api/agents/signup` with
+`{"email": ..., "acceptTerms": true, "country": "US"}` (this accepts their
+Terms of Service and Privacy Policy), then
+`POST https://rentahuman.ai/api/agents/signup/verify` with the email and the
+6-digit code they email. The answer holds the API key (`rah_...`), shown
+once. An email that already has an account gets no code; with any working
+key, `POST https://rentahuman.ai/api/keys` (`{"name": ...}`) makes another,
+and `DELETE /api/keys/{id}` revokes one. Their answers repeat the key in more
+than one field, so keep them out of logs.
+
+### Configure
+
+```bash
+export RENTAHUMAN_API_KEY="rah_your-key"
+# Printed once by `manage.py rentahuman_setup --webhook` (after deploy).
+export RENTAHUMAN_WEBHOOK_SECRET="whsec_your-secret"
+```
+
+In production, add them to the shared `fight-health-insurance-secret`
+Secret (namespace `totallylegitco`) and restart the web pods, which serve
+the join link and the webhook:
+
+```bash
+kubectl -n totallylegitco patch secret fight-health-insurance-secret \
+  --type merge -p '{"stringData":{"RENTAHUMAN_API_KEY":"rah_your-key"}}'
+kubectl -n totallylegitco rollout restart deployment/web
+```
+
+Then, from a web pod (`kubectl -n totallylegitco exec -it deploy/web -- ...`):
+`python manage.py rentahuman_setup` checks the wallet; `--deposit 6` prints
+a Stripe link to fund it; `--webhook` registers the webhook and prints its
+secret; `--test-webhook <id>` sends a signed test event. Post bounties from
+there too (`post_paid_review_bounty`), since the join link only works for a
+bounty saved in the production database.
+
+### Behavior
+
+- **With the key set:** `post_paid_review_bounty` previews (and with
+  `--post`, posts) bounties, and submissions are checked and approved or
+  sent back for a redo. Payment is released by a person on RentAHuman.
+- **With the webhook secret set:** submissions are checked as they come in;
+  without it, run `sync_paid_reviews`.
+- **Without the key:** nothing is sent anywhere; join links of bounties
+  already saved still work.
 
 ---
 

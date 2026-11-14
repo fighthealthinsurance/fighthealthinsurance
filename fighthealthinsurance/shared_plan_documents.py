@@ -26,7 +26,7 @@ import hmac
 import time
 import uuid
 from collections import Counter
-from typing import Any, Mapping, NamedTuple, Optional, Sequence
+from typing import Any, Callable, Mapping, NamedTuple, Optional, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 from django.conf import settings
@@ -34,7 +34,7 @@ from django.core import signing
 from django.core.cache import cache
 from django.core.files.uploadedfile import UploadedFile
 from django.db import transaction
-from django.db.models import F, PositiveIntegerField
+from django.db.models import F, PositiveIntegerField, QuerySet
 from django.db.models.functions import Greatest
 from django.http import HttpRequest
 from django.utils import timezone
@@ -214,6 +214,13 @@ _BUDGET_NAMES = (
     SharedPlanDocumentsDay.LINKS,
     SharedPlanDocumentsDay.OPT_IN_FILES,
     SharedPlanDocumentsDay.REMINDERS,
+    *SharedPlanDocumentsDay.DROPPED,
+    SharedPlanDocumentsDay.STAFF_SUMMARY,
+    SharedPlanDocumentsDay.STAFF_SUMMARY_TRIES,
+    SharedPlanDocumentsDay.FILE_CHECK,
+    *SharedPlanDocumentsDay.FILE_CHECK_COUNTS,
+    SharedPlanDocumentsDay.NO_BUCKET_SHARE_PAGE,
+    SharedPlanDocumentsDay.NO_BUCKET_OPT_IN,
 )
 
 
@@ -333,6 +340,68 @@ def link_fingerprint(link: str) -> str:
     return digest.hexdigest()
 
 
+class NoBucketCopy(Exception):
+    """A shared file was stored only on a pod's own disk, which empties on
+    restart, so the save does not count."""
+
+
+def _require_bucket_copy(doc: PolicyDocument) -> None:
+    # Only where it is on (SHARED_FILES_NEED_BUCKET_COPY): the other
+    # backends' copies are on pod disks, and a save that leaves only those
+    # would be lost on the next restart, quietly.
+    if not getattr(settings, "SHARED_FILES_NEED_BUCKET_COPY", False):
+        return
+    from fighthealthinsurance.storage_health import bucket_backends, has_bucket_copy
+
+    name = doc.document_enc.name
+    if not bucket_backends():
+        if _object_store_configured():
+            # Configured, but its client failed at startup: the file would
+            # be on pod disks only.
+            logger.error(
+                f"The object store is configured but not running; shared file "
+                f"{doc.pk} not saved"
+            )
+            raise NoBucketCopy()
+        # A setup with no object store at all would refuse every share on
+        # the site; it saves as before, and says so loudly.
+        logger.error(f"No object store is configured; shared file {doc.pk} kept anyway")
+        return
+    if not has_bucket_copy(name):
+        logger.error(f"Shared file {doc.pk} has no bucket copy; not saved")
+        _remove_bucket_copies(name)
+        raise NoBucketCopy()
+
+
+def _object_store_configured() -> bool:
+    # The settings Prod builds its object store from (EXTERNAL_STORAGE_B).
+    return all(
+        getattr(settings, key, None)
+        for key in (
+            "MINIO_STORAGE_ENDPOINT",
+            "MINIO_STORAGE_ACCESS_KEY",
+            "MINIO_STORAGE_SECRET_KEY",
+            "MINIO_STORAGE_MEDIA_BUCKET_NAME",
+        )
+    )
+
+
+def _remove_bucket_copies(name: str) -> None:
+    # The rollback's cleanup deletes only where a store says it has the file,
+    # and an object store says no when it can't answer, so a copy written
+    # before it stopped answering is removed outright here.
+    from stopit import ThreadingTimeout as Timeout
+
+    from fighthealthinsurance.storage_health import bucket_backends
+
+    for backend in bucket_backends():
+        try:
+            with Timeout(2.0):
+                backend.delete(name)
+        except Exception as e:
+            logger.warning(f"Could not remove a bucket copy: {type(e).__name__}")
+
+
 def save_shared_documents(
     files: Sequence[UploadedFile],
     *,
@@ -341,6 +410,8 @@ def save_shared_documents(
     hashed_email: Optional[str],
     document_type: str = "other",
     links: Sequence[str] = (),
+    contact_email: str = "",
+    consent_version: Optional[datetime.date] = None,
 ) -> list[PolicyDocument]:
     """One encrypted PolicyDocument per file, each marked received, and one
     per link (checked by the form), marked a link and stored encrypted with
@@ -356,13 +427,25 @@ def save_shared_documents(
     insurance_plan_obj, each optional. Raises OverDailyBudget, storing
     nothing, when today's budget for everyone from ``source`` has no room
     for the files, or the links' budget has none for the links.
+
+    With SHARED_FILES_NEED_BUCKET_COPY (on in Prod), a file counts as saved
+    only once the object store holds it; otherwise the save raises
+    NoBucketCopy and stores nothing, as it would for any failed save. Each
+    file's size as uploaded is kept (stored_size) for the nightly file check
+    (shared_file_check).
+
+    ``contact_email`` is kept, encrypted, only for a share from the share
+    page itself, never for a copy shared from another page. A typed
+    employer_name that matches a company on the list links it, marked as
+    the person's (plan_sponsors.link_typed_employer).
     """
     shared = {
         "source": source,
         "document_type": document_type,
         "plan_category": details.get("plan_category") or "unknown",
         "hashed_email": hashed_email or None,
-        "shared_consent_version": consent.SHARING_VERSION,
+        # A retried copy keeps the version its box was ticked under.
+        "shared_consent_version": consent_version or consent.SHARING_VERSION,
         "shared_at": timezone.now(),
         "share_batch": uuid.uuid4(),
         "plan_year": details.get("plan_year"),
@@ -375,6 +458,11 @@ def save_shared_documents(
         "insurance_company_obj": details.get("insurance_company_obj"),
         "insurance_plan_obj": details.get("insurance_plan_obj"),
         "processing_status": PolicyDocument.PROCESSING_RECEIVED,
+        "contact_email": (
+            contact_email.strip()[:300]
+            if source == PolicyDocument.SOURCE_SHARED
+            else ""
+        ),
     }
     budget, limit = _budget(source)
     day = reserve(budget, len(files), limit) if files else None
@@ -400,8 +488,10 @@ def save_shared_documents(
                 uploaded.name = f"shared-{doc.id.hex}{ext}"
                 doc.document_enc = uploaded
                 doc.filename = uploaded.name
+                doc.stored_size = uploaded.size
                 saved.append(doc)
                 doc.save()
+                _require_bucket_copy(doc)
             for link in links:
                 doc = PolicyDocument(
                     **{
@@ -414,7 +504,22 @@ def save_shared_documents(
                 )
                 saved.append(doc)
                 doc.save()
-    except Exception:
+            typed_employer = str(shared["employer_name"])
+            if source == PolicyDocument.SOURCE_SHARED and typed_employer:
+                from fighthealthinsurance.plan_sponsors import link_typed_employer
+
+                link_typed_employer([doc.pk for doc in saved], typed_employer)
+    except Exception as e:
+        if isinstance(e, NoBucketCopy):
+            # Counted here, outside the rolled-back transaction.
+            note_count(
+                (
+                    SharedPlanDocumentsDay.NO_BUCKET_SHARE_PAGE
+                    if source == PolicyDocument.SOURCE_SHARED
+                    else SharedPlanDocumentsDay.NO_BUCKET_OPT_IN
+                ),
+                len(files),
+            )
         if day is not None:
             give_back(budget, len(files), day)
         if links_day is not None:
@@ -462,6 +567,46 @@ def match_insurer(insurer_name: str) -> Any:
 # ---- Copies shared by ticking the box on another page -----------------------
 
 
+def note_dropped(reason: str, files: int) -> None:
+    """Count ``files`` opted-in copies left out today for ``reason`` (one of
+    SharedPlanDocumentsDay.DROPPED), for the staff summary. Counts only, no
+    file or person. Never raises."""
+    note_count(reason, files)
+
+
+def note_count(name: str, files: int) -> None:
+    """Add ``files`` to today's ``name`` count (a SharedPlanDocumentsDay
+    name kept through the prune). Counts only. Never raises."""
+    if files <= 0:
+        return
+    try:
+        day = timezone.now().date()
+        SharedPlanDocumentsDay.objects.get_or_create(day=day, name=name)
+        SharedPlanDocumentsDay.objects.filter(day=day, name=name).update(
+            count=F("count") + files
+        )
+    except Exception:
+        logger.opt(exception=True).warning("Could not count shared copies")
+
+
+def _new_copies(
+    files: Sequence[UploadedFile], already_shared: Optional[set[str]]
+) -> int:
+    """How many of ``files`` would be new copies: with ``already_shared``,
+    not in it and not a repeat of an earlier one, as share_opt_in_copies
+    leaves those out."""
+    if already_shared is None:
+        return len(files)
+    seen = set(already_shared)
+    new = 0
+    for uploaded in files:
+        digest = fingerprint(uploaded)
+        if digest not in seen:
+            seen.add(digest)
+            new += 1
+    return new
+
+
 def share_opt_in_copies(
     request: HttpRequest,
     files: Sequence[UploadedFile],
@@ -471,9 +616,14 @@ def share_opt_in_copies(
     hashed_email: Optional[str],
     document_type: str = "other",
     already_shared: Optional[set[str]] = None,
+    origin_of: Optional[Callable[[UploadedFile], Any]] = None,
 ) -> list[PolicyDocument]:
     """Shared copies of files a person also ticked the box to share, made
     once the page's own work is saved, as rows of their own.
+
+    With ``origin_of`` (a file's own row on the page it came from), a copy
+    whose save fails is held to be made again later from that row
+    (shared_copy_retries) rather than dropped.
 
     Only files that pass validate_shared_document are shared, within today's
     budgets; the rest are left out without a word, since the page they came
@@ -486,16 +636,22 @@ def share_opt_in_copies(
 
     from fighthealthinsurance.chat_forms import validate_shared_document
 
+    pending = 0
     try:
         candidates = [uploaded for uploaded in files if uploaded]
         if not candidates:
             return []
+        pending = len(candidates)
         # Before the closer look, which opens each PDF in a child process: a
         # visitor with no room left today for even the smallest file pays for
         # none of that. The check after it stays the one that counts.
         smallest = min(candidates, key=lambda f: f.size or 0)
         if daily_limit_problem(request, [smallest], source=source):
             logger.info(f"Left opted-in files from {source} unshared: over budget")
+            note_dropped(
+                SharedPlanDocumentsDay.DROPPED_OVER_BUDGET,
+                _new_copies(candidates, already_shared),
+            )
             return []
         passing: list[UploadedFile] = []
         for uploaded in candidates:
@@ -509,6 +665,10 @@ def share_opt_in_copies(
                 f"Left {len(candidates) - len(passing)} opted-in file(s) from {source} "
                 "unshared: they failed the closer look"
             )
+            note_dropped(
+                SharedPlanDocumentsDay.DROPPED_REFUSED, len(candidates) - len(passing)
+            )
+        pending = len(passing)
         if already_shared is not None:
             # After the closer look, so a copy that fails it never stands in
             # for one that passes.
@@ -520,27 +680,50 @@ def share_opt_in_copies(
                 already_shared.add(digest)
                 fresh.append(uploaded)
             passing = fresh
+            # A repeat of a copy already shared is not dropped: it is there.
+            pending = len(passing)
         if not passing:
             return []
         if daily_limit_problem(request, passing, source=source):
             logger.info(f"Left opted-in files from {source} unshared: over budget")
+            note_dropped(SharedPlanDocumentsDay.DROPPED_OVER_BUDGET, pending)
             return []
-        saved = save_shared_documents(
-            passing,
-            source=source,
-            details=details,
-            hashed_email=hashed_email,
-            document_type=document_type,
+        from fighthealthinsurance.shared_copy_retries import (
+            hold_for_retry,
+            origins_for,
         )
+
+        # Found before the save: a failed save can close the uploads.
+        origins = origins_for(passing, origin_of) if origin_of is not None else []
+        try:
+            saved = save_shared_documents(
+                passing,
+                source=source,
+                details=details,
+                hashed_email=hashed_email,
+                document_type=document_type,
+            )
+        except OverDailyBudget:
+            raise
+        except Exception as e:
+            logger.error(
+                f"Failed to save opted-in shared copies from {source}: "
+                f"{type(e).__name__}"
+            )
+            held = hold_for_retry(origins, source=source, hashed_email=hashed_email)
+            note_dropped(SharedPlanDocumentsDay.DROPPED_NOT_SAVED, pending - held)
+            return []
         note_shared(request, passing)
         return saved
     except OverDailyBudget:
         logger.info(f"Left opted-in files from {source} unshared: over budget")
+        note_dropped(SharedPlanDocumentsDay.DROPPED_OVER_BUDGET, pending)
         return []
     except Exception:
         logger.opt(exception=True).error(
             f"Failed to save opted-in shared copies from {source}"
         )
+        note_dropped(SharedPlanDocumentsDay.DROPPED_NOT_SAVED, pending)
         return []
 
 
@@ -557,6 +740,7 @@ def share_explain_policy_copy(
         details={"plan_category": policy_doc.plan_category},
         hashed_email=policy_doc.hashed_email or None,
         document_type=policy_doc.document_type,
+        origin_of=lambda _uploaded: policy_doc,
     )
 
 
@@ -615,7 +799,20 @@ def share_appeal_plan_documents(
         details=details,
         hashed_email=denial.hashed_email,
         already_shared=already_shared,
+        origin_of=lambda uploaded: _appeal_copy_of(denial, uploaded),
     )
+
+
+def _appeal_copy_of(denial: Any, uploaded: UploadedFile) -> Any:
+    """The appeal's own row for ``uploaded``, found by the appeal's keyed
+    fingerprint (which matches no shared copy's), or None."""
+    from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+    from fighthealthinsurance.models import PlanDocuments
+
+    digest = file_fingerprint(
+        uploaded, DenialCreatorHelper.PLAN_DOCUMENT_FINGERPRINT_LABEL
+    )
+    return PlanDocuments.objects.filter(denial=denial, fingerprint=digest).first()
 
 
 # A plan source names the kind of plan only for these. "Employer -- Private"
@@ -690,6 +887,10 @@ PLAN_FACT_FIELDS = (
     "plan_sponsor_source",
     "plan_sponsor_checked_at",
     "plan_sponsor_checked_by",
+    # Who gave the insurer, plan year and plan type: about the kept facts.
+    "insurer_name_source",
+    "plan_year_source",
+    "plan_category_source",
 )
 #: The record of the share itself, kept with the plan facts.
 SHARE_RECORD_FIELDS = (
@@ -713,8 +914,15 @@ REMOVED_VALUES: dict[str, Any] = {
     "session_key": None,
     "fingerprint": "",
     "cleaned_text": "",
+    "contact_email": "",
     "plan_sponsor_evidence": "",
     "processing_status": PolicyDocument.PROCESSING_REMOVED,
+    "staff_says_plan": False,
+    "unreadable_reason": "",
+    "read_attempts": 0,
+    "read_attempted_at": None,
+    "company_lookup_failures": 0,
+    "stored_size": None,
 }
 
 
@@ -733,22 +941,56 @@ def has_plan_facts(doc: PolicyDocument) -> bool:
     )
 
 
+#: plan_sponsors.SOURCE_MODEL: a fact our model read from the file.
+SOURCE_MODEL = "model"
+
+
+def known_insurer_read(name: str, insurers: frozenset[str]) -> bool:
+    """Whether ``name``, an insurer our model read, is one in the catalog
+    (plan_sponsors.known_insurers), whole: a catalog name with more words
+    after it may carry a person's name, and so may letters the matching
+    drops (it keeps a-z and 0-9 only; the catalog's names are all ASCII)."""
+    from fighthealthinsurance.plan_sponsors import normalize_name
+
+    if any(c.isalnum() and not c.isascii() for c in name):
+        return False
+    return normalize_name(name) in insurers
+
+
 def remove_shared_documents(hashed_email: str) -> None:
     """Remove-my-data for the plan documents shared with this scrambled email.
 
     Each file and link is deleted, with a file's cleaned text, its
-    fingerprint and the scrambled email. A row that holds facts about the
+    fingerprint and the scrambled email, and any copy still waiting to be
+    made again (SharedCopyRetry). A row that holds facts about the
     plan (PLAN_FACT_FIELDS) keeps them and is marked removed, so no reading
-    writes to it again; a row with none is deleted whole. Rows shared with no email, or another
-    email, are untouched.
+    writes to it again; a row with none is deleted whole. An insurer our
+    model read is a fact only when it is one we know (known_insurer_read):
+    the cleaning takes out labelled details, so any other name read from the
+    file may be a person's, and it goes with the text. Rows shared with no
+    email, or another email, are untouched.
     """
+    from fighthealthinsurance.models import SharedCopyRetry
+    from fighthealthinsurance.plan_sponsors import known_insurers
+
     with transaction.atomic():
+        # A copy still waiting to be made is never made after a removal.
+        SharedCopyRetry.objects.filter(hashed_email=hashed_email).delete()
         rows = list(
             PolicyDocument.objects.filter(
                 hashed_email=hashed_email,
                 source__in=PolicyDocument.SHARED_SOURCES,
             )
         )
+        insurers: Optional[frozenset[str]] = None
+        unknown_insurer = set()
+        for doc in rows:
+            if doc.insurer_name and doc.insurer_name_source == SOURCE_MODEL:
+                if insurers is None:
+                    insurers = known_insurers()
+                if not known_insurer_read(doc.insurer_name, insurers):
+                    doc.insurer_name, doc.insurer_name_source = "", ""
+                    unknown_insurer.add(doc.pk)
         nothing_to_keep = [doc.pk for doc in rows if not has_plan_facts(doc)]
         # The row's own delete signal takes its file.
         PolicyDocument.objects.filter(pk__in=nothing_to_keep).delete()
@@ -756,6 +998,8 @@ def remove_shared_documents(hashed_email: str) -> None:
             if doc.pk in nothing_to_keep:
                 continue
             values = dict(REMOVED_VALUES)
+            if doc.pk in unknown_insurer:
+                values.update(insurer_name="", insurer_name_source="")
             if doc.premium_amount is None:
                 # Without an amount these describe the household, not the plan.
                 values.update(premium_period="", who_is_covered="")
@@ -770,6 +1014,9 @@ def remove_shared_documents(hashed_email: str) -> None:
 
 
 # ---- Counting plans ---------------------------------------------------------
+
+#: plan_sponsors.SOURCE_PERSON, here so counting imports nothing more.
+SOURCE_PERSON = "person"
 
 #: The share page's goal, in employer plans, shown through its day. It counts
 #: companies: a plan counts once a shared document names its sponsor
@@ -808,17 +1055,59 @@ NOT_COUNTED = (PolicyDocument.PROCESSING_REMOVED, PolicyDocument.PROCESSING_SPAM
 MIN_DOCUMENT_CHARS = 200
 
 
-def is_document(status: str, cleaned_text: Optional[str], filename: str) -> bool:
+def is_document(status: str, cleaned_text: Optional[str]) -> bool:
     """Whether a shared file's reading found a document: read and cleaned,
-    with at least MIN_DOCUMENT_CHARS characters that are not spaces, or a PDF with no text to
-    read, as a scan is. A PDF passed the closer look on the way in
-    (validate_shared_document), so it is a real file staff can open."""
-    if status == PolicyDocument.PROCESSING_UNREADABLE:
-        return filename.lower().endswith(".pdf")
+    with at least MIN_DOCUMENT_CHARS characters that are not spaces. A file
+    with no text we could read, a scan among them, is not a plan until its
+    text is read (is_unreadable); staff see it counted on its own."""
     return (
         status == PolicyDocument.PROCESSING_READY
         and len("".join((cleaned_text or "").split())) >= MIN_DOCUMENT_CHARS
     )
+
+
+#: Where a shared file's reading ends when it found no text to use.
+UNREADABLE_STATUSES = (PolicyDocument.PROCESSING_UNREADABLE,)
+
+
+def is_unreadable(status: str, cleaned_text: Optional[str]) -> bool:
+    """Whether a shared file was received but its reading found no text to
+    use: counted for staff as "received but not readable", never as a plan.
+    The same rule as unreadable_files, for one row in hand."""
+    return status in UNREADABLE_STATUSES
+
+
+def unreadable_files() -> QuerySet[PolicyDocument]:
+    """The shared files, not removed or marked spam, that were received but
+    could not be read (is_unreadable), chosen by status alone so no stored
+    text is opened to count them."""
+    return PolicyDocument.objects.filter(
+        source__in=PolicyDocument.SHARED_FILE_SOURCES,
+        processing_status__in=UNREADABLE_STATUSES,
+    ).exclude(processing_status__in=NOT_COUNTED)
+
+
+def typed_employer_disagreements() -> int:
+    """How many shared rows, not removed or spam, name a company the reading
+    or staff found that is not the employer the person typed: the typed
+    name is kept, for staff to compare."""
+    from fighthealthinsurance.plan_sponsors import normalize_name
+
+    rows = (
+        PolicyDocument.objects.filter(
+            source__in=PolicyDocument.SHARED_SOURCES, plan_sponsor__isnull=False
+        )
+        .exclude(employer_name="")
+        .exclude(plan_sponsor_source=SOURCE_PERSON)
+        .exclude(processing_status__in=NOT_COUNTED)
+        .values_list("employer_name", "plan_sponsor__normalized_name")
+    )
+    return sum(1 for typed, found in rows if normalize_name(typed) != found)
+
+
+def unreadable_file_count() -> int:
+    """How many shared files were received but could not be read."""
+    return unreadable_files().count()
 
 
 def plan_shares() -> list[Share]:
@@ -827,8 +1116,8 @@ def plan_shares() -> list[Share]:
     # Each share is one plan unless every file and link in it came in an
     # earlier share. Removed rows count for nothing, and so does a file
     # until its reading finds a document (is_document): a file waiting to be
-    # read, a text or Word file with no text, and a line of test text are
-    # not plans; a scanned PDF is. Potential spam counts for nothing at all.
+    # read, a file with no text we could read (a scan among them), and a line
+    # of test text are not plans. Potential spam counts for nothing at all.
     rows = (
         PolicyDocument.objects.filter(source__in=PolicyDocument.SHARED_SOURCES)
         .exclude(processing_status__in=NOT_COUNTED)
@@ -846,8 +1135,8 @@ def plan_shares() -> list[Share]:
             "premium_amount",
             "processing_status",
             "cleaned_text",
-            "filename",
             "plan_sponsor_id",
+            "plan_sponsor_source",
         )
     )
     batches: dict[Any, dict[str, Any]] = {}
@@ -864,8 +1153,8 @@ def plan_shares() -> list[Share]:
         premium,
         status,
         cleaned_text,
-        filename,
         sponsor_id,
+        sponsor_source,
     ) in rows:
         found = batches.setdefault(
             batch or pk,
@@ -884,9 +1173,10 @@ def plan_shares() -> list[Share]:
         )
         is_link = source == PolicyDocument.SOURCE_SHARED_LINK
         found["link_count" if is_link else "file_count"] += 1
-        if not is_link and not is_document(status, cleaned_text, filename or ""):
+        if not is_link and not is_document(status, cleaned_text):
             continue
-        if sponsor_id is not None:
+        # A company the person typed counts once a reading or staff confirms it.
+        if sponsor_id is not None and sponsor_source != SOURCE_PERSON:
             found["companies"].add(sponsor_id)
         digest = link_hash if is_link else file_hash
         if digest:
@@ -1026,6 +1316,10 @@ def share_counts(today: datetime.date, weeks: int = 12) -> dict[str, Any]:
             {"year": "Not given", "plans": years.get(None, 0)},
         ],
         "premium_answered": sum(1 for share in plans if share.premium_answered),
+        # Received but not readable: shown to staff on its own, never a plan.
+        "unreadable_files": unreadable_file_count(),
+        # The employer the person typed is not the company found.
+        "typed_employer_disagreements": typed_employer_disagreements(),
     }
 
 

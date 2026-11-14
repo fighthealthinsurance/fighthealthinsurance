@@ -299,16 +299,26 @@ class DenialEndToEnd(APITestCase):
         # The outcome rides along, so an empty form can be told apart later:
         # a finished run with nothing to ask, or a run that did not finish.
         assert find_next_steps_parsed["questions_outcome"] == "questions"
-        assert list(find_next_steps_parsed["combined_form"][0].keys()) == [
+        first_question = find_next_steps_parsed["combined_form"][0]
+        assert list(first_question.keys()) == [
             "name",
             "field_type",
             "label",
             "visible",
             "required",
             "help_text",
+            "why_we_ask",
             "initial",
             "type",
+            "choices",
         ]
+        # A yes/no question offers "Not sure" and starts on it. (Every value
+        # here goes through a CharField, so choices arrive as text, as they
+        # do for any pick-one field.)
+        assert first_question["field_type"] == "YesNoNotSureField"
+        for value in ("'yes'", "'no'", "'not_sure'"):
+            assert value in first_question["choices"]
+        assert first_question["initial"] is None
         # Verify include_provided_health_history is set on the denial
         denial = await Denial.objects.aget(denial_id=denial_id)
         assert denial.include_provided_health_history_in_appeal is True

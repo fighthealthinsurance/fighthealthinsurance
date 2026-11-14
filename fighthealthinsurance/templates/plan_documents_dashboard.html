@@ -77,6 +77,8 @@ style blocks); the bar's fill carries no text.
       <div class="stat-card" id="plans-total"><div class="value">{{ counts.plans }}</div><div class="label">different plan{{ counts.plans|pluralize }}, of every kind</div></div>
       <div class="stat-card" id="employer-plans-total"><div class="value">{{ counts.employer_plans }}</div><div class="label">employer plan{{ counts.employer_plans|pluralize }}</div></div>
       <div class="stat-card" id="premium-answered"><div class="value">{{ counts.premium_answered }}</div><div class="label">plan{{ counts.premium_answered|pluralize }} with the premium question answered</div></div>
+      <div class="stat-card" id="unreadable-files"><div class="value">{{ counts.unreadable_files }}</div><div class="label">file{{ counts.unreadable_files|pluralize }} received but not readable, not counted as plans</div></div>
+      <div class="stat-card" id="typed-employer-disagreements"><div class="value">{{ counts.typed_employer_disagreements }}</div><div class="label">share{{ counts.typed_employer_disagreements|pluralize }} where the employer the person typed is not the company found</div></div>
     </div>
     <table class="counts" id="weeks">
       <caption>Each week, newest first (the last 12)</caption>

@@ -34,6 +34,8 @@ DEPLOY_FIXTURES = [
     "followup",
     "plan_source",
     "insurance_companies",
+    # Its rows point at insurance_companies' carriers.
+    "known_non_fax_numbers",
     "pa_requirements",
 ]
 

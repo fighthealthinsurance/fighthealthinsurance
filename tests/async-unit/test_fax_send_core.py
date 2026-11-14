@@ -30,6 +30,7 @@ from fighthealthinsurance import fax_send_core
 from fighthealthinsurance.fax_status import STATUS_ALREADY_SENT, STATUS_OK
 from fighthealthinsurance.helpers.fax_helpers import (
     FAX_RESEND_WINDOW,
+    MAX_RESENDS_PER_NUMBER,
     REDISPATCH_WINDOW,
     REQUESTED_SEND_GRACE,
     RESEND_DELIVERED,
@@ -260,6 +261,92 @@ class TestResendRefusals:
         assert SendFaxHelper.resend_refusal(failed) is None
         assert SendFaxHelper.resend_refusal(no_number) is None
         assert SendFaxHelper.resend_refusal(draining) == RESEND_IN_PROGRESS
+
+
+@pytest.mark.django_db
+class TestResendCapPerNumber:
+    """The follow-up link re-sends one fax to the same number at most
+    MAX_RESENDS_PER_NUMBER times; a different number can still be tried."""
+
+    def _resend_and_fail(self, fax, fax_phone="8005559999"):
+        """Re-send, then let that send fail, as the next try would find it."""
+        with patch(DISPATCH) as dispatch:
+            result = _resend(fax, fax_phone=fax_phone)
+        FaxesToSend.objects.filter(pk=fax.pk).update(
+            sent=True, fax_success=False, attempting_to_send_as_of=None
+        )
+        return result, dispatch
+
+    def _use_up(self, fax, fax_phone="8005559999"):
+        for _ in range(MAX_RESENDS_PER_NUMBER):
+            assert self._resend_and_fail(fax, fax_phone)[0] is True
+
+    def test_resends_up_to_the_cap_are_sent(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        self._use_up(fax)
+        fax.refresh_from_db()
+        assert SendFaxHelper.resends_to(fax, "8005559999") == MAX_RESENDS_PER_NUMBER
+
+    def test_a_resend_past_the_cap_sends_nothing(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        self._use_up(fax)
+        result, dispatch = self._resend_and_fail(fax)
+        assert result is False
+        dispatch.assert_not_called()
+
+    def test_a_resend_past_the_cap_is_not_counted(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        self._use_up(fax)
+        self._resend_and_fail(fax)
+        fax.refresh_from_db()
+        assert SendFaxHelper.resends_to(fax, "8005559999") == MAX_RESENDS_PER_NUMBER
+
+    def test_a_different_number_can_still_be_tried(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        self._use_up(fax)
+        result, dispatch = self._resend_and_fail(fax, fax_phone="8005550000")
+        assert result is True
+        dispatch.assert_called_once()
+
+    def test_going_back_to_a_used_up_number_is_still_refused(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        self._use_up(fax)
+        self._resend_and_fail(fax, fax_phone="8005550000")
+        assert self._resend_and_fail(fax)[0] is False
+
+    def test_the_same_number_written_differently_counts_as_one(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        for spelling in (
+            "8005559999",
+            "(800) 555-9999",
+            "1-800-555-9999",
+            "+1 800.555.9999",
+        ):
+            assert self._resend_and_fail(fax, fax_phone=spelling)[0] is True
+        assert self._resend_and_fail(fax, fax_phone="800 555 9999")[0] is False
+
+    def test_a_resend_whose_dispatch_fails_is_still_counted(self, test_denial):
+        """The fax is left for the stranded-fax redispatch to send to that
+        number, so the try is used up all the same."""
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        with patch(DISPATCH, side_effect=RuntimeError("no backend")):
+            with pytest.raises(RuntimeError):
+                _resend(fax)
+        fax.refresh_from_db()
+        assert SendFaxHelper.resends_to(fax, "8005559999") == 1
+
+    def test_a_resend_refused_while_a_send_is_running_is_not_counted(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=False)
+        with patch(DISPATCH):
+            assert _resend(fax) is True
+            assert _resend(fax) is False
+        fax.refresh_from_db()
+        assert SendFaxHelper.resends_to(fax, "8005559999") == 1
+
+    def test_the_cap_reads_a_fax_with_no_resends_yet_as_zero(self, test_denial):
+        fax = _make_fax(test_denial)
+        assert fax.resends_by_number is None
+        assert SendFaxHelper.resend_limit_reached(fax, "4255551234") is False
 
 
 @pytest.mark.django_db

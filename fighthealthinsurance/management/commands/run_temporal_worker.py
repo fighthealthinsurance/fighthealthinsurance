@@ -381,6 +381,15 @@ class Command(BaseCommand):
                     f"TEMPORAL_PLAN_DOCUMENTS_ENABLED is on but {problem}, "
                     "so shared plan documents stay off"
                 )
+            from fighthealthinsurance.plan_documents_processing import ocr_available
+
+            if not ocr_available():
+                # Said once at startup: each reading then logs it again.
+                logger.error(
+                    "tesseract is not installed, so scanned shared plan documents "
+                    "can't be read with OCR: they wait to be read again, and are "
+                    "unreadable only after several tries"
+                )
 
         # The connect is raced against stop: a SIGTERM that lands while the
         # connection is still pending must not be discarded (review), and a
@@ -598,11 +607,17 @@ class Command(BaseCommand):
                         sweep_activities.find_due_plan_documents_reminders,
                         sweep_activities.send_plan_documents_reminder,
                         sweep_activities.find_waiting_share_batches,
+                        sweep_activities.send_plan_documents_staff_summary,
+                        sweep_activities.check_shared_plan_document_files,
+                        sweep_activities.retry_shared_copies,
+                        sweep_activities.retry_company_lookups,
                     ],
                     max_concurrent_activities=1,
-                    # Covers a reading's three-minute start_to_close, inside
-                    # the appeal Worker's 300s drain and the pod's grace.
-                    graceful_shutdown_timeout=timedelta(minutes=3),
+                    # Covers a reading's five-minute start_to_close (OCR
+                    # included) and the sweep's file check, copy retries and
+                    # company lookups, no longer than the appeal Worker's 300s
+                    # drain, inside the pod's grace.
+                    graceful_shutdown_timeout=timedelta(minutes=5),
                 )
                 runs.append(plan_documents_worker.run())
                 workers.append(plan_documents_worker)

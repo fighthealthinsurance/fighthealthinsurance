@@ -1,13 +1,22 @@
+import csv
 from typing import Optional
 from urllib.parse import urlsplit
 
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
+from django.core.exceptions import PermissionDenied
 from django.db import connection, transaction
 from django.db.models import Count, DateTimeField, IntegerField
 from django.db.models.expressions import RawSQL
-from django.urls import reverse
+from django.http import (
+    HttpResponse,
+    HttpResponseNotAllowed,
+    HttpResponseRedirect,
+    JsonResponse,
+)
+from django.template.response import TemplateResponse
+from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 from loguru import logger
@@ -31,6 +40,8 @@ from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserTask,
     ChooserVote,
+    PaidReviewBounty,
+    PaidReviewSession,
     DataSource,
     Denial,
     DenialQA,
@@ -38,6 +49,9 @@ from fighthealthinsurance.models import (
     DenialTypesRelation,
     Diagnosis,
     FaxesToSend,
+    HumanJudgeSubmission,
+    HumanJudgeVerdict,
+    KnownNonFaxNumber,
     FollowUp,
     FollowUpDocuments,
     FollowUpSched,
@@ -1248,13 +1262,27 @@ class FaxesToSendAdmin(admin.ModelAdmin):
         "paid",
         "fax_success",
         "sent",
+        "failure_reason",
         "denial_id",
     )
     search_fields = ("email", "name")
-    list_filter = ("date", "paid", "fax_success", "sent")
+    list_filter = ("date", "paid", "fax_success", "sent", "failure_reason")
     ordering = ("-date",)
     raw_id_fields = ("denial_id", "for_appeal")
     list_select_related = ("denial_id",)
+
+
+@admin.register(KnownNonFaxNumber)
+class KnownNonFaxNumberAdmin(admin.ModelAdmin):
+    """Numbers people fax appeals to that don't take faxes (mostly insurer
+    voice lines). Carriers' appeal_phone_number values count too, without
+    a row here; see fax_number_check."""
+
+    list_display = ("number", "kind", "label", "insurance_company", "created")
+    list_filter = ("kind",)
+    search_fields = ("number", "label", "notes")
+    ordering = ("number",)
+    raw_id_fields = ("insurance_company",)
 
 
 @admin.register(DenialTypesRelation)
@@ -1569,6 +1597,79 @@ class ChatTurnAdmin(admin.ModelAdmin):
         return False
 
 
+class HumanJudgeUploadedFilter(admin.SimpleListFilter):
+    """Arena cases by whether their drafts have gone to HumanJudge."""
+
+    title = "HumanJudge"
+    parameter_name = "humanjudge"
+
+    def lookups(self, request, model_admin):
+        return (("sent", "Uploaded"), ("unsent", "Not uploaded"))
+
+    def queryset(self, request, queryset):
+        sent = HumanJudgeSubmission.objects.filter(status="SENT")
+        if self.value() == "sent":
+            return queryset.filter(id__in=sent.values("task_id"))
+        if self.value() == "unsent":
+            return queryset.exclude(id__in=sent.values("task_id"))
+        return queryset
+
+
+def _humanjudge_upload(model_admin, request, task_ids) -> None:
+    """Send these Arena cases' drafts to HumanJudge and say how it went:
+    while the page waits for a few cases, in the background for more
+    (chooser_humanjudge.start_upload). Lazy import: the module pulls in the
+    ML router."""
+    from fighthealthinsurance import chooser_humanjudge
+
+    ids = list(task_ids)
+    if not ids:
+        model_admin.message_user(
+            request, "Nothing to upload: no case is waiting to go.", messages.INFO
+        )
+        return
+    try:
+        result = chooser_humanjudge.start_upload(ids)
+    except chooser_humanjudge.HumanJudgeError as e:
+        model_admin.message_user(request, f"Nothing uploaded: {e}", messages.ERROR)
+        return
+    if result is None:
+        model_admin.message_user(
+            request,
+            f"Uploading {len(ids)} case(s) to HumanJudge in the background. "
+            "HumanJudge Submissions shows each draft as it goes; any that fail "
+            "can be sent again from there.",
+            messages.SUCCESS,
+        )
+        return
+    level = messages.WARNING if result.failed else messages.SUCCESS
+    parts = [f"Uploaded {result.sent} draft(s) to HumanJudge."]
+    if result.already_sent:
+        parts.append(f"{result.already_sent} had already gone.")
+    if result.failed:
+        parts.append(
+            f"{result.failed} failed (see HumanJudge Submissions; upload again to retry)."
+        )
+    if result.not_sendable:
+        parts.append(
+            f"{result.not_sendable} case(s) skipped: only synthetic appeal cases "
+            "that have reached voters may go."
+        )
+    model_admin.message_user(request, " ".join(parts), level)
+
+
+def _humanjudge_count(raw: Optional[str], default: int) -> Optional[int]:
+    """The "how many cases" field: a whole number from 1 to the upload cap,
+    or None for anything else."""
+    from fighthealthinsurance.chooser_humanjudge import MAX_TASKS_PER_UPLOAD
+
+    try:
+        count = int(raw) if raw else default
+    except ValueError:
+        return None
+    return count if 1 <= count <= MAX_TASKS_PER_UPLOAD else None
+
+
 @admin.register(ChooserTask)
 class ChooserTaskAdmin(admin.ModelAdmin):
     """Admin configuration for ChooserTask model."""
@@ -1580,14 +1681,118 @@ class ChooserTaskAdmin(admin.ModelAdmin):
         "source",
         "case_version",
         "complexity",
+        "settled_reason",
         "num_candidates_expected",
         "num_candidates_generated",
         "created_at",
     )
     search_fields = ("id", "source")
-    list_filter = ("task_type", "status", "case_version", "complexity", "created_at")
+    list_filter = (
+        "task_type",
+        "status",
+        "settled_reason",
+        "case_version",
+        "complexity",
+        HumanJudgeUploadedFilter,
+        "created_at",
+    )
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at", "updated_at")
+    actions = ("upload_to_humanjudge",)
+    # The HumanJudge buttons: "Upload ... cases" on the list, "Upload to
+    # HumanJudge" on a case (chooser_humanjudge).
+    change_list_template = "admin/fighthealthinsurance/choosertask/change_list.html"
+    change_form_template = "admin/fighthealthinsurance/choosertask/change_form.html"
+
+    @admin.action(description="Upload to HumanJudge (synthetic appeal cases only)")
+    def upload_to_humanjudge(self, request, queryset):
+        _humanjudge_upload(self, request, queryset.values_list("id", flat=True))
+
+    def get_urls(self):
+        return [
+            path(
+                "humanjudge/upload-unsent/",
+                self.admin_site.admin_view(self.humanjudge_upload_unsent_view),
+                name="fighthealthinsurance_choosertask_humanjudge_upload_unsent",
+            ),
+            path(
+                "<int:object_id>/humanjudge/upload/",
+                self.admin_site.admin_view(self.humanjudge_upload_one_view),
+                name="fighthealthinsurance_choosertask_humanjudge_upload",
+            ),
+        ] + super().get_urls()
+
+    def changelist_view(self, request, extra_context=None):
+        from fighthealthinsurance.chooser_humanjudge import (
+            INLINE_UPLOAD_LIMIT,
+            MAX_TASKS_PER_UPLOAD,
+        )
+
+        return super().changelist_view(
+            request,
+            {
+                **(extra_context or {}),
+                "humanjudge_default_count": INLINE_UPLOAD_LIMIT,
+                "humanjudge_inline_limit": INLINE_UPLOAD_LIMIT,
+                "humanjudge_max_count": MAX_TASKS_PER_UPLOAD,
+            },
+        )
+
+    def change_view(self, request, object_id, form_url="", extra_context=None):
+        from fighthealthinsurance.chooser_humanjudge import sendable_tasks
+
+        context = dict(extra_context or {})
+        if str(object_id).isdigit():
+            drafts = ChooserCandidate.objects.filter(task_id=object_id, is_active=True)
+            context.update(
+                {
+                    "humanjudge_sendable": sendable_tasks()
+                    .filter(id=object_id)
+                    .exists(),
+                    "humanjudge_drafts": drafts.count(),
+                    "humanjudge_sent": drafts.filter(
+                        humanjudge_submission__status="SENT"
+                    ).count(),
+                }
+            )
+        return super().change_view(request, object_id, form_url, context)
+
+    def humanjudge_upload_unsent_view(self, request):
+        """POST: upload the next ``count`` cases waiting to go (undecided
+        first, then newest; chooser_humanjudge.unsent_task_ids)."""
+        from fighthealthinsurance.chooser_humanjudge import (
+            INLINE_UPLOAD_LIMIT,
+            MAX_TASKS_PER_UPLOAD,
+            unsent_task_ids,
+        )
+
+        changelist = reverse("admin:fighthealthinsurance_choosertask_changelist")
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        count = _humanjudge_count(request.POST.get("count"), INLINE_UPLOAD_LIMIT)
+        if count is None:
+            self.message_user(
+                request,
+                f"Nothing uploaded: how many must be a whole number from 1 to "
+                f"{MAX_TASKS_PER_UPLOAD}.",
+                messages.ERROR,
+            )
+            return HttpResponseRedirect(changelist)
+        _humanjudge_upload(self, request, unsent_task_ids(count))
+        return HttpResponseRedirect(changelist)
+
+    def humanjudge_upload_one_view(self, request, object_id):
+        """POST: upload this case's drafts not sent yet."""
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        _humanjudge_upload(self, request, [object_id])
+        return HttpResponseRedirect(
+            reverse("admin:fighthealthinsurance_choosertask_change", args=[object_id])
+        )
 
 
 @admin.register(ChooserCandidate)
@@ -1631,6 +1836,170 @@ class ChooserVoteAdmin(admin.ModelAdmin):
     list_filter = ("all_bad", "network_class", "created_at")
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at", "seconds_to_vote")
+
+
+@admin.register(HumanJudgeSubmission)
+class HumanJudgeSubmissionAdmin(admin.ModelAdmin):
+    """Arena drafts sent to HumanJudge (see chooser_humanjudge)."""
+
+    list_display = (
+        "id",
+        "task",
+        "candidate",
+        "status",
+        "attempts",
+        "last_error",
+        "sent_at",
+        "created_at",
+    )
+    search_fields = ("task__id", "inference_id")
+    list_filter = ("status", "created_at")
+    ordering = ("-created_at",)
+    readonly_fields = ("id", "inference_id", "created_at", "sent_at")
+    actions = ("upload_again",)
+
+    def has_add_permission(self, request):
+        # Made by "Upload to HumanJudge" on the Chooser Task list.
+        return False
+
+    @admin.action(description="Upload again (sends their cases' unsent drafts)")
+    def upload_again(self, request, queryset):
+        _humanjudge_upload(
+            self, request, queryset.values_list("task_id", flat=True).distinct()
+        )
+
+
+@admin.register(HumanJudgeVerdict)
+class HumanJudgeVerdictAdmin(admin.ModelAdmin):
+    """HumanJudge's verdicts, kept apart from the Arena's own votes. The
+    list's "Download verdicts from HumanJudge" button fetches new ones."""
+
+    change_list_template = (
+        "admin/fighthealthinsurance/humanjudgeverdict/change_list.html"
+    )
+    list_display = (
+        "id",
+        "task",
+        "candidate",
+        "verdict",
+        "flag_category",
+        "evaluator_id",
+        "voted_at",
+        "fetched_at",
+    )
+    search_fields = ("task__id", "evaluator_id", "feedback")
+    list_filter = ("verdict", "flag_category", "voted_at")
+    ordering = ("-fetched_at",)
+    readonly_fields = ("id", "external_key", "raw", "fetched_at")
+    actions = ("export_csv",)
+
+    CSV_FIELDS = (
+        "task_id",
+        "candidate_id",
+        "model_name",
+        "synthesized_by",
+        "verdict",
+        "flag_category",
+        "feedback",
+        "evaluator_id",
+        "voted_at",
+    )
+
+    def has_add_permission(self, request):
+        # Verdicts come only from HumanJudge.
+        return False
+
+    def get_urls(self):
+        return [
+            path(
+                "download/",
+                self.admin_site.admin_view(self.download_view),
+                name="fighthealthinsurance_humanjudgeverdict_download",
+            ),
+            path(
+                "breakdown/",
+                self.admin_site.admin_view(self.breakdown_view),
+                name="fighthealthinsurance_humanjudgeverdict_breakdown",
+            ),
+        ] + super().get_urls()
+
+    def breakdown_view(self, request):
+        """HumanJudge's verdicts by model beside the Arena's own record
+        (humanjudge_reports.breakdown); ``?format=json`` for the same data.
+        admin_view sends anyone not signed in as staff to the admin login,
+        and a staff member who may not view verdicts gets a 403, JSON
+        included: it carries reviewers' written feedback."""
+        if not self.has_view_permission(request):
+            raise PermissionDenied
+        from fighthealthinsurance.humanjudge_reports import breakdown
+
+        data = breakdown()
+        if request.GET.get("format") == "json":
+            response = JsonResponse(data)
+            response["Cache-Control"] = "private, no-store"
+            return response
+        return TemplateResponse(
+            request,
+            "admin/fighthealthinsurance/humanjudgeverdict/breakdown.html",
+            {
+                **self.admin_site.each_context(request),
+                "title": "HumanJudge breakdown",
+                "opts": self.model._meta,
+                "data": data,
+            },
+        )
+
+    def download_view(self, request):
+        """POST only: fetch HumanJudge's new verdicts, then back to the list."""
+        changelist = reverse("admin:fighthealthinsurance_humanjudgeverdict_changelist")
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance import chooser_humanjudge
+
+        try:
+            result = async_to_sync(chooser_humanjudge.download_verdicts)()
+        except chooser_humanjudge.HumanJudgeError as e:
+            self.message_user(request, f"Nothing downloaded: {e}", messages.ERROR)
+            return HttpResponseRedirect(changelist)
+        message = (
+            f"Downloaded {result.new_verdicts} new verdict(s) on {result.cases} "
+            f"case(s); {result.picks} of those cases now have a HumanJudge pick."
+        )
+        if result.unmatched:
+            message += (
+                f" {result.unmatched} vote(s) matched no draft we uploaded and "
+                "were left out."
+            )
+        self.message_user(request, message, messages.SUCCESS)
+        return HttpResponseRedirect(changelist)
+
+    @admin.action(description="Export selected verdicts as CSV")
+    def export_csv(self, request, queryset):
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = (
+            'attachment; filename="humanjudge_verdicts.csv"'
+        )
+        writer = csv.writer(response)
+        writer.writerow(self.CSV_FIELDS)
+        for verdict in queryset.select_related("candidate").order_by("task_id", "id"):
+            writer.writerow(
+                [
+                    verdict.task_id,
+                    verdict.candidate_id,
+                    verdict.candidate.model_name,
+                    verdict.candidate.synthesized_by or "",
+                    verdict.verdict,
+                    verdict.flag_category,
+                    verdict.feedback,
+                    verdict.evaluator_id,
+                    verdict.voted_at.isoformat() if verdict.voted_at else "",
+                ]
+            )
+        return response
 
 
 @admin.register(AuditLog)
@@ -1791,6 +2160,7 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     list_filter = (
         "source",
         "processing_status",
+        "unreadable_reason",
         CompanyCheckFilter,
         "plan_sponsor_source",
         "document_type",
@@ -1806,8 +2176,10 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
     )
     # Staff reach the file and its cleaned text through the links below,
     # never the raw fields; the cleaned text runs long. A shared link is
-    # shown, never edited.
-    exclude = ("document_enc", "cleaned_text", "shared_link")
+    # shown, never edited. The email a person gave on the share page is
+    # shown on the row's own page (contact_email_shown), never in the list,
+    # a search or a form that could write it back.
+    exclude = ("document_enc", "cleaned_text", "shared_link", "contact_email")
     # The company is set by the reading; staff can fix it.
     autocomplete_fields = ("plan_sponsor",)
     readonly_fields = (
@@ -1823,17 +2195,33 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
         "shared_link_fingerprint",
         "processing_status",
         "processed_at",
+        "unreadable_reason",
+        "read_attempts",
+        "read_attempted_at",
+        "company_lookup_failures",
+        "staff_says_plan",
         "plan_sponsor_source",
         "plan_sponsor_evidence",
         "plan_sponsor_checked_at",
         "plan_sponsor_checked_by",
+        "insurer_name_source",
+        "plan_year_source",
+        "plan_category_source",
+        "contact_email_shown",
     )
     actions = (
         "read_again",
+        "mark_personal",
+        "read_again_as_a_plan",
         "mark_potential_spam",
         "not_spam",
         "confirm_company",
     )
+
+    @admin.display(description="email to write to (kept encrypted)")
+    def contact_email_shown(self, obj):
+        # Staff only, on this page alone: decrypted here for reading.
+        return obj.contact_email or "-"
 
     @admin.display(boolean=True, description="checked")
     def company_checked(self, obj):
@@ -1857,6 +2245,12 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
                 "plan_sponsor_checked_at",
                 "plan_sponsor_checked_by",
             ]
+        # A fact staff set, changed or cleared is theirs: a reading never
+        # fills it again (plan_documents_processing.EMPTY_PLAN_FACTS).
+        for fact in ("insurer_name", "plan_year", "plan_category"):
+            if fact in form.changed_data:
+                setattr(obj, f"{fact}_source", "staff")
+                fields.append(f"{fact}_source")
         # Only what the form changed: the encrypted fields it excludes are
         # never written back from what this request read.
         if change:
@@ -1888,11 +2282,72 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
             processing_status=PolicyDocument.PROCESSING_RECEIVED,
             processed_at=None,
             cleaned_text="",
+            unreadable_reason="",
+            read_attempts=0,
+            read_attempted_at=None,
         )
         self.message_user(
             request,
             f"{updated} file(s) will be read again by the next hourly sweep; "
             f"{queryset.count() - updated} were not shared files marked unreadable.",
+        )
+
+    @admin.action(description="Personal papers: clear the text, keep the file")
+    def mark_personal(self, request, queryset):
+        # A shared file read as a plan, or as not a plan, that is a person's
+        # own papers: its text goes, the encrypted file stays, and it is
+        # never counted. Removed rows, spam and rows waiting are left alone.
+        updated = queryset.filter(
+            source__in=PolicyDocument.SHARED_FILE_SOURCES,
+            processing_status__in=(
+                PolicyDocument.PROCESSING_READY,
+                PolicyDocument.PROCESSING_NOT_A_PLAN,
+            ),
+        ).update(
+            processing_status=PolicyDocument.PROCESSING_PERSONAL,
+            cleaned_text="",
+            plan_sponsor_evidence="",
+            staff_says_plan=False,
+        )
+        logger.info(
+            f"Staff user {request.user.pk} marked {updated} policy document(s) "
+            "as personal papers"
+        )
+        self.message_user(
+            request,
+            f"{updated} marked as personal papers: text cleared, file kept; "
+            f"{queryset.count() - updated} were not shared files read as a plan "
+            "or as not a plan.",
+        )
+
+    @admin.action(description="It is a plan: read again")
+    def read_again_as_a_plan(self, request, queryset):
+        # Back to waiting, marked as a plan by staff, so the next reading
+        # stores its text as ready without the kind check.
+        updated = queryset.filter(
+            source__in=PolicyDocument.SHARED_FILE_SOURCES,
+            processing_status__in=(
+                PolicyDocument.PROCESSING_PERSONAL,
+                PolicyDocument.PROCESSING_NOT_A_PLAN,
+            ),
+        ).update(
+            processing_status=PolicyDocument.PROCESSING_RECEIVED,
+            processed_at=None,
+            cleaned_text="",
+            unreadable_reason="",
+            read_attempts=0,
+            read_attempted_at=None,
+            staff_says_plan=True,
+        )
+        logger.info(
+            f"Staff user {request.user.pk} marked {updated} policy document(s) "
+            "as plans to read again"
+        )
+        self.message_user(
+            request,
+            f"{updated} file(s) will be read again as plans by the next hourly "
+            f"sweep; {queryset.count() - updated} were not shared files read "
+            "as personal papers or as not a plan.",
         )
 
     @admin.action(description="Mark as potential spam")
@@ -1930,6 +2385,9 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
                 processing_status=PolicyDocument.PROCESSING_RECEIVED,
                 processed_at=None,
                 cleaned_text="",
+                unreadable_reason="",
+                read_attempts=0,
+                read_attempted_at=None,
             )
             links = spam.filter(source=PolicyDocument.SOURCE_SHARED_LINK).update(
                 processing_status=PolicyDocument.PROCESSING_LINK
@@ -2111,3 +2569,38 @@ class SiteBannerAdmin(admin.ModelAdmin):
     def short_message(self, obj: SiteBanner) -> str:
         text = (obj.message or "").strip().replace("\n", " ")
         return (text[:80] + "…") if len(text) > 80 else text
+
+
+@admin.register(PaidReviewBounty)
+class PaidReviewBountyAdmin(admin.ModelAdmin):
+    """Paid Arena reviewer batches posted to RentAHuman (paid_reviews.py).
+    Set status to closed to stop the join link taking new workers."""
+
+    list_display = (
+        "id",
+        "title",
+        "status",
+        "rah_bounty_id",
+        "price_dollars",
+        "spots",
+        "reviews_required",
+        "created_at",
+    )
+    list_filter = ("status",)
+    readonly_fields = ("join_token", "created_at")
+
+
+@admin.register(PaidReviewSession)
+class PaidReviewSessionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "bounty",
+        "status",
+        "completion_code",
+        "rah_submission_id",
+        "code_issued_at",
+        "claimed_at",
+    )
+    list_filter = ("status", "bounty")
+    search_fields = ("completion_code", "rah_submission_id")
+    readonly_fields = ("session_key", "created_at")

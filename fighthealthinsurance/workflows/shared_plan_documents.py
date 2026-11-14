@@ -39,14 +39,20 @@ BOOKKEEPING_RETRY = RetryPolicy(
     maximum_interval=timedelta(minutes=1),
 )
 # A reading gets three tries, so a short storage outage passes; after that
-# the row is marked unreadable rather than read again every hour.
+# the row waits hours for a later sweep, and is unreadable only after
+# several such readings (plan_documents_processing.MAX_READ_ATTEMPTS).
 READ_RETRY = RetryPolicy(
     maximum_attempts=3,
     initial_interval=timedelta(seconds=30),
     maximum_interval=timedelta(minutes=2),
 )
-# The readers stop after 60s; this leaves room for fetching the file.
-READ_TIMEOUT = timedelta(minutes=3)
+# The readers stop after 60s, OCR after 140s more
+# (plan_documents_processing.OCR_SECONDS plus the child's grace) and the
+# company lookup, a second look at a long file included, after 70s
+# (plan_sponsor_reader.TOTAL_TIMEOUT_SECONDS); this leaves room for
+# fetching the file. The plan documents Worker's drain covers it
+# (run_temporal_worker).
+READ_TIMEOUT = timedelta(minutes=5)
 
 
 def shared_plan_documents_workflow_id(share_batch: str) -> str:

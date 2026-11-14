@@ -362,6 +362,26 @@ class TestForcedArenaModels:
 
         assert log.warning.call_count == 1
 
+    def test_an_unregistered_name_says_why_the_router_skipped_it(self):
+        """The arena's warning carries the router's reason (a missing key,
+        say), so a model that never shows up says why."""
+        with override_settings(CHOOSER_FORCE_MODEL="lunaroute/glm-5.3"), patch.object(
+            chooser_tasks.ml_router, "models_by_name", {}
+        ), patch.object(
+            chooser_tasks.ml_router, "chat_outside_models_by_name", {}
+        ), patch.object(
+            chooser_tasks.ml_router,
+            "skipped_models",
+            {"lunaroute/glm-5.3": "not_configured: LUNA_ROUTE_KEY not set"},
+        ), patch.object(
+            chooser_tasks, "_UNREGISTERED_FORCED_NAMES", set()
+        ), patch.object(
+            chooser_tasks, "logger"
+        ) as log:
+            _forced_arena_models("appeal")
+
+        assert "LUNA_ROUTE_KEY not set" in log.warning.call_args.args[0]
+
     def test_nothing_is_forced_when_unset(self):
         with override_settings(CHOOSER_FORCE_MODEL=""):
             assert _forced_arena_models("appeal") == []

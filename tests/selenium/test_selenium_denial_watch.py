@@ -147,7 +147,7 @@ class SeleniumTestDenialWatchViews(FHISeleniumBase, StaticLiveServerTestCase):
         self.assertEqual(self.get_value("#istate"), "TX")
         self.assertEqual(sorted(self._rows()), texas)
         # Hovering another state previews it without moving the table.
-        self.hover('#dmap g[data-s="OH"]')
+        self.hover_when_still('#dmap g[data-s="OH"]')
         self.assert_text_eventually_contains("Ohio", "dread")
         self.assertEqual(sorted(self._rows()), texas)
 

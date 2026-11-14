@@ -11,10 +11,12 @@ email. The workflow runs that activity once, never retried, so a reminder
 goes at most once, as it does from the Ray email loop.
 """
 
+from loguru import logger
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from fighthealthinsurance import plan_documents_processing as processing
+from fighthealthinsurance import plan_documents_summary as summary
 from fighthealthinsurance import plan_documents_reminder as reminders
 from fighthealthinsurance.activities.appeal_journey import (
     _NON_RETRYABLE_ERRORS,
@@ -78,3 +80,73 @@ async def find_waiting_share_batches(received_minutes: int, limit: int) -> list[
         raise _failure(e, "waiting shares", retryable=False) from None
     except Exception as e:
         raise _failure(e, "waiting shares") from None
+
+
+@activity.defn
+async def send_plan_documents_staff_summary() -> bool:
+    """Send today's staff summary of shared plan documents, unless it went
+    already today (plan_documents_summary.send_summary_if_due). True when an
+    email went. Counts only; nothing about a file or a person."""
+    from asgiref.sync import sync_to_async
+
+    await _aclose_old_connections()
+    try:
+        return await sync_to_async(summary.send_summary_if_due)()
+    except Exception as e:
+        # Never retried: the day is claimed before the send. Logged at error
+        # level so a failed summary is seen; the sweep goes on.
+        logger.error(f"The plan documents staff summary failed: {type(e).__name__}")
+        raise _failure(e, "staff summary", retryable=False) from None
+
+
+@activity.defn
+async def check_shared_plan_document_files() -> bool:
+    """Run today's check that each shared file is still whole in the bucket,
+    unless it ran already today (shared_file_check.run_file_check_if_due).
+    True when it ran. Counts only; reads each copy's size and last bytes,
+    decrypts nothing and changes no row."""
+    from channels.db import database_sync_to_async
+
+    from fighthealthinsurance.shared_file_check import run_file_check_if_due
+
+    await _aclose_old_connections()
+    try:
+        # A thread of its own: the check takes minutes, and the shared one
+        # carries every other activity's database work on this worker.
+        check = database_sync_to_async(run_file_check_if_due, thread_sensitive=False)
+        return bool(await check())
+    except Exception as e:
+        logger.error(f"The shared plan document file check failed: {type(e).__name__}")
+        raise _failure(e, "file check", retryable=False) from None
+
+
+@activity.defn
+async def retry_shared_copies() -> int:
+    """Make again the copies ticked for research whose save failed and are
+    due (shared_copy_retries.retry_due_copies). Returns how many were
+    saved. Counts only; nothing about a file or a person."""
+    from channels.db import database_sync_to_async
+
+    from fighthealthinsurance.shared_copy_retries import SAVED, retry_due_copies
+
+    await _aclose_old_connections()
+    try:
+        # A thread of its own: reading and saving files takes a while.
+        retry = database_sync_to_async(retry_due_copies, thread_sensitive=False)
+        return int((await retry())[SAVED])
+    except Exception as e:
+        logger.error(f"Retrying shared copies failed: {type(e).__name__}")
+        raise _failure(e, "shared copy retries", retryable=False) from None
+
+
+@activity.defn
+async def retry_company_lookups() -> int:
+    """Look again for the companies of shared plan documents whose lookup
+    did not finish (plan_documents_processing.aretry_company_lookups).
+    Returns how many finished. Counts only; nothing about a file."""
+    await _aclose_old_connections()
+    try:
+        return await processing.aretry_company_lookups()
+    except Exception as e:
+        logger.error(f"Retrying company lookups failed: {type(e).__name__}")
+        raise _failure(e, "company lookups", retryable=False) from None

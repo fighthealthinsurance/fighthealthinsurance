@@ -495,6 +495,15 @@ class PolicyDocumentCleanedTextView(View):
             "No text could be read from this file. It may be scanned pages. "
             "Download the original."
         ),
+        PolicyDocument.PROCESSING_PERSONAL: (
+            "Read as a person's own papers (a bill, an EOB or a letter about "
+            "them), so no text is kept and it is not counted as a plan. The "
+            'file is kept. If it is a plan, use "It is a plan: read again".'
+        ),
+        PolicyDocument.PROCESSING_NOT_A_PLAN: (
+            "Read, but it has no health plan words, so it is not counted as a "
+            'plan. If it is one, use "It is a plan: read again".'
+        ),
     }
 
     def get(self, request, pk) -> HttpResponseBase:
@@ -502,7 +511,13 @@ class PolicyDocumentCleanedTextView(View):
             PolicyDocument.objects.filter(
                 pk=pk, source__in=PolicyDocument.SHARED_SOURCES
             )
-            .only("pk", "processing_status", "processed_at", "cleaned_text")
+            .only(
+                "pk",
+                "processing_status",
+                "processed_at",
+                "cleaned_text",
+                "unreadable_reason",
+            )
             .first()
         )
         if doc is None:
@@ -517,6 +532,8 @@ class PolicyDocumentCleanedTextView(View):
         note = self.NOTES.get(doc.processing_status, "")
         if note:
             header += f"{note}\n"
+        if doc.unreadable_reason:
+            header += f"Why: {doc.get_unreadable_reason_display()}\n"
         return _plain_text(header + "\n" + doc.cleaned_text)
 
 
@@ -963,7 +980,8 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _fax_backend_status() -> Dict[str, Any]:
-        """Fax backend health, including a live Sonic login probe."""
+        """Fax backend health: a live Sonic login probe, and the last modem
+        check each HylaFAX backend recorded."""
         out: Dict[str, Any] = {
             "ok": True,
             "error": None,

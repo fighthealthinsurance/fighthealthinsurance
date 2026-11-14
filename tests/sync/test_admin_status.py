@@ -121,9 +121,14 @@ class AdminStatusDeploymentAndModelRowsTest(TestCase):
         self.client.login(username="staff", password="pw123")
 
     def _get(self, models=()):
-        with mock.patch(_MODELS, return_value=list(models)), mock.patch(
-            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
-        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+        with (
+            mock.patch(_MODELS, return_value=list(models)),
+            mock.patch(
+                _ACTORS,
+                return_value={"alive_actors": 0, "total_actors": 0, "details": []},
+            ),
+            mock.patch(_FAX, return_value=_ok_fax_backends()),
+        ):
             return self.client.get(reverse("admin_status"))
 
     @mock.patch.dict(os.environ, {"FHI_DEPLOYMENT_ID": "v9.9.9-statuspage"})
@@ -222,8 +227,7 @@ class AdminStatusDeploymentAndModelRowsTest(TestCase):
                     "external": False,
                     "error": None,
                     "sweep_ok": None,
-                    "sweep_checked_at": timezone.now()
-                    - datetime.timedelta(minutes=5),
+                    "sweep_checked_at": timezone.now() - datetime.timedelta(minutes=5),
                 }
             ]
         )
@@ -913,9 +917,14 @@ class AdminStatusTemporalTest(TestCase):
         _FAKE_CLIENTS.clear()
 
     def _get(self):
-        with mock.patch(_MODELS, return_value=[]), mock.patch(
-            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
-        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+        with (
+            mock.patch(_MODELS, return_value=[]),
+            mock.patch(
+                _ACTORS,
+                return_value={"alive_actors": 0, "total_actors": 0, "details": []},
+            ),
+            mock.patch(_FAX, return_value=_ok_fax_backends()),
+        ):
             return self.client.get(reverse("admin_status"))
 
     @override_settings(TEMPORAL_ENABLED=False)
@@ -1180,8 +1189,9 @@ class AdminStatusLetterScoringTest(TestCase):
         )
         self._draft(denial, speculative=True, now=frozen)
         self._draft(self._denial(use_external=False), now=frozen)
-        with override_settings(**_SCORING_ON), mock.patch(
-            "django.utils.timezone.now", return_value=frozen
+        with (
+            override_settings(**_SCORING_ON),
+            mock.patch("django.utils.timezone.now", return_value=frozen),
         ):
             status = self._status()
         self.assertEqual(status["unscored"], 0)
@@ -1256,9 +1266,7 @@ class AdminStatusLetterScoringTest(TestCase):
         from fighthealthinsurance.staff_views import AdminStatusView
 
         hint = AdminStatusView._scoring_failure_hint
-        phrases = {
-            status: hint(f"HTTP {status}") for status in (401, 422, 429, 529)
-        }
+        phrases = {status: hint(f"HTTP {status}") for status in (401, 422, 429, 529)}
         self.assertIn("key", phrases[401])
         self.assertIn("validation", phrases[422])
         self.assertIn("TYPESAFE_MODEL", phrases[422])
@@ -1350,12 +1358,14 @@ class AdminStatusLetterScoringTest(TestCase):
         )
         User.objects.create_user(username="staff", password="pw123", is_staff=True)
         self.client.login(username="staff", password="pw123")
-        with override_settings(**_SCORING_ON), mock.patch(
-            _MODELS, return_value=[]
-        ), mock.patch(
-            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
-        ), mock.patch(
-            _FAX, return_value=_ok_fax_backends()
+        with (
+            override_settings(**_SCORING_ON),
+            mock.patch(_MODELS, return_value=[]),
+            mock.patch(
+                _ACTORS,
+                return_value={"alive_actors": 0, "total_actors": 0, "details": []},
+            ),
+            mock.patch(_FAX, return_value=_ok_fax_backends()),
         ):
             response = self.client.get(reverse("admin_status"))
         self.assertEqual(response.status_code, 200)
@@ -1369,12 +1379,14 @@ class AdminStatusLetterScoringTest(TestCase):
         self._draft(self._denial(), minutes_ago=5)
         User.objects.create_user(username="staff", password="pw123", is_staff=True)
         self.client.login(username="staff", password="pw123")
-        with override_settings(**_SCORING_ON), mock.patch(
-            _MODELS, return_value=[]
-        ), mock.patch(
-            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
-        ), mock.patch(
-            _FAX, return_value=_ok_fax_backends()
+        with (
+            override_settings(**_SCORING_ON),
+            mock.patch(_MODELS, return_value=[]),
+            mock.patch(
+                _ACTORS,
+                return_value={"alive_actors": 0, "total_actors": 0, "details": []},
+            ),
+            mock.patch(_FAX, return_value=_ok_fax_backends()),
         ):
             response = self.client.get(reverse("admin_status"))
         self.assertContains(response, "NOT SCORING")
@@ -1438,9 +1450,7 @@ class AdminStatusMcpTest(TestCase):
         )
         response, mcp = self.page(MCP_SERVER_ENABLED=True)
         row = self.row(mcp, "get_state_help")
-        self.assertEqual(
-            [n for n, _ in row.cells], [2, 0, 0, 2, 0, 1, 2, 0, 1]
-        )
+        self.assertEqual([n for n, _ in row.cells], [2, 0, 0, 2, 0, 1, 2, 0, 1])
         self.assertEqual(row.last_call_at, now)
         self.assertContains(response, '<td class="num error-text">1</td>')
 
@@ -1540,12 +1550,8 @@ class AdminStatusMcpTest(TestCase):
             )
         response, mcp = self.page(MCP_SERVER_ENABLED=True)
         activity = mcp["assistant"]
-        self.assertEqual(
-            (activity["clients_7d"], activity["clients_30d"]), (1, 2)
-        )
-        self.assertEqual(
-            (activity["consents_7d"], activity["consents_30d"]), (2, 3)
-        )
+        self.assertEqual((activity["clients_7d"], activity["clients_30d"]), (1, 2))
+        self.assertEqual((activity["consents_7d"], activity["consents_30d"]), (2, 3))
         drafts = dict(activity["drafts"])
         self.assertEqual((drafts["ready"], drafts["questions"]), (2, 1))
         self.assertEqual(drafts["drafting"], 0)
@@ -1553,9 +1559,7 @@ class AdminStatusMcpTest(TestCase):
         self.assertNotContains(response, "test-assistant")
 
     def test_budget_is_unknown_until_the_spend_ledger_has_loaded(self):
-        with mock.patch.object(
-            spend._ledger, "wait_until_loaded", return_value=False
-        ):
+        with mock.patch.object(spend._ledger, "wait_until_loaded", return_value=False):
             response, mcp = self.page(MCP_SERVER_ENABLED=True)
         self.assertIsNone(mcp["assistant"]["budget_left"])
         self.assertContains(response, "spend ledger not loaded")
@@ -1592,9 +1596,14 @@ class AdminStatusCountsOnlyDraftingModelsTest(TestCase):
                 "error": None,
             },
         ]
-        with mock.patch(_MODELS, return_value=details), mock.patch(
-            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
-        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+        with (
+            mock.patch(_MODELS, return_value=details),
+            mock.patch(
+                _ACTORS,
+                return_value={"alive_actors": 0, "total_actors": 0, "details": []},
+            ),
+            mock.patch(_FAX, return_value=_ok_fax_backends()),
+        ):
             return self.client.get(reverse("admin_status"))
 
     def test_a_generation_outage_reads_down_with_a_citation_backend_up(self):
@@ -2018,6 +2027,88 @@ class FaxBackendsHealthTest(TestCase):
         self.assertFalse(result["backends"][0]["probed"])
 
 
+class _FakeModemBackend(_FakeBackend):
+    """A HylaFAX-like backend that records its modem check."""
+
+    modem_health_service = "fax_modem_test"
+
+
+class FaxBackendModemHealthTest(TestCase):
+    """The modem check a HylaFAX backend records before each send shows on
+    the status page, since the web pods can't ssh to the fax host."""
+
+    def _backend_row(self):
+        from fighthealthinsurance import fax_utils
+        from fighthealthinsurance.fax_health_status import check_fax_backends_health
+
+        with mock.patch.object(
+            fax_utils.flexible_fax_magic, "backends", [_FakeModemBackend()]
+        ):
+            return check_fax_backends_health()["backends"][0]
+
+    def _record(self, success_minutes_ago=None, failure_minutes_ago=None):
+        now = timezone.now()
+        ExternalServiceHealth.objects.create(
+            service="fax_modem_test",
+            last_success_at=(
+                None
+                if success_minutes_ago is None
+                else now - datetime.timedelta(minutes=success_minutes_ago)
+            ),
+            last_failure_at=(
+                None
+                if failure_minutes_ago is None
+                else now - datetime.timedelta(minutes=failure_minutes_ago)
+            ),
+            last_failure="" if failure_minutes_ago is None else "ttyACM0 missing",
+        )
+
+    def test_a_backend_with_no_modem_check_yet_is_not_marked_down(self):
+        self.assertTrue(self._backend_row()["ok"])
+
+    def test_a_backend_with_no_modem_check_yet_says_so(self):
+        self.assertIsNone(self._backend_row()["modem"]["ok"])
+
+    def test_a_modem_missing_at_the_latest_check_marks_the_backend_down(self):
+        self._record(success_minutes_ago=60, failure_minutes_ago=5)
+        self.assertFalse(self._backend_row()["ok"])
+
+    def test_a_modem_missing_at_the_latest_check_is_the_error(self):
+        self._record(success_minutes_ago=60, failure_minutes_ago=5)
+        self.assertEqual(self._backend_row()["error"], "modem: ttyACM0 missing")
+
+    def test_a_modem_back_since_its_last_failure_is_healthy(self):
+        self._record(success_minutes_ago=5, failure_minutes_ago=60)
+        self.assertTrue(self._backend_row()["ok"])
+
+    def test_a_backend_that_records_no_modem_check_has_no_modem_row(self):
+        from fighthealthinsurance import fax_utils
+        from fighthealthinsurance.fax_health_status import check_fax_backends_health
+
+        with mock.patch.object(
+            fax_utils.flexible_fax_magic, "backends", [_FakeBackend()]
+        ):
+            row = check_fax_backends_health()["backends"][0]
+        self.assertIsNone(row["modem"])
+
+    @mock.patch(_ACTORS)
+    @mock.patch(_MODELS)
+    def test_the_status_page_shows_a_missing_modem(self, mock_models, mock_actors):
+        mock_models.return_value = []
+        mock_actors.return_value = {"alive_actors": 0, "total_actors": 0, "details": []}
+        self._record(success_minutes_ago=60, failure_minutes_ago=5)
+        User.objects.create_user(username="staff", password="pw123", is_staff=True)
+        self.client.login(username="staff", password="pw123")
+        from fighthealthinsurance import fax_utils
+
+        with mock.patch.object(
+            fax_utils.flexible_fax_magic, "backends", [_FakeModemBackend()]
+        ):
+            response = self.client.get(reverse("admin_status"))
+        self.assertContains(response, "Modem:")
+        self.assertContains(response, "ttyACM0 missing")
+
+
 _LOGIN = "fighthealthinsurance.fax_utils.SonicFax._login"
 _SESSION_GET = "requests.Session.get"
 _SONIC_ENV = {"SONIC_USERNAME": "u", "SONIC_PASSWORD": "p", "SONIC_TOKEN": "t"}
@@ -2218,7 +2309,8 @@ class AdminStatusLLMUsageTest(TestCase):
         self.assertEqual((today["calls"], today["prompt_tokens"]), (7, 1010))
         self.assertEqual(today["external_token_percent"], 59.4)
         self.assertEqual(
-            [r["surface"] for r in usage["by_surface"]], ["assistant", "site", "unknown"]
+            [r["surface"] for r in usage["by_surface"]],
+            ["assistant", "site", "unknown"],
         )
         self.assertEqual(usage["unknown_calls"], 1)
         self.assertEqual(usage["this_week"]["networks"], 1)
@@ -2253,10 +2345,16 @@ class AdminStatusJevPanelTest(TestCase):
     def _get(self):
         from fighthealthinsurance.ml import typesafe
 
-        with mock.patch(_MODELS, return_value=[]), mock.patch(
-            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
-        ), mock.patch(_FAX, return_value=_ok_fax_backends()), mock.patch.object(
-            typesafe, "ask", side_effect=AssertionError("the page called TypeSafe")
+        with (
+            mock.patch(_MODELS, return_value=[]),
+            mock.patch(
+                _ACTORS,
+                return_value={"alive_actors": 0, "total_actors": 0, "details": []},
+            ),
+            mock.patch(_FAX, return_value=_ok_fax_backends()),
+            mock.patch.object(
+                typesafe, "ask", side_effect=AssertionError("the page called TypeSafe")
+            ),
         ):
             return self.client.get(reverse("admin_status"))
 
@@ -2344,8 +2442,11 @@ class AdminStatusJevPanelTest(TestCase):
         ExternalServiceHealth.objects.create(
             service=chat_gate.SERVICE, last_success_at=timezone.now()
         )
-        with mock.patch.object(spend, "loaded", return_value=True), mock.patch.object(
-            spend, "allows", side_effect=lambda provider, use: use != spend.CHAT
+        with (
+            mock.patch.object(spend, "loaded", return_value=True),
+            mock.patch.object(
+                spend, "allows", side_effect=lambda provider, use: use != spend.CHAT
+            ),
         ):
             response = self._get()
         jev = response.context["jev"]
@@ -2374,10 +2475,14 @@ class AdminStatusJevPanelTest(TestCase):
     def test_uses_refused_for_different_reasons_are_each_named_once(self):
         """Two chat uses and research judging, each out of its own budget:
         the chat reason once, then the research one."""
-        with mock.patch.object(spend, "loaded", return_value=True), mock.patch.object(
-            spend,
-            "allows",
-            side_effect=lambda provider, use: use not in (spend.CHAT, spend.RESEARCH),
+        with (
+            mock.patch.object(spend, "loaded", return_value=True),
+            mock.patch.object(
+                spend,
+                "allows",
+                side_effect=lambda provider, use: use
+                not in (spend.CHAT, spend.RESEARCH),
+            ),
         ):
             response = self._get()
         jev = response.context["jev"]
@@ -2423,8 +2528,9 @@ class AdminJevTestViewTest(TestCase):
     def _post(self, ask):
         from fighthealthinsurance.ml import typesafe
 
-        with mock.patch.object(typesafe, "ask", ask), mock.patch.object(
-            spend._ledger, "wait_until_loaded", return_value=True
+        with (
+            mock.patch.object(typesafe, "ask", ask),
+            mock.patch.object(spend._ledger, "wait_until_loaded", return_value=True),
         ):
             return self.client.post(reverse("admin_jev_test"))
 
@@ -2518,9 +2624,7 @@ class AdminJevTestViewTest(TestCase):
     def test_a_rejected_key_reads_as_auth_with_the_hint(self):
         from fighthealthinsurance.ml import typesafe
 
-        ask = mock.AsyncMock(
-            side_effect=typesafe.TypeSafeError("HTTP 401", status=401)
-        )
+        ask = mock.AsyncMock(side_effect=typesafe.TypeSafeError("HTTP 401", status=401))
         response = self._post(ask)
         result = response.context["result"]
         self.assertFalse(result["ok"])
@@ -2536,11 +2640,12 @@ class AdminJevTestViewTest(TestCase):
         page says it was skipped and why, in the billing category."""
         # The real ask() refuses before it builds a request, so nothing
         # here can reach the network.
-        with mock.patch.object(
-            spend._ledger, "wait_until_loaded", return_value=True
-        ), mock.patch.object(spend, "allows", return_value=False), mock.patch.object(
-            spend, "loaded", return_value=True
-        ), mock.patch("aiohttp.ClientSession") as session:
+        with (
+            mock.patch.object(spend._ledger, "wait_until_loaded", return_value=True),
+            mock.patch.object(spend, "allows", return_value=False),
+            mock.patch.object(spend, "loaded", return_value=True),
+            mock.patch("aiohttp.ClientSession") as session,
+        ):
             response = self.client.post(reverse("admin_jev_test"))
         session.assert_not_called()
         result = response.context["result"]
@@ -2695,9 +2800,14 @@ class AdminStatusPhoenixTest(TestCase):
         staff_views._PHOENIX_LAST_RESULT.clear()
 
     def _get(self):
-        with mock.patch(_MODELS, return_value=[]), mock.patch(
-            _ACTORS, return_value={"alive_actors": 0, "total_actors": 0, "details": []}
-        ), mock.patch(_FAX, return_value=_ok_fax_backends()):
+        with (
+            mock.patch(_MODELS, return_value=[]),
+            mock.patch(
+                _ACTORS,
+                return_value={"alive_actors": 0, "total_actors": 0, "details": []},
+            ),
+            mock.patch(_FAX, return_value=_ok_fax_backends()),
+        ):
             return self.client.get(reverse("admin_status"))
 
     @override_settings(PHOENIX_STATUS_ENABLED=False)
@@ -2800,9 +2910,10 @@ class AdminStatusPhoenixTest(TestCase):
             )
 
         for fake in (raising, http_error):
-            with mock.patch(_PHOENIX_GET, new=fake), mock.patch.object(
-                staff_views, "logger"
-            ) as log:
+            with (
+                mock.patch(_PHOENIX_GET, new=fake),
+                mock.patch.object(staff_views, "logger") as log,
+            ):
                 staff_views._PHOENIX_LAST_RESULT.clear()
                 response = self._get()
             error = response.context["phoenix"]["error"]
@@ -2830,8 +2941,9 @@ class AdminStatusPhoenixTest(TestCase):
             resp = _fake_phoenix_get(url, params, headers, timeout, **kw)
             return Once(resp._body, resp.status_code, resp.url)
 
-        with mock.patch(_PHOENIX_GET, new=once), mock.patch(
-            "time.monotonic", new=clock
+        with (
+            mock.patch(_PHOENIX_GET, new=once),
+            mock.patch("time.monotonic", new=clock),
         ):
             response = self._get()
         self.assertEqual(len(_PHOENIX_CALLS), 1)
@@ -2896,8 +3008,9 @@ class AdminStatusPhoenixTest(TestCase):
         def trickle(url, params=None, headers=None, timeout=None, **kw):
             return Trickle({})
 
-        with mock.patch(_PHOENIX_GET, new=trickle), mock.patch(
-            "time.monotonic", new=lambda: clock["now"]
+        with (
+            mock.patch(_PHOENIX_GET, new=trickle),
+            mock.patch("time.monotonic", new=lambda: clock["now"]),
         ):
             response = self._get()
         self.assertIn("8s budget", response.context["phoenix"]["error"])

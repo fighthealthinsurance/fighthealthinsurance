@@ -1,0 +1,24 @@
+{% extends "admin/change_list.html" %}
+{% comment %} ChooserTaskAdmin.humanjudge_upload_unsent_view uploads the next
+cases waiting to go to HumanJudge: clearly undecided ones first, then the
+newest (chooser_humanjudge.unsent_task_ids). Up to humanjudge_inline_limit run
+while the page waits; more go in the background. {% endcomment %}
+{% block object-tools-items %}
+<li>
+    <form id="humanjudge-upload-unsent" class="humanjudge-upload-unsent" method="post" action="{% url 'admin:fighthealthinsurance_choosertask_humanjudge_upload_unsent' %}">
+        {% csrf_token %}
+        <label for="humanjudge-count">HumanJudge:</label>
+        <input type="number" id="humanjudge-count" name="count" min="1" max="{{ humanjudge_max_count }}" value="{{ humanjudge_default_count }}" required title="Cases to send, from 1 to {{ humanjudge_max_count }}: clearly undecided ones first, then the newest. More than {{ humanjudge_inline_limit }} upload in the background.">
+        <span>unsent cases</span>
+        <button type="submit" class="button">Upload</button>
+    </form>
+</li>
+{{ block.super }}
+{% endblock %}
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    .humanjudge-upload-unsent { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0; }
+    .humanjudge-upload-unsent input[type=number] { width: 4.5rem; }
+</style>
+{% endblock %}

@@ -53,7 +53,23 @@ class _StubReading:
 class _Stubs:
     """Stand-ins for the sweep's activities that record each call."""
 
-    def __init__(self, due=(1, 2), sent=None, batches=(BATCH_A, BATCH_B), due_fails=False):
+    def __init__(
+        self,
+        due=(1, 2),
+        sent=None,
+        batches=(BATCH_A, BATCH_B),
+        due_fails=False,
+        summary=True,
+        batches_fail=False,
+        files_checked=True,
+        copies_saved=0,
+        company_lookups=0,
+    ):
+        self.summary = summary
+        self.files_checked = files_checked
+        self.copies_saved = copies_saved
+        self.company_lookups = company_lookups
+        self.batches_fail = batches_fail
         self.due = list(due)
         self.sent = sent or {}
         self.batches = list(batches)
@@ -83,12 +99,46 @@ class _Stubs:
             received_minutes: int, limit: int
         ) -> list[str]:
             stubs.calls.append(("batches", received_minutes, limit))
+            if stubs.batches_fail:
+                raise ApplicationError("OperationalError for waiting shares")
             return stubs.batches
+
+        @activity.defn(name="send_plan_documents_staff_summary")
+        async def send_plan_documents_staff_summary() -> bool:
+            stubs.calls.append(("summary",))
+            if isinstance(stubs.summary, Exception):
+                raise stubs.summary
+            return stubs.summary
+
+        @activity.defn(name="check_shared_plan_document_files")
+        async def check_shared_plan_document_files() -> bool:
+            stubs.calls.append(("file_check",))
+            if isinstance(stubs.files_checked, Exception):
+                raise stubs.files_checked
+            return stubs.files_checked
+
+        @activity.defn(name="retry_shared_copies")
+        async def retry_shared_copies() -> int:
+            stubs.calls.append(("copy_retries",))
+            if isinstance(stubs.copies_saved, Exception):
+                raise stubs.copies_saved
+            return stubs.copies_saved
+
+        @activity.defn(name="retry_company_lookups")
+        async def retry_company_lookups() -> int:
+            stubs.calls.append(("company_lookups",))
+            if isinstance(stubs.company_lookups, Exception):
+                raise stubs.company_lookups
+            return stubs.company_lookups
 
         return [
             find_due_plan_documents_reminders,
             send_plan_documents_reminder,
             find_waiting_share_batches,
+            send_plan_documents_staff_summary,
+            check_shared_plan_document_files,
+            retry_shared_copies,
+            retry_company_lookups,
         ]
 
 
@@ -121,17 +171,30 @@ async def test_due_reminders_are_sent_then_waiting_shares_are_started():
         ("send", 1),
         ("send", 2),
         ("batches", 15, 50),
+        ("summary",),
+        ("file_check",),
+        ("copy_retries",),
+        ("company_lookups",),
     ]
-    assert result == {"reminders_sent": 2, "readings_started": 2}
+    assert result == {"reminders_sent": 2, "readings_started": 2, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
 
 
 @pytest.mark.asyncio
 async def test_the_run_passes_its_numbers_on():
     stubs = _Stubs(due=[], batches=[])
-    request = PlanDocumentsSweepInput(max_reminders=7, max_batches=3, received_minutes=20)
+    request = PlanDocumentsSweepInput(
+        max_reminders=7, max_batches=3, received_minutes=20
+    )
     async with await WorkflowEnvironment.start_time_skipping() as env:
         await _run(env, stubs, request)
-    assert stubs.calls == [("due", 7), ("batches", 20, 3)]
+    assert stubs.calls == [
+        ("due", 7),
+        ("batches", 20, 3),
+        ("summary",),
+        ("file_check",),
+        ("copy_retries",),
+        ("company_lookups",),
+    ]
 
 
 @pytest.mark.asyncio
@@ -153,7 +216,7 @@ async def test_a_failed_send_is_not_tried_again_and_the_run_goes_on():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         _, result = await _run(env, stubs)
     assert [c for c in stubs.calls if c[0] == "send"] == [("send", 1), ("send", 2)]
-    assert result == {"reminders_sent": 1, "readings_started": 2}
+    assert result == {"reminders_sent": 1, "readings_started": 2, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
 
 
 @pytest.mark.asyncio
@@ -171,7 +234,69 @@ async def test_a_failed_reminder_lookup_still_starts_the_readings():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         _, result = await _run(env, stubs)
     assert [c for c in stubs.calls if c[0] == "send"] == []
-    assert result == {"reminders_sent": 0, "readings_started": 2}
+    assert result == {"reminders_sent": 0, "readings_started": 2, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_lookup_of_waiting_shares_still_sends_the_summary():
+    stubs = _Stubs(due=[], batches_fail=True)
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        _, result = await _run(env, stubs)
+    assert result == {"reminders_sent": 0, "readings_started": 0, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_file_check_is_not_retried_and_the_run_still_ends():
+    stubs = _Stubs(
+        due=[], batches=[], files_checked=ApplicationError("OSError for file check")
+    )
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        _, result = await _run(env, stubs)
+    assert [c for c in stubs.calls if c[0] == "file_check"] == [("file_check",)]
+    assert result["files_checked"] == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_copy_retries_are_not_retried_and_the_run_still_ends():
+    stubs = _Stubs(
+        due=[], batches=[], copies_saved=ApplicationError("OSError for copy retries")
+    )
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        _, result = await _run(env, stubs)
+    assert [c for c in stubs.calls if c[0] == "copy_retries"] == [("copy_retries",)]
+    assert result["copies_saved"] == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_company_lookups_are_not_retried_and_the_run_still_ends():
+    stubs = _Stubs(
+        due=[], batches=[], company_lookups=ApplicationError("OSError for lookups")
+    )
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        _, result = await _run(env, stubs)
+    assert [c for c in stubs.calls if c[0] == "company_lookups"] == [
+        ("company_lookups",)
+    ]
+    assert result["company_lookups"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_summary_is_not_retried_and_the_run_still_ends():
+    stubs = _Stubs(
+        due=[], batches=[], summary=ApplicationError("SMTPException for staff summary")
+    )
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        _, result = await _run(env, stubs)
+    assert [c for c in stubs.calls if c[0] == "summary"] == [("summary",)]
+    assert result["summary_sent"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_summary_already_sent_today_is_not_counted():
+    stubs = _Stubs(due=[], batches=[], summary=False)
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        _, result = await _run(env, stubs)
+    assert result["summary_sent"] == 0
 
 
 def _child_starts(history):
@@ -211,7 +336,7 @@ async def test_a_share_whose_reading_is_running_is_left_to_it():
         # No release afterwards: the time-skipping server can time the held
         # run out first, and a signal to a closed run fails the test.
         _, result = await _run(env, stubs, before=a_reading_already_running)
-    assert result == {"reminders_sent": 0, "readings_started": 1}
+    assert result == {"reminders_sent": 0, "readings_started": 1, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
 
 
 @pytest.mark.asyncio
@@ -232,7 +357,7 @@ async def test_a_share_whose_earlier_reading_has_closed_is_read_again():
     async with await WorkflowEnvironment.start_time_skipping() as env:
         handle, result = await _run(env, stubs, before=an_earlier_reading_that_closed)
         history = await handle.fetch_history()
-    assert result == {"reminders_sent": 0, "readings_started": 1}
+    assert result == {"reminders_sent": 0, "readings_started": 1, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0}
     (start,) = _child_starts(history)
     assert start.workflow_id == f"shared-plan-documents-{BATCH_A}"
     assert (
@@ -286,8 +411,16 @@ async def test_history_holds_numbers_ids_shares_and_counts_and_nothing_else():
             "start_child_workflow_execution_initiated_event_attributes",
             {"share_batch": BATCH_A},
         ),
+        # The summary takes nothing in and gives back true or false.
+        ("activity_task_completed_event_attributes", True),
+        # So does the file check: counts stay in the database, never here.
+        ("activity_task_completed_event_attributes", True),
+        # The copy retries give back how many were saved, nothing else.
+        ("activity_task_completed_event_attributes", 0),
+        # The company lookups give back how many finished, nothing else.
+        ("activity_task_completed_event_attributes", 0),
         (
             "workflow_execution_completed_event_attributes",
-            {"reminders_sent": 1, "readings_started": 1},
+            {"reminders_sent": 1, "readings_started": 1, "summary_sent": 1, "files_checked": 1, "copies_saved": 0, "company_lookups": 0},
         ),
     ]

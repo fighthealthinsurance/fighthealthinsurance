@@ -19,7 +19,7 @@ class ChooserBackfillActorRef(BaseActorRef):
     actor_name = "chooser_backfill_actor"
     has_run_method = False
 
-    def start(self, count=None, min_votes=None):
+    def start(self, count=None, min_votes=None, force_target=None):
         """Start a backfill on a fresh actor, or on the one an earlier
         launch left still writing.
 
@@ -31,7 +31,7 @@ class ChooserBackfillActorRef(BaseActorRef):
         # ``BaseActorRef.get`` is a ``cached_property``; access without parens.
         actor = self.get
         try:
-            task = actor.backfill.remote(count, min_votes)
+            task = actor.backfill.remote(count, min_votes, force_target)
         except Exception:
             # The dispatch is the first use of the handle, so it is where a
             # creation that only half succeeded surfaces. Forget it rather

@@ -11,6 +11,7 @@ with the employer plans the share page's goal counts called out. {% endcomment %
     <p id="shared-plan-total">{{ share_counts.plans }} different plan{{ share_counts.plans|pluralize }} from {{ share_counts.shares }} share{{ share_counts.shares|pluralize }}. Each share is one plan unless every file and link in it came in an earlier share; removed rows count for nothing.</p>
     <p id="shared-plan-employer"><strong>{{ share_counts.employer_plans }} employer plan{{ share_counts.employer_plans|pluralize }}</strong> toward the goal of {{ share_counts.goal }} by {{ share_counts.goal_date|date:"F j, Y" }}: each company once, counted when a shared document names it as the plan's sponsor and it is new to the <a href="{% url 'admin:fighthealthinsurance_plansponsor_changelist' %}">company list</a>. Potential spam and removed rows count for nothing. The share page shows this count from 20.</p>
     <p id="shared-plan-premiums">{{ share_counts.premium_answered }} of {{ share_counts.plans }} plan{{ share_counts.plans|pluralize }} came with an answer to the premium question.</p>
+    <p id="shared-plan-unreadable">{{ share_counts.unreadable_files }} file{{ share_counts.unreadable_files|pluralize }} received but not readable, not counted as plans.</p>
     <table id="shared-plan-weeks">
         <caption>Each week, newest first</caption>
         <thead><tr><th scope="col">Week of</th><th scope="col">Shares</th><th scope="col">New plans</th></tr></thead>

@@ -22,11 +22,18 @@ wins, including the ones `scripts/run_local.sh` sets.
 
 ## Which model serves which request
 
-- **Appeals try internal models first.** External (hosted) models are the
-  backup tier, and only when the user left the external-models consent on
-  (`Denial.use_external`, which defaults to on). See `make_appeals` in
-  `fighthealthinsurance/generate_appeal.py`. With no internal backend
-  configured, a user who turns that consent off gets no appeal.
+- **Appeals try internal models first.** With the external-models consent
+  off (`Denial.use_external`), only internal models write, and with no
+  internal backend configured that user gets no appeal. With it on (the
+  default), our alpha model (fhi-local) and NVIDIA's Nemotron 3.5 Super
+  (`ml_router.SIDE_BY_SIDE_OUTSIDE`) write side by side; the other internal
+  models and the next external ones are the backup tier, used only when
+  neither answers. Either one missing leaves the other alone. Nemotron's part
+  stops for the day at `FHI_SPEND_SIDE_BY_SIDE_DAILY_USD`
+  (`spend.SIDE_BY_SIDE_DAILY_USD`), and `FHI_APPEAL_SIDE_BY_SIDE=False`
+  turns it off; either way the letter is written internal-first as before.
+  See `appeal_pass_names` in `ml/ml_router.py` and `make_appeals` in
+  `fighthealthinsurance/generate_appeal.py`.
 - **Summaries and appeal questions try our own model first too.** The router
   asks the strongest general-purpose internal backend that looks healthy, and
   keeps DeepInfra's `google/gemma-4-26B-A4B-it` as the backup, used only when
@@ -105,7 +112,8 @@ the appeal.
 
 1. **Hosted API (simplest).** Export `ANTHROPIC_API_KEY` (or `DEEPINFRA_API`,
    `OPENROUTER_API_KEY`, or one of the Azure pairs below). Keep the routing above in mind: hosted
-   models serve appeals only as the backup tier.
+   models serve appeals as the backup tier, apart from Nemotron's side-by-side
+   draft (with `DEEPINFRA_API`).
 
 2. **Self-hosted model.** Serve the model with an OpenAI-compatible server
    (the team uses vLLM), then point the legacy internal backend at it:
@@ -162,8 +170,8 @@ the appeal.
 
 3. **Hosted generative models (Azure, Anthropic, and others).** Set the
    relevant API keys (see the next section). These models are used when the
-   user leaves the external-models consent on, as a fallback after the
-   internal models for appeals.
+   user leaves the external-models consent on: Nemotron writes beside our
+   model, and the rest are the fallback after the internal models.
 
 ## External and Azure generative models
 
@@ -201,8 +209,14 @@ them on its synthetic cases (`CHOOSER_FORCE_MODEL`, see
 `ENABLED_REMOTE_MODELS` when that allow-list is set. When DeepInfra or
 Perplexity has no key, building the router logs a `Skipping model ... No
 token found` warning; without `LUNA_ROUTE_KEY` it logs `Skipping chat model
-<model id>: Exception` for each LunaRoute model. Either is expected, not a
-fault.
+lunaroute/<model> (<model id>) of LunaRoute: not_configured: LUNA_ROUTE_KEY
+not set` for each LunaRoute model. Either is expected, not a fault. Every
+model the router left out, and why (no key, not on `ENABLED_REMOTE_MODELS`,
+retired, failed to build), is listed on one INFO line, `MLRouter: skipped
+models: ...`, next to `MLRouter: chat/arena-only models: ...` for the ones it
+did register; a `CHOOSER_FORCE_MODEL` name that is not registered repeats its
+reason in the arena's warning. So when the arena's LunaRoute models are
+missing, those lines say whether the key or the allow-list kept them out.
 
 `OpenRouterArena` is the same arrangement over OpenRouter for the arena's
 default hosted models, `openrouter-arena/anthropic/claude-opus-5.5` and

@@ -9,7 +9,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 # install all of the tools we need.
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get install nginx vim emacs libmariadb-dev-compat default-libmysqlclient-dev libssl-dev python3-opencv libgl1 tesseract-ocr nano nfs-common sudo iputils-ping hylafax-client pandoc texlive texlive-luatex texlive-latex-extra texlive-xetex postgresql ca-certificates curl libpq-dev wkhtmltopdf pkg-config python3-dev weasyprint -y && \
+    apt-get install nginx vim emacs libmariadb-dev-compat default-libmysqlclient-dev libssl-dev python3-opencv libgl1 tesseract-ocr tesseract-ocr-spa nano nfs-common sudo iputils-ping hylafax-client pandoc texlive texlive-luatex texlive-latex-extra texlive-xetex postgresql ca-certificates curl libpq-dev wkhtmltopdf pkg-config python3-dev weasyprint -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 # Install npm & nodes from https://github.com/nodesource/distributions instead of debian which lags

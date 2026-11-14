@@ -52,6 +52,16 @@ class MediaReference(_MediaReferenceRequired, total=False):
 
 MEDIA_REFERENCES: list[MediaReference] = [
     {
+        "outlet": "TIME",
+        "kind": "Article",
+        "cta": "Read the article",
+        "title": "How AI Can Help You Appeal Health Insurance Denials",
+        "url": "https://time.com/article/2026/11/12/how-ai-can-help-you-appeal-health-insurance-denials/",
+        "date": "November 2026",
+        "logo": "images/timelogo.png",
+        "description": "TIME looks at how AI tools can help patients appeal insurance denials, and talks with Fight Health Insurance co-founders Holden Karau and Melanie Warrick about the free tool.",
+    },
+    {
         "outlet": "GOTO — The Brightest Minds in Tech",
         "kind": "Podcast",
         "cta": "Listen to the episode",

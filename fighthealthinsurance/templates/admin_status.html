@@ -335,6 +335,15 @@
           <td>
             {% if b.ok %}<span class="status-badge ok">ok</span>{% else %}<span class="status-badge bad">down</span>{% endif %}
             {% if not b.probed %}<span class="pill">not probed</span>{% endif %}
+            {% if b.modem %}
+              <div class="meta">
+                Modem:
+                {% if b.modem.ok is None %}no check recorded yet{% elif b.modem.ok %}attached{% else %}<span class="error-text">{{ b.modem.last_failure }}</span>{% endif %}
+                {% if b.modem.last_success_at %}&middot; last seen attached {{ b.modem.last_success_at|timesince }} ago{% endif %}
+                {% if b.modem.last_failure_at %}&middot; last problem {{ b.modem.last_failure_at|timesince }} ago{% endif %}
+                {% if b.modem.error %}&middot; <span class="error-text">could not read: {{ b.modem.error }}</span>{% endif %}
+              </div>
+            {% endif %}
           </td>
           <td class="error-text">{{ b.error|default:"" }}</td>
         </tr>

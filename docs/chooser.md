@@ -130,6 +130,69 @@ login goes straight to `/chooser/`, where the account's review count includes
 all of its previous votes. The login grants no extra privileges and does not
 change the Arena's existing captcha requirement.
 
+## Paid reviewers (RentAHuman)
+
+Volunteers come and go, so the Arena can also hire judges by the batch
+through [RentAHuman](https://rentahuman.ai), a marketplace where software
+posts paid tasks for people (`paid_reviews.py`). The cases are synthetic,
+so a stranger sees no one's health information. One batch is one
+RentAHuman bounty (`PaidReviewBounty`):
+
+1. **Post it.** `python manage.py post_paid_review_bounty --spots 10
+   --price 5 --reviews 10` (the defaults) prints the cost (workers' pay
+   plus RentAHuman's 18% fee: $59 for 100 reviews, about $0.59 a review,
+   or about $10 an hour for the worker at three minutes a review) and
+   RentAHuman's dry-run preview. Add `--post` to post it for real; $5 a
+   worker is RentAHuman's minimum. The bounty is a remote "computer gig"
+   with text evidence and RentAHuman's AI screening on (`autoAccept`:
+   qualified applicants are accepted, clear mismatches declined, the rest
+   left for you), and its description links the join URL,
+   `/chooser/paid/<join_token>/`. If RentAHuman holds it as
+   `pending_deposit`, top up the wallet there.
+2. **The worker judges.** The join link ties their browser session to a
+   `PaidReviewSession` and opens the Arena, which is unchanged except for a
+   progress banner. Each vote that session casts is tagged
+   (`ChooserVote.paid_review`), so paid votes can be studied or weighted
+   apart from volunteers'. A paid vote counts toward the run when it was
+   timed by the server at `PAID_REVIEW_MIN_SECONDS` or more, carries a
+   reason of `PAID_REVIEW_MIN_RATIONALE_CHARS` or more, and did not come
+   from an automated browser; the vote answer says why one did not count.
+   Any outcome counts (a winner, a tie, all bad): the floor stops
+   click-through, not disagreement. Every vote, counted or not, is recorded
+   like any other.
+3. **The code.** After `reviews_required` counted votes the banner shows a
+   completion code (`FHI-XXXX-XXXX`, single use), which the worker pastes
+   as their submission.
+4. **Checking it.** RentAHuman's `submission.submitted` event, at
+   `/chooser/paid/webhook/rentahuman/` (signed with
+   `RENTAHUMAN_WEBHOOK_SECRET`), has the submission fetched from the API
+   and checked. A submission RentAHuman already shows as reviewed is left
+   alone, so repeated deliveries are harmless; the event id is not used to
+   deduplicate, since a resubmission after a redo can carry the same one.
+   A code issued for that
+   bounty and not yet claimed is claimed and the submission approved;
+   anything else gets a redo request saying what was wrong.
+   `python manage.py sync_paid_reviews` does the same for every pending
+   submission, as a poll behind the webhook or instead of it.
+5. **Paying.** Approving moves no money. Release the escrow on RentAHuman
+   (its guidance is that agents release payment only when the account
+   owner says so). Close a batch's join link with
+   `post_paid_review_bounty --close <id>` or in the admin. That only stops
+   new workers joining: runs already started keep counting votes, keep
+   showing an earned code, and are still answered by `sync_paid_reviews`.
+
+Setting up the account: create an API key at
+rentahuman.ai/account/api-keys and set `RENTAHUMAN_API_KEY`. Then
+`python manage.py rentahuman_setup` shows the wallet and webhooks;
+`--deposit 60` prints a Stripe Checkout link to fund the wallet (nothing is
+charged until someone pays there); `--webhook` registers this site's
+webhook for `submission.submitted` and prints the `whsec_...` secret once,
+for `RENTAHUMAN_WEBHOOK_SECRET` (register it after the route is deployed);
+`--test-webhook <endpoint id>` sends RentAHuman's test event. Settings: `RENTAHUMAN_API_KEY`, `RENTAHUMAN_WEBHOOK_SECRET`,
+`RENTAHUMAN_API_BASE`, `PAID_REVIEW_SITE_ORIGIN` (where the join link
+points), `PAID_REVIEW_MIN_SECONDS` (60) and
+`PAID_REVIEW_MIN_RATIONALE_CHARS` (25). Tests blank the key and secret.
+
 ## The door: "I'm not a robot"
 
 The Arena starts with the same reCAPTCHA checkbox as the site's other
@@ -462,6 +525,56 @@ at 1 however many rounds are judged, so the simplest case left comes first;
 counting as a 5. Both apply with the warm-up off too, since the judge asked;
 an unknown value is ignored. The choice is not stored with the vote.
 
+### Retiring a case once its votes say enough (`chooser_settlement.py`)
+
+Every review a case takes is one some other case didn't get. So once a
+case's votes show a **clear winner**, or show it is **clearly undecided**,
+it is *settled*: its status goes from READY to `EXHAUSTED` and
+`ChooserTask.settled_reason` (`clear_winner` or `undecided`, with
+`settled_at`) says why. The next-task endpoint serves READY tasks only, so
+it stops handing the case out, and the refill's pool counts stop counting
+it, so a fresh case is written in its place. Its votes stay and keep
+counting in the rankings and exports (`settled_reason` is in the staff
+export). A judge it was served to before it settled can still vote on it.
+
+The rules run after every vote and skip, over the case's votes (an all-bad
+one included: each is a *review*) and skips:
+
+- Each review's point is shared between its winners, as everywhere else; an
+  all-bad review's goes to "no usable draft", which is ranked like a draft,
+  so judges agreeing nothing is usable is an answer too.
+- Two outcomes are compared **head to head** over the reviews that showed
+  both: a review counts for the one it gave more of its point, and for
+  neither when it gave them the same (tied winners, or neither won).
+- **Clear winner**: at least `CHOOSER_SETTLE_MIN_REVIEWS` reviews, and the
+  leading outcome beats every other one head to head by a one-sided sign
+  test at p ≤ 0.05 (5-0, 6-0, 7-1, 8-1 and so on against its closest rival;
+  6-1, at p ≈ 0.06, is not enough).
+- **Clearly undecided**, when there is no clear winner, in any of three
+  ways: at least `CHOOSER_SETTLE_MIN_REVIEWS` judges saw it (reviews plus
+  skips) and at least `CHOOSER_UNDECIDED_SKIP_SHARE` of them skipped it;
+  or `CHOOSER_UNDECIDED_REVIEWS` reviews and the leader beats the
+  runner-up in no more than 60% of the reviews that tell them apart (an
+  even split at the top); or `CHOOSER_UNDECIDED_MAX_REVIEWS` reviews with
+  no clear winner at all.
+- A skip counts only when it was of a case the next-task endpoint served
+  that session (`ChooserSkip.served_at`), since a skip names nothing but a
+  task id and could otherwise retire cases nobody read; and not when the
+  same judge later voted on it, so nobody is both a reviewer and a skipper.
+  The vote marks the judge's skip `superseded`, matching the judge as the
+  vote endpoint does (session, signed-in user, and for a request without a
+  session the address); the skip is kept, since the staff participation
+  counts read it. Skips from before `served_at` was recorded
+  don't count. Any skip still hides the case from that judge.
+
+A vote or skip only ever settles a case, never reopens one.
+`python manage.py settle_chooser_tasks [--task-type appeal|chat] [--reopen]
+[--dry-run]` applies the rules to the whole READY pool (for cases voted on
+before settling existed, or after a change to the settings); `--reopen`
+also puts a settled case the rules no longer settle back to READY, and
+`-v 2` prints each case's reason. Nothing runs it on deploy.
+`CHOOSER_SETTLE_TASKS=false` turns settling off.
+
 ### Trying out a model, or choosing the pool (`CHOOSER_FORCE_MODEL`)
 
 To get a new model votes quickly, set `CHOOSER_FORCE_MODEL` to its
@@ -540,9 +653,106 @@ Four things write tasks, all under one generation claim per type
   retired before a fresh one is created (a detached actor runs the code it
   was created with), one still writing is left to finish and declines a
   second backfill. It stops after three tasks in a row come out unusable.
+  **Forcing it.** `--force-target N` (or `CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET`
+  when the command is not given the flag)
+  skips the votes check and writes enough appeal cases to bring the READY
+  current-version pool up to N, in place of the hundred: nothing when the
+  pool is there already, and what the refill writes while it waits for the
+  claim counts toward it, as usual. The launch command reads it (the launch
+  job loads the settings; the Ray actor's pod does not) and hands it to the
+  actor. `scripts/start-server.sh` passes `--force-target 300` for a one-off
+  top-up; remove it once the pool is stocked, or every deploy tops it up
+  again.
   `manage.py launch_chooser_backfill --inline` runs the same backfill in the
   current process (a dev machine without Ray); `--count` and `--min-votes`
   override the settings.
+
+## HumanJudge, an outside human judge (`chooser_humanjudge.py`)
+
+[HumanJudge](https://humanjudge.com) has its own volunteer and expert
+reviewers give AI outputs a blind pass or flag. The Arena uses it as one
+more judge of which appeal draft is best, beside Jev and fhi-local. It is
+off unless `HUMANJUDGE_API_KEY` (the HumanJudge model's `gj_sk_` key) is
+set; `CHOOSER_HUMANJUDGE=false` turns it off with the key in place.
+
+Staff run it from the admin; nothing goes out or comes back on a timer:
+
+- **Upload.** Three ways, all from the admin, all the same upload:
+  - **HumanJudge: [N] unsent cases [Upload]** at the top of the Chooser Task
+    list sends the next N cases waiting to go: clearly undecided ones first
+    (`settled_reason="undecided"`; the Arena's voters split on them, so a
+    second opinion helps most), then the newest
+    (`chooser_humanjudge.unsent_task_ids`). N is 1 to 300
+    (`MAX_TASKS_PER_UPLOAD`); 25 is filled in.
+  - **Upload to HumanJudge** at the top of a case's own page sends that
+    case's drafts not yet sent. It shows only on a case that may go, and
+    says how many of its drafts are already there.
+  - The **Upload to HumanJudge** action sends the cases ticked on the list
+    (the **HumanJudge** filter shows which have gone).
+
+  Up to 25 cases (`INLINE_UPLOAD_LIMIT`) are sent while the page waits, and
+  it says how it went. More go in a background thread
+  (`chooser_humanjudge.start_upload`): the page says so at once, and
+  HumanJudge Submissions shows each draft as it goes; a web pod restarting
+  mid-upload leaves the rest unsent, ready for the next upload. Drafts
+  already sent are skipped, so uploading a case again sends only what
+  failed. Failures are listed under HumanJudge Submissions with their status
+  code, where **Upload again** retries them.
+- **Only the Arena, only synthetic appeals.** HumanJudge's reviewers read
+  what they are sent, so only the active drafts of `source="synthetic"`,
+  `task_type="appeal"` cases that have reached voters (READY, IN_USE or
+  EXHAUSTED) ever go. Any other selected case is skipped, and the message
+  says how many. Never a real denial or appeal, and never a chat case.
+- **What is sent.** Each draft is one trace (`POST /api/v1/traces/ingest`):
+  the input is a brief saying the case is made up and what to pass or flag,
+  then the case (treatment, diagnosis, insurer, denial reason, facts, the
+  simulated interview and the evidence titles and summaries); the output is
+  the draft. The trace's name and model are both `fhi-appeal-arena`, and its
+  metadata only our task and candidate ids, so nothing says which model
+  wrote it. Each draft's `gj_inference_id` is made once
+  (`HumanJudgeSubmission`) and reused on every retry, so a resend is
+  idempotent on HumanJudge's side. A refused key stops the upload without
+  counting an attempt.
+- **Download.** **Download verdicts from HumanJudge**, on the HumanJudge
+  Verdict list, reads the votes
+  (`GET /api/v1/models/{id}/evaluations?detail=votes`, with
+  `HUMANJUDGE_TOKEN`, a `gj_pat_` personal access token, when set, else the
+  key) from two days before the newest stored, matches them to drafts by
+  inference id, and updates the picks of the cases that got one. Votes that
+  match no draft we uploaded are counted in the message and left out.
+- **Verdicts are stored apart.** Each lands in `HumanJudgeVerdict`
+  (verdict, flag category, feedback, HumanJudge's reviewer id, time, and the
+  raw record), never in `ChooserVote`, so they never count toward the
+  Arena's tallies, the staff dashboard's win rates or the public rankings.
+  Downloading a vote again does not add a row. **Export selected verdicts as
+  CSV** on that list gives them with the model behind each draft.
+- **The pick.** HumanJudge rates drafts one at a time, not side by side, so
+  once every active draft of a case has `CHOOSER_HUMANJUDGE_MIN_VERDICTS`
+  verdicts the case's pick is the draft with the best smoothed pass rate,
+  (passes + 1) / (verdicts + 2). It goes into the task's `scoring_json` under
+  `humanjudge`, in the same shape as Jev's and fhi-local's picks plus
+  `passes` and `verdicts`, with scorer `humanjudge/pass-rate-1`. A tie for
+  best records no pick.
+- **On the public rankings.** Each appeal-letter row carries the model's
+  HumanJudge pass rate (`humanjudge` in the JSON: reviews, passes,
+  pass rate, warming up) in its own "Outside reviewers passed" column, shown
+  as a rate from `PUBLIC_RANKINGS_MIN_SHOWN` reviews; the leader's card
+  repeats it. It never changes the order, which stays our voters' alone.
+  Only aggregate counts reach the public page, never reviewers' feedback.
+  HumanJudge reviews blind, so its verdicts are not held to the
+  blind-voting cut-off; the 30-day window counts them by when they were cast
+  (`humanjudge_reports.model_verdict_stats`).
+- **Staff breakdown.** **Breakdown by model** on the HumanJudge Verdict
+  list (`.../humanjudgeverdict/breakdown/`, `?format=json` for the data)
+  shows each model's uploads, verdicts, pass rate and flags by category
+  beside its Arena record, how often HumanJudge's pick is the same draft as
+  the Arena voters', Jev's and fhi-local's, and the latest written feedback.
+  It is an admin view: anyone not signed in as staff is sent to the admin
+  login, and staff without view permission on HumanJudge verdicts get a 403,
+  the JSON included (`humanjudge_reports.breakdown`).
+- **The account.** One HumanJudge model, standalone (not enrolled in a
+  public benchmark), holds every Arena draft. With more than one model on
+  the account, set `HUMANJUDGE_MODEL_ID` to it.
 
 ## Rankings and privacy (`condition_rankings.py`, `public_rankings.py`)
 
@@ -617,16 +827,25 @@ environment variables of the same name.
 | `CHOOSER_SIMULATED_QA` | `True` (`False` in tests) | Give appeal cases a simulated interview |
 | `CHOOSER_JUDGE_EVIDENCE` | `True` (`False` in tests) | Judge a case's evidence as it is built: Jev when `TYPESAFE_RESEARCH_JUDGING_ENABLED` is on, our own model for whatever Jev does not judge. Off also hides our own model's stored verdicts |
 | `CHOOSER_SCORE_CANDIDATES` | `True` (`False` in tests) | Ask Jev and fhi-local for their highest-scoring candidate during generation and store the picks in backend-only task metadata |
+| `CHOOSER_HUMANJUDGE` | `True` when `HUMANJUDGE_API_KEY` is set (`False` in tests) | Allow the admin's HumanJudge upload and download (see above) |
+| `HUMANJUDGE_API_KEY` / `HUMANJUDGE_TOKEN` / `HUMANJUDGE_MODEL_ID` | unset | HumanJudge's model key, an optional personal access token for reading votes, and the model id when the account has several |
+| `CHOOSER_HUMANJUDGE_MIN_VERDICTS` | `1` | HumanJudge verdicts every draft of a case needs before its pick is recorded |
 | `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` | `60` | Seconds a case waits for those verdicts, Jev's and our own model's together |
 | `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |
 | `CHOOSER_QA_TIMEOUT` | `60` | Seconds each question generator may take |
 | `CHOOSER_PENDING_RETRY_SECONDS` | `15` | What the next-task endpoint tells the page to wait while a case is being written |
 | `CHOOSER_LAUNCH_BACKFILL_SIZE` | `100` | Appeal tasks the launch backfill writes (`0` turns it off) |
 | `CHOOSER_LAUNCH_BACKFILL_MIN_VOTES` | `2` | Votes every current appeal task needs before the launch backfill is due |
+| `CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET` | `0` | Above 0, the launch backfill skips the votes check and tops the READY appeal pool up to this many. Read only when the command is not given `--force-target`, which wins; `scripts/start-server.sh` passes it, so changing this setting does not change the deploy's forced backfill |
 | `CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS` | `3600` | How long a due launch backfill waits for a generation claim another process holds |
 | `CHOOSER_FORCE_MODEL` | DeepSeek 4.1 Flash, GLM-5.3, Claude Opus 5.5, GPT-6.1 Sol, DeepSeek V4 Pro (`""` in tests) | Registered model names seated in every new arena task; with more than `CHOOSER_NUM_CANDIDATES`, the pool every slot is drawn from |
 | `CHOOSER_WARMUP_ROUNDS_PER_LEVEL` | `1` | Votes a judge casts before the complexity of the cases served to them may rise a level; `0` turns the warm-up off |
 | `CHOOSER_WARMUP_SATURATION_VOTES` | `5` | Votes after which a case yields its place, in the warm-up or in the order a judge chose, to a less-judged one |
+| `CHOOSER_SETTLE_TASKS` | `True` | Stop serving a case once its votes show a clear winner or that it is clearly undecided |
+| `CHOOSER_SETTLE_MIN_REVIEWS` | `5` | Reviews before a clear winner is called, and judges (reviews plus skips) before a skip-heavy case is called undecided |
+| `CHOOSER_UNDECIDED_REVIEWS` | `10` | Reviews after which an even split between the top two counts as undecided |
+| `CHOOSER_UNDECIDED_MAX_REVIEWS` | `20` | Reviews after which a case with no clear winner counts as undecided |
+| `CHOOSER_UNDECIDED_SKIP_SHARE` | `0.5` | Share of the judges who saw a case skipping it that makes it undecided |
 | `CONDITION_RANKING_MIN_PEOPLE` | `5` | The k in k-anonymity: different people per term |
 | `CONDITION_RANKING_LOOKUP_BUDGET` | `30` | Outside lookups per refresh |
 | `CONDITION_RANKING_RECHECK_DAYS` | `365` | When a stored verdict is asked again |
@@ -658,8 +877,15 @@ reviews, `chosen_candidate` is null and `vote_count` is zero rather than the
 task disappearing from the export. Non-empty rationales are in
 `review_feedback` with their outcome and candidate references, but no user,
 session or address identifier. Generation-time Jev and fhi-local picks are in
-`scorer_picks`, keyed `jev` and `fhi_local`, each with the winning candidate's
+`scorer_picks`, keyed `jev` and `fhi_local` (and `humanjudge` once
+HumanJudge's reviewers have picked one), each with the winning candidate's
 id, index and model name, its score, and the scorer/rubric. These stay on the
 task's backend-only `scoring_json`, never in the case context or voter API.
 The case (summaries and `qa_pairs` included) rides along in `context`, and its
-`complexity` (1 to 5, or null when unscored) beside it.
+`complexity` (1 to 5, or null when unscored) beside it. `settled_reason`
+(`clear_winner`, `undecided`, or blank while the case is still served) says
+why the case stopped being served, not who won: `chosen_candidate` stays the
+draft with the most credit, even on a case whose clear answer was "no usable
+draft" (compare it with `all_bad_count`). Both are counted at export time,
+over every vote, including any cast after the case settled, so they can
+differ from what the votes showed when it settled.

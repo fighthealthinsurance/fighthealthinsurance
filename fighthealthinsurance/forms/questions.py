@@ -1,11 +1,17 @@
 import re
 import urllib
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, Mapping, Optional
 
 from asgiref.sync import sync_to_async
 from django import forms
 
-from fighthealthinsurance.form_utils import StyledWidgetsMixin
+from fighthealthinsurance.form_utils import (
+    RadioList,
+    StyledWidgetsMixin,
+    YesNoNotSureField,
+    why_we_ask,
+    yes_no_answer,
+)
 
 import requests
 from bs4 import BeautifulSoup
@@ -65,6 +71,10 @@ def wpath_version_in(texts: Iterable[str]) -> Optional[str]:
 #   ``main()`` (screening vs diagnostic, a mid-year formulary change, the
 #   final-diagnosis denial the prudent layperson standard forbids).
 #
+# Help text says only what a question means. Why the answer helps the appeal
+# is argued in ``main()`` and the person does not need it to answer, so it
+# goes on the field with ``why_we_ask`` and the page shows it collapsed.
+#
 # Free-text questions about the patient's history (age, symptoms, BMI,
 # diagnosis, how long in treatment) are left to the generated questions,
 # which ask them about this patient's procedure rather than the denial
@@ -75,11 +85,12 @@ def wpath_version_in(texts: Iterable[str]) -> Optional[str]:
 class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
     """Insurance Questions"""
 
-    in_network = forms.BooleanField(required=False, label="In-network visit")
-    pre_service = forms.BooleanField(
-        required=False, label="Pre-service (claim before doctors visit/service)"
+    in_network = YesNoNotSureField(required=False, label="In-network visit?")
+    pre_service = YesNoNotSureField(
+        required=False,
+        label="Pre-service claim (made before the service)?",
     )
-    urgent = forms.BooleanField(required=False, label="Urgent claim")
+    urgent = YesNoNotSureField(required=False, label="Urgent claim?")
 
     def __init__(self, *args, prof_pov: bool = False, **kwargs):
         self.prof_pov = prof_pov
@@ -103,13 +114,23 @@ class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
             response += "This is an in-network claim."
         return response
 
+    def fit_to_page(self, page_forms: list, answers: Mapping[str, str]) -> None:
+        """Adjust this form to the other question forms on the same page
+        (``page_forms``, this one included) and the stored ``answers``.
+        Called by FindNextStepsHelper._build_question_forms."""
+
+    def superseded_answers(self, posted: Mapping[str, str]) -> list[str]:
+        """Stored answer keys the questions page's ``posted`` answers make
+        stale, for GenerateAppeal to withdraw."""
+        return []
+
     def _append_context(self, response: str, field: str, label: str) -> str:
         """Append field value to context. Booleans get 'label.', others get 'label: val.'."""
         val = self.cleaned_data.get(field)
         if val:
             if response and not response[-1].isspace():
                 response += " "
-            if isinstance(self.fields.get(field), forms.BooleanField):
+            if isinstance(self.fields.get(field), YesNoNotSureField):
                 response += f"{label}. "
             else:
                 response += f"{label}: {val}. "
@@ -140,7 +161,13 @@ class InsuranceQuestions(StyledWidgetsMixin, forms.Form):
                     "request of external review."
                 ),
             ]
-        if self.cleaned_data.get("pre_service"):
+        # Non-urgent only on an explicit "No": "Not sure" (None) says
+        # nothing about urgency, and an urgent pre-service claim has days,
+        # not a month.
+        if (
+            self.cleaned_data.get("pre_service")
+            and self.cleaned_data.get("urgent") is False
+        ):
             return [
                 "",
                 "As this is a non-urgent pre-service claim, I understand you have approximately 30 days to respond.",
@@ -181,23 +208,26 @@ MedicalNeccessaryQuestions = MedicalNecessaryQuestions
 
 
 class ExperimentalQuestions(MedicalNecessaryQuestions):
-    medical_reason = forms.CharField(
-        max_length=200,
-        label="Why do you believe this is not experimental?",
-        help_text=(
-            "Insurance companies tend to claim anything expensive is experimental. "
-            "Good ways to show something is not experimental: look for documents like the 'standards of care' or medical journals (including the NIH or pubmed)."
+    medical_reason = why_we_ask(
+        forms.CharField(
+            max_length=200,
+            label="Why do you believe this is not experimental?",
+            help_text="E.g., the standards of care, or medical journals (including the NIH or PubMed).",
+            required=False,
         ),
-        required=False,
+        "Insurance companies tend to claim anything expensive is experimental.",
     )
 
 
 class NotCoveredQuestions(MedicalNecessaryQuestions):
-    medical_reason = forms.CharField(
-        max_length=200,
-        label="Why should this be covered?",
-        help_text="The plan may not say it's not medically necessary, just that they don't want to pay. Good arguments: request plan documents, demand the policy under which it is not covered, or explain why it should be covered.",
-        required=False,
+    medical_reason = why_we_ask(
+        forms.CharField(
+            max_length=200,
+            label="Why should this be covered?",
+            help_text="E.g., request plan documents, demand the policy under which it is not covered, or explain why it should be covered.",
+            required=False,
+        ),
+        "The plan may not say it's not medically necessary, just that it doesn't want to pay.",
     )
 
 
@@ -240,42 +270,132 @@ class UnderpaidOutOfNetworkQuestions(InsuranceQuestions):
         ]
 
 
-# This is related to why weren't you able to get a prior auth.
+# Why there was no prior auth, or that there was one: one pick-one question.
+# It replaced four near-exclusive yes/no questions (tick boxes before that:
+# emergency, contact_insurance_before, told_prior_auth_not_needed,
+# prior_auth_obtained), whose answers older denials still hold; main() and
+# the page's starting choice read them when the person has not picked one.
+PRIOR_AUTH_OBTAINED = "obtained"
+PRIOR_AUTH_EMERGENCY = "emergency"
+PRIOR_AUTH_NOT_SURE = "not_sure"
+_LEGACY_PRIOR_AUTH_BOXES = (
+    # (old tick box, the choice it became), first match wins on the page.
+    ("prior_auth_obtained", PRIOR_AUTH_OBTAINED),
+    ("told_prior_auth_not_needed", "told_not_needed"),
+    ("emergency", PRIOR_AUTH_EMERGENCY),
+    ("contact_insurance_before", "asked_insurer"),
+)
+
+
+PRIOR_AUTH_CHOICES: list[tuple[str, str]] = [
+    (PRIOR_AUTH_OBTAINED, "Prior authorization was obtained"),
+    ("told_not_needed", "I was told prior authorization was not needed"),
+    (PRIOR_AUTH_EMERGENCY, "It was an emergency, so there was no time to get it"),
+    ("asked_insurer", "I contacted my insurance before the service"),
+    ("not_obtained", "Prior authorization was not obtained"),
+    (PRIOR_AUTH_NOT_SURE, "I'm not sure"),
+]
+
+
+class _NotSureUntilPickedRadios(RadioList):
+    """Like the yes/no questions (form_utils.YesNoNotSureRadios): "I'm not
+    sure" is ticked until the person picks another answer, with no initial
+    value that would be taken for one."""
+
+    def format_value(self, value):
+        return super().format_value(value or PRIOR_AUTH_NOT_SURE)
+
+
 class PriorAuthQuestions(InsuranceQuestions):
-    emergency = forms.BooleanField(
+    prior_auth_status = forms.ChoiceField(
+        choices=PRIOR_AUTH_CHOICES,
         required=False,
-        label="This was an emergency, so there was no time to get prior authorization",
-    )
-    contact_insurance_before = forms.BooleanField(
-        required=False, label="I contacted my insurance before the service"
-    )
-    told_prior_auth_not_needed = forms.BooleanField(
-        required=False, label="I was told prior authorization was not needed"
-    )
-    prior_auth_obtained = forms.BooleanField(
-        required=False, label="Prior authorization was obtained"
+        widget=_NotSureUntilPickedRadios,
+        label="What happened with prior authorization?",
     )
     prior_auth_id = forms.CharField(
         max_length=300,
         required=False,
         label="Prior authorization number, if you have one",
+        # outside_help.html shows the box only while this choice is picked.
+        widget=forms.TextInput(
+            attrs={"data-shown-when": f"prior_auth_status={PRIOR_AUTH_OBTAINED}"}
+        ),
     )
 
+    def fit_to_page(self, page_forms: list, answers: Mapping[str, str]) -> None:
+        # The emergency-services questions already ask about the emergency.
+        if any(isinstance(f, EmergencyServicesQuestions) for f in page_forms):
+            field = self.fields["prior_auth_status"]
+            assert isinstance(field, forms.ChoiceField)
+            field.choices = [
+                c for c in PRIOR_AUTH_CHOICES if c[0] != PRIOR_AUTH_EMERGENCY
+            ]
+        if "prior_auth_status" not in answers:
+            legacy = self._legacy_status(answers)
+            if legacy:
+                self.initial["prior_auth_status"] = legacy
+
+    def superseded_answers(self, posted: Mapping[str, str]) -> list[str]:
+        status = posted.get("prior_auth_status")
+        if not status:
+            return []
+        stale = [box for box, _ in _LEGACY_PRIOR_AUTH_BOXES]
+        if status == PRIOR_AUTH_NOT_SURE:
+            # Not an answer, so kept out of qa_context like a yes/no one.
+            stale.append("prior_auth_status")
+        if status != PRIOR_AUTH_OBTAINED:
+            # The number box is hidden for any other answer, but still posts.
+            stale.append("prior_auth_id")
+        return stale
+
+    @staticmethod
+    def _ticked(answers: Mapping[str, str], box: str) -> bool:
+        # "Yes"/"No" as stored now, "on"/"False" from the tick-box days.
+        return yes_no_answer(answers.get(box)) is True
+
+    @classmethod
+    def _legacy_status(cls, answers: Mapping[str, str]) -> Optional[str]:
+        if answers.get("prior_auth_id"):
+            return PRIOR_AUTH_OBTAINED
+        for box, status in _LEGACY_PRIOR_AUTH_BOXES:
+            if cls._ticked(answers, box):
+                return status
+        return None
+
     def main(self):
+        status = self.cleaned_data.get("prior_auth_status")
+        prior_auth_id = self.cleaned_data.get("prior_auth_id")
+        if not status:
+            return self._legacy_main()
+        if status == PRIOR_AUTH_OBTAINED:
+            if prior_auth_id:
+                return [f"Prior auth was obtained (id {prior_auth_id})"]
+            return ["Prior authorization was obtained."]
+        sentence = {
+            "told_not_needed": "It was communicated that prior authorization was not necessary.",
+            PRIOR_AUTH_EMERGENCY: "This service was an emergency so prior auth could not be obtained.",
+            "asked_insurer": "The insurance company was contacted before the service.",
+        }.get(status)
+        return [sentence] if sentence else []
+
+    def _legacy_main(self) -> list[str]:
+        """What the four old tick boxes said, for answers stored before the
+        one question replaced them."""
         r: list[str] = []
-        if self.cleaned_data.get("emergency"):
+        if self._ticked(self.data, "emergency"):
             r.append(
                 "This service was an emergency so prior auth could not be obtained."
             )
-        if self.cleaned_data.get("told_prior_auth_not_needed"):
+        if self._ticked(self.data, "told_prior_auth_not_needed"):
             r.append("It was communicated that prior authorization was not necessary.")
-        elif self.cleaned_data.get("contact_insurance_before"):
+        elif self._ticked(self.data, "contact_insurance_before"):
             r.append("The insurance company was contacted before the service.")
         if self.cleaned_data.get("prior_auth_id"):
             r.append(
                 f"Prior auth was obtained (id {self.cleaned_data['prior_auth_id']})"
             )
-        elif self.cleaned_data.get("prior_auth_obtained"):
+        elif self._ticked(self.data, "prior_auth_obtained"):
             r.append("Prior authorization was obtained.")
         return r
 
@@ -402,10 +522,9 @@ class PreventiveCareQuestions(InsuranceQuestions):
         label="Why does the patient need this preventive care (if you know)?",
         help_text="E.g., risk factors such as family history or prior conditions, their age, or their doctor's recommendation.",
     )
-    trans_gender = forms.BooleanField(
-        required=False,
-        label="Is the patient transgender?",
-        help_text="Some preventive care is only covered for certain genders. If the patient is transgender, insurance may incorrectly deny necessary coverage. Check this box if it applies.",
+    trans_gender = why_we_ask(
+        YesNoNotSureField(required=False, label="Is the patient transgender?"),
+        "Some preventive care is only covered for certain genders, so insurance may incorrectly deny it to a transgender patient.",
     )
 
     def medical_context(self):
@@ -452,10 +571,10 @@ class ThirdPartyQuestions(InsuranceQuestions):
         required=False,
         label="Any details regarding secondary or other insurance if available?",
     )
-    is_known_3rd_party = forms.BooleanField(
+    is_known_3rd_party = YesNoNotSureField(
         required=False,
         label="Was this claim due to an accident covered by other insurance?",
-        help_text="E.g., auto accident with known auto insurance, or workers comp. Check if another insurer should be responsible.",
+        help_text="E.g., an auto accident covered by auto insurance, or workers' comp.",
     )
 
     def preface(self):
@@ -473,25 +592,22 @@ class ThirdPartyQuestions(InsuranceQuestions):
 class FormularyChangeQuestions(InsuranceQuestions):
     """Questions for formulary changes and continuity of care appeals."""
 
-    currently_taking = forms.BooleanField(
+    currently_taking = YesNoNotSureField(
         required=False,
         label="Are you currently taking this medication?",
-        help_text="Check if you've been taking this medication and it's being removed from formulary or moved to a higher tier.",
     )
-    medication_working = forms.BooleanField(
+    medication_working = YesNoNotSureField(
         required=False,
         label="Is the medication working well for you?",
-        help_text="Check if your condition is stable and well-controlled on this medication.",
     )
-    tried_alternatives = forms.BooleanField(
+    tried_alternatives = YesNoNotSureField(
         required=False,
         label="Did the alternative medication(s) the insurer suggests not work for you, or cause problems?",
-        help_text="Check if you tried the preferred/alternative medications and they didn't work, or caused side effects or other problems you couldn't continue with.",
     )
-    mid_year_change = forms.BooleanField(
+    mid_year_change = YesNoNotSureField(
         required=False,
         label="Is this a mid-year formulary change?",
-        help_text="Check if the formulary changed during your plan year (not at annual renewal).",
+        help_text="The plan's drug list changed during your plan year, not at renewal.",
     )
 
     def medical_context(self):
@@ -559,25 +675,31 @@ class FormularyChangeQuestions(InsuranceQuestions):
 class ColonoscopyQuestions(InsuranceQuestions):
     """Questions for colonoscopy denial appeals."""
 
-    screening_or_diagnostic = forms.ChoiceField(
-        choices=[
-            ("", "---"),
-            ("screening", "Screening (preventive, no symptoms)"),
-            ("diagnostic", "Diagnostic (symptoms, follow-up, or surveillance)"),
-        ],
-        required=False,
-        label="Was this a screening or diagnostic colonoscopy?",
-        help_text="Screening colonoscopies are preventive and often must be covered at no cost under the ACA. Diagnostic colonoscopies are performed due to symptoms or prior findings.",
+    screening_or_diagnostic = why_we_ask(
+        forms.ChoiceField(
+            choices=[
+                ("", "---"),
+                ("screening", "Screening (preventive, no symptoms)"),
+                ("diagnostic", "Diagnostic (symptoms, follow-up, or surveillance)"),
+            ],
+            required=False,
+            label="Was this a screening or diagnostic colonoscopy?",
+        ),
+        "Screening colonoscopies are preventive and often must be covered at no cost under the ACA.",
     )
-    polyp_removal = forms.BooleanField(
-        required=False,
-        label="Were polyps removed during the procedure?",
-        help_text="Under the ACA and recent guidance, polyp removal during a screening colonoscopy should still be covered as preventive.",
+    polyp_removal = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Were polyps removed during the procedure?",
+        ),
+        "Under the ACA and recent guidance, polyp removal during a screening colonoscopy should still be covered as preventive.",
     )
-    family_history = forms.BooleanField(
-        required=False,
-        label="Does the patient have a family history of colorectal cancer?",
-        help_text="Family history may warrant earlier or more frequent screening.",
+    family_history = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Does the patient have a family history of colorectal cancer?",
+        ),
+        "Family history may warrant earlier or more frequent screening.",
     )
 
     def medical_context(self):
@@ -636,10 +758,12 @@ class ColonoscopyQuestions(InsuranceQuestions):
 class WeightLossMedicationQuestions(InsuranceQuestions):
     """Questions for weight loss / anti-obesity medication denials (Zepbound, Ozempic, Mounjaro, Wegovy)."""
 
-    tried_lifestyle = forms.BooleanField(
-        required=False,
-        label="Has the patient tried diet and exercise programs?",
-        help_text="Many insurers require documented lifestyle modification attempts before covering anti-obesity medications.",
+    tried_lifestyle = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Has the patient tried diet and exercise programs?",
+        ),
+        "Many insurers require documented lifestyle modification attempts before covering anti-obesity medications.",
     )
 
     def medical_context(self):
@@ -673,15 +797,19 @@ class WeightLossMedicationQuestions(InsuranceQuestions):
 class ImagingQuestions(InsuranceQuestions):
     """Questions for imaging denial appeals (MRI, CT scan, etc.)."""
 
-    prior_imaging = forms.BooleanField(
-        required=False,
-        label="Was less advanced imaging already performed (e.g., X-ray before MRI)?",
-        help_text="Some insurers require step-through imaging. If an X-ray or ultrasound was done first, note this.",
+    prior_imaging = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Was less advanced imaging already performed (e.g., X-ray before MRI)?",
+        ),
+        "Some insurers require step-through imaging, starting with an X-ray or ultrasound.",
     )
-    physician_ordered = forms.BooleanField(
-        required=False,
-        label="Was this imaging ordered by the treating physician?",
-        help_text="Physician-ordered imaging based on clinical findings supports medical necessity.",
+    physician_ordered = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Was this imaging ordered by the treating physician?",
+        ),
+        "Physician-ordered imaging based on clinical findings supports medical necessity.",
     )
 
     def medical_context(self):
@@ -718,7 +846,7 @@ class ImagingQuestions(InsuranceQuestions):
 class MentalHealthQuestions(InsuranceQuestions):
     """Questions for psychotherapy and mental health denial appeals."""
 
-    functional_impairment = forms.BooleanField(
+    functional_impairment = YesNoNotSureField(
         required=False,
         label="Does the condition cause significant functional impairment?",
         help_text="E.g., impacts work, school, relationships, or daily activities.",
@@ -756,23 +884,26 @@ class MentalHealthQuestions(InsuranceQuestions):
 class EmergencyServicesQuestions(InsuranceQuestions):
     """Questions for emergency room, ambulance, and emergency department denial appeals."""
 
-    called_911 = forms.BooleanField(
-        required=False,
-        label="Was 911 called or was the patient transported by ambulance?",
-        help_text="Ambulance transport further supports the emergency nature of the situation.",
-    )
-    stabilization_needed = forms.BooleanField(
-        required=False,
-        label="Did the patient require stabilization treatment in the ER?",
-        help_text="Treatment received in the ER supports that the visit was medically necessary.",
-    )
-    denied_based_on_final_diagnosis = forms.BooleanField(
-        required=False,
-        label="Was the claim denied because the final diagnosis turned out not to be an emergency?",
-        help_text=(
-            "The prudent layperson standard requires coverage based on your symptoms at "
-            "the time of the visit, not the final diagnosis."
+    called_911 = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Was 911 called or was the patient transported by ambulance?",
         ),
+        "Ambulance transport further supports the emergency nature of the situation.",
+    )
+    stabilization_needed = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Did the patient require stabilization treatment in the ER?",
+        ),
+        "Treatment received in the ER supports that the visit was medically necessary.",
+    )
+    denied_based_on_final_diagnosis = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Was the claim denied because the final diagnosis turned out not to be an emergency?",
+        ),
+        "The prudent layperson standard requires coverage based on your symptoms at the time of the visit, not the final diagnosis.",
     )
 
     def medical_context(self):
@@ -850,10 +981,12 @@ class TherapyRehabQuestions(InsuranceQuestions):
         required=False,
         label="Type of therapy?",
     )
-    progress_made = forms.BooleanField(
-        required=False,
-        label="Has the patient shown progress with this therapy?",
-        help_text="Documented progress supports continued medical necessity.",
+    progress_made = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Has the patient shown progress with this therapy?",
+        ),
+        "Documented progress supports continued medical necessity.",
     )
 
     def medical_context(self):
@@ -884,15 +1017,19 @@ class TherapyRehabQuestions(InsuranceQuestions):
 class GeneticTestingQuestions(InsuranceQuestions):
     """Questions for genetic testing denial appeals."""
 
-    treatment_impact = forms.BooleanField(
-        required=False,
-        label="Will test results change the treatment plan?",
-        help_text="Genetic tests that inform treatment decisions (e.g., targeted therapy selection) have strong clinical utility.",
+    treatment_impact = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Will test results change the treatment plan?",
+        ),
+        "Genetic tests that inform treatment decisions (e.g., targeted therapy selection) have strong clinical utility.",
     )
-    guideline_recommended = forms.BooleanField(
-        required=False,
-        label="Is this test recommended by clinical guidelines (e.g., NCCN, ACMG)?",
-        help_text="Tests recommended by national guidelines have strong evidence for coverage.",
+    guideline_recommended = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Is this test recommended by clinical guidelines (e.g., NCCN, ACMG)?",
+        ),
+        "Tests recommended by national guidelines have strong evidence for coverage.",
     )
 
     def medical_context(self):
@@ -931,10 +1068,12 @@ class GeneticTestingQuestions(InsuranceQuestions):
 class InpatientHospitalQuestions(InsuranceQuestions):
     """Questions for inpatient care and hospital stay denial appeals."""
 
-    observation_reclassified = forms.BooleanField(
-        required=False,
-        label="Was the stay reclassified from inpatient to observation?",
-        help_text="Hospitals sometimes reclassify stays to observation status, which can affect coverage.",
+    observation_reclassified = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Was the stay reclassified from inpatient to observation?",
+        ),
+        "Hospitals sometimes reclassify stays to observation status, which can affect coverage.",
     )
 
     def medical_context(self):
@@ -982,15 +1121,21 @@ class SleepStudyQuestions(InsuranceQuestions):
 class LabWorkQuestions(InsuranceQuestions):
     """Questions for lab work denial appeals."""
 
-    preventive = forms.BooleanField(
-        required=False,
-        label="Is this lab work part of preventive/routine screening?",
-        help_text="Many routine screening labs (e.g., cholesterol, diabetes screening) are required to be covered as preventive under the ACA.",
+    preventive = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Is this lab work part of preventive/routine screening?",
+            help_text="E.g., cholesterol or diabetes screening.",
+        ),
+        "Many routine screening labs are required to be covered as preventive under the ACA.",
     )
-    medication_monitoring = forms.BooleanField(
-        required=False,
-        label="Is this lab work needed to monitor medication?",
-        help_text="Lab work required to safely monitor medications (e.g., liver function for statins, kidney function for metformin) is medically necessary.",
+    medication_monitoring = why_we_ask(
+        YesNoNotSureField(
+            required=False,
+            label="Is this lab work needed to monitor medication?",
+            help_text="E.g., liver function for statins, or kidney function for metformin.",
+        ),
+        "Lab work required to safely monitor medications is medically necessary.",
     )
 
     def medical_context(self):
@@ -1037,32 +1182,36 @@ class AphasiaTreatmentQuestions(InsuranceQuestions):
         "ppa": "Primary Progressive Aphasia",
     }
 
-    aphasia_type = forms.ChoiceField(
-        choices=[
-            ("", "---"),
-            ("brocas", "Broca's aphasia (non-fluent/expressive)"),
-            ("wernickes", "Wernicke's aphasia (fluent/receptive)"),
-            ("global", "Global aphasia"),
-            ("anomic", "Anomic aphasia"),
-            ("ppa", "Primary Progressive Aphasia"),
-            ("other", "Other / not sure"),
-        ],
-        required=False,
-        label="Type of aphasia (if known)?",
-        help_text="The type of aphasia helps determine which treatments are most appropriate.",
+    aphasia_type = why_we_ask(
+        forms.ChoiceField(
+            choices=[
+                ("", "---"),
+                ("brocas", "Broca's aphasia (non-fluent/expressive)"),
+                ("wernickes", "Wernicke's aphasia (fluent/receptive)"),
+                ("global", "Global aphasia"),
+                ("anomic", "Anomic aphasia"),
+                ("ppa", "Primary Progressive Aphasia"),
+                ("other", "Other / not sure"),
+            ],
+            required=False,
+            label="Type of aphasia (if known)?",
+        ),
+        "The type of aphasia helps determine which treatments are most appropriate.",
     )
-    cause = forms.ChoiceField(
-        choices=[
-            ("", "---"),
-            ("stroke", "Stroke"),
-            ("tbi", "Traumatic brain injury"),
-            ("tumor", "Brain tumor"),
-            ("neurodegenerative", "Neurodegenerative disease"),
-            ("other", "Other"),
-        ],
-        required=False,
-        label="What caused the aphasia?",
-        help_text="The underlying cause helps establish medical necessity and expected recovery trajectory.",
+    cause = why_we_ask(
+        forms.ChoiceField(
+            choices=[
+                ("", "---"),
+                ("stroke", "Stroke"),
+                ("tbi", "Traumatic brain injury"),
+                ("tumor", "Brain tumor"),
+                ("neurodegenerative", "Neurodegenerative disease"),
+                ("other", "Other"),
+            ],
+            required=False,
+            label="What caused the aphasia?",
+        ),
+        "The underlying cause helps establish medical necessity and expected recovery trajectory.",
     )
 
     def medical_context(self):
@@ -1125,25 +1274,27 @@ class AssistiveDeviceQuestions(InsuranceQuestions):
         "hearing": "Hearing aid or cochlear implant",
     }
 
-    device_type = forms.ChoiceField(
-        choices=[
-            ("", "---"),
-            (
-                "aac_high_tech",
-                "High-tech AAC device (tablet, speech-generating device)",
-            ),
-            ("aac_low_tech", "Low-tech AAC (picture boards, communication books)"),
-            ("mobility", "Mobility device (wheelchair, walker, scooter)"),
-            ("prosthetic", "Prosthetic device"),
-            ("orthotic", "Orthotic device"),
-            ("hearing", "Hearing aid or cochlear implant"),
-            ("other", "Other assistive device"),
-        ],
-        required=False,
-        label="Type of assistive device?",
-        help_text="The type of device helps determine applicable coverage rules and clinical guidelines.",
+    device_type = why_we_ask(
+        forms.ChoiceField(
+            choices=[
+                ("", "---"),
+                (
+                    "aac_high_tech",
+                    "High-tech AAC device (tablet, speech-generating device)",
+                ),
+                ("aac_low_tech", "Low-tech AAC (picture boards, communication books)"),
+                ("mobility", "Mobility device (wheelchair, walker, scooter)"),
+                ("prosthetic", "Prosthetic device"),
+                ("orthotic", "Orthotic device"),
+                ("hearing", "Hearing aid or cochlear implant"),
+                ("other", "Other assistive device"),
+            ],
+            required=False,
+            label="Type of assistive device?",
+        ),
+        "The type of device helps determine applicable coverage rules and clinical guidelines.",
     )
-    professional_evaluation = forms.BooleanField(
+    professional_evaluation = YesNoNotSureField(
         required=False,
         label="Has a qualified professional evaluated the patient for this device?",
         help_text="E.g., SLP evaluation for AAC, PT/OT evaluation for mobility devices, audiologist for hearing aids.",

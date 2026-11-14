@@ -1,14 +1,11 @@
 """Tests for StaticIshView, the cached marketing/content page base class."""
 
-import time
-from datetime import date
-from unittest import mock
-
 from django.test import Client, TestCase
 from django.urls import reverse
 
 from fighthealthinsurance import views
 from fighthealthinsurance.views import STATIC_ISH_PAGE_CACHE_SECONDS, StaticIshView
+from tests.cached_page_fixtures import keep_page_day_far_from_midnight
 
 
 class TestStaticIshViewCaching(TestCase):
@@ -16,13 +13,7 @@ class TestStaticIshViewCaching(TestCase):
 
     def setUp(self):
         self.client = Client()
-        # Early in the day, so midnight doesn't cut the max-age short.
-        patcher = mock.patch(
-            "fighthealthinsurance.views.page_day",
-            return_value=(date(2027, 1, 15), time.time() + 2 * 24 * 60 * 60),
-        )
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        keep_page_day_far_from_midnight(self)
 
     def test_static_ish_page_sets_public_cache_headers(self):
         response = self.client.get(reverse("about"))

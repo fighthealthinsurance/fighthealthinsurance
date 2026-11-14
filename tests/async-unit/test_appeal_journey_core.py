@@ -185,17 +185,17 @@ class TestGenerateAndStoreAppeals(_JourneyTestBase):
         assert json.loads(denial.qa_context)["medical_context"] == "This is an urgent claim."
 
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
-    def test_a_background_run_withdraws_the_sentence_for_an_unticked_box(
+    def test_a_background_run_withdraws_the_sentence_for_a_no_answer(
         self, mock_gen
     ):
-        """The site stores an unticked box as False. A background run that
-        reads it derives nothing, and that is the person's answer: the old
-        "urgent" sentence must not reach the letter."""
+        """The site stores "No" to "urgent" as an answer. A background run
+        that reads it derives nothing, and that is the person's answer: the
+        old "urgent" sentence must not reach the letter."""
         import json
 
         denial = self._with_insurance_questions(9107)
         self._run_in_background(
-            mock_gen, denial, {"urgent": "False", "What happened?": "a fall"}
+            mock_gen, denial, {"urgent": "No", "What happened?": "a fall"}
         )
         assert "medical_context" not in json.loads(denial.qa_context)
 

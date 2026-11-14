@@ -41,7 +41,7 @@ mypy --config-file mypy.ini -p fighthealthinsurance -p fhi_users
 # Database migrations
 python manage.py makemigrations
 python manage.py migrate
-python manage.py loaddata initial followup plan_source insurance_companies pa_requirements
+python manage.py loaddata initial followup plan_source insurance_companies known_non_fax_numbers pa_requirements
 
 # Run every tox suite in parallel with a pass/fail summary (pre-push check)
 ./scripts/good_to_go.sh
@@ -140,6 +140,10 @@ ML backends (at least one; either kind works on its own):
 - `ANTHROPIC_API_KEY`, `DEEPINFRA_API`, `OPENROUTER_API_KEY`, or the Azure settings - hosted models, used as the backup tier (see docs/ml-backends.md); `OPENROUTER_API_KEY` also turns on OpenRouter web search for extra, relevance-judged appeal citations
 - `HEALTH_BACKEND_HOST` / `HEALTH_BACKEND_PORT` - a self-hosted backend
 
+Appeal Arena:
+- `HUMANJUDGE_API_KEY` - lets staff upload synthetic Arena appeal drafts (never real ones) to HumanJudge's human reviewers from the admin; their verdicts live in `HumanJudgeVerdict`, apart from `ChooserVote` (see docs/chooser.md)
+- `RENTAHUMAN_API_KEY`, `RENTAHUMAN_WEBHOOK_SECRET` - paid reviewers hired through RentAHuman bounties judge in the Arena itself; their votes are `ChooserVote` rows tagged with `paid_review` (see docs/chooser.md, "Paid reviewers")
+
 Development:
 - `RECAPTCHA_TESTING=true` - Disable reCAPTCHA locally
 
@@ -152,7 +156,7 @@ Tests are in `tests/` with subdirectories:
 - `async-unit/` - Unit tests
 - `selenium/` - Sync selenium tests
 
-Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_source).
+Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_source, insurance_companies, known_non_fax_numbers, pa_requirements).
 
 ## Claude Code Web Sessions
 

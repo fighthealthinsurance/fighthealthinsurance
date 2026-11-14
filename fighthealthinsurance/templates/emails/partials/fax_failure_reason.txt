@@ -1,0 +1,21 @@
+{% comment %}
+Why a fax may have failed, as best the fax line could tell
+(fax_send_core.finalize_fax's context): every guess is starred, with a
+footnote that we could be wrong.
+{% endcomment %}{% if known_non_fax %}
+We think {{ fax_number }} is {{ known_non_fax.description }}*, so a fax to it can't go through.
+{% elif failure_reason == "voice" %}
+When we called {{ fax_number }}, a person or a phone menu answered instead of a fax machine.* That usually means it's a phone number, not a fax number.
+{% elif failure_reason == "disconnected" %}
+The phone company told us {{ fax_number }} is disconnected or not in service.*
+{% elif failure_reason == "invalid_number" %}
+We couldn't dial {{ fax_number }}: it doesn't look like a number we can fax.*
+{% elif failure_reason == "busy" %}
+When we called {{ fax_number }}, the line was busy.* That's usually temporary, so re-sending later often works.
+{% elif failure_reason == "no_answer" %}
+When we called {{ fax_number }}, nothing answered.* Re-sending later often works.
+{% elif failure_reason == "our_side" %}
+This looks like a problem with our fax system*, not with the number you gave us. We've been told about it, and re-sending is free.
+{% endif %}{% if known_non_fax or failure_reason %}
+* This is our best guess from what the fax line told us, and we could be wrong.
+{% endif %}

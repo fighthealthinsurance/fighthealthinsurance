@@ -67,10 +67,12 @@ def seed_plans(count, start=0, company=EACH, **facts):
             source=PolicyDocument.SOURCE_SHARED,
             share_batch=uuid.uuid4(),
             fingerprint=f"plan-{n}",
-            processing_status=PolicyDocument.PROCESSING_READY,
-            cleaned_text=PLAN_TEXT,
             plan_sponsor=sponsor,
-            **facts,
+            **{
+                "processing_status": PolicyDocument.PROCESSING_READY,
+                "cleaned_text": PLAN_TEXT,
+                **facts,
+            },
         )
 
 
@@ -151,6 +153,30 @@ class TheGoalTest(_PageTestCase):
         seed_plans(2, start=28, company="Employer 0")
         goal = self.goal(self.page())
         self.assertEqual(goal.find(id="share-goal-count").get_text(strip=True), "20 so far")
+
+    def test_unreadable_files_never_count_toward_the_goal(self):
+        seed_plans(20)
+        # Scans and files we could not read, each naming a new company.
+        seed_plans(
+            5,
+            start=20,
+            processing_status=PolicyDocument.PROCESSING_UNREADABLE,
+            cleaned_text="",
+            filename="shared.pdf",
+        )
+        goal = self.goal(self.page())
+        self.assertEqual(goal.find(id="share-goal-count").get_text(strip=True), "20 so far")
+
+    def test_unreadable_files_never_lift_the_count_into_view(self):
+        seed_plans(19)
+        seed_plans(
+            1,
+            start=19,
+            processing_status=PolicyDocument.PROCESSING_UNREADABLE,
+            cleaned_text="",
+            filename="shared.pdf",
+        )
+        self.assertIsNone(self.goal(self.page()).find(id="share-goal-count"))
 
     def test_other_plans_alone_never_show_a_count(self):
         seed_plans(30, company=None, plan_category="medicaid_chip")

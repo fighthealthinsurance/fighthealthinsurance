@@ -99,7 +99,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         self.click("button[type='submit']")
 
         # Wait for redirect to chat interface
-        self.wait_for_clickable("#chat-interface-root")
+        self.wait_for_chat_interface()
 
         # Check that we're on the chat page
         self.assert_element("#chat-interface-root")
@@ -127,7 +127,7 @@ class SeleniumTestMicrositeIntegration(FHISeleniumBase, StaticLiveServerTestCase
         self.click("button[type='submit']")
 
         # Wait for redirect to chat interface
-        self.wait_for_clickable("#chat-interface-root")
+        self.wait_for_chat_interface()
 
         # Check that we're on the chat page (increase timeout for chat interface initialization)
         self.assert_element("#chat-interface-root", timeout=15)
@@ -218,7 +218,7 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
         self.click("input#tos")
         self.click("input#privacy")
         self.click("button[type='submit']")
-        self.wait_for_clickable("#chat-interface-root")
+        self.wait_for_chat_interface()
         self.assert_element("#chat-interface-root")
 
     def test_existing_user_microsite_chat_preserves_user_info(self):
@@ -253,7 +253,7 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
             self.click("input#tos")
             self.click("input#privacy")
             self.click("button[type='submit']")
-            self.wait_for_clickable("#chat-interface-root")
+            self.wait_for_chat_interface()
 
         # Should be on chat now
         self.assert_element("#chat-interface-root")
@@ -281,7 +281,7 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
             self.click("input#tos")
             self.click("input#privacy")
             self.click("button[type='submit']")
-            self.wait_for_clickable("#chat-interface-root")
+            self.wait_for_chat_interface()
 
         # Should be on chat with MRI context
         self.assert_element("#chat-interface-root")
@@ -313,7 +313,7 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
         self.click("input#privacy")
         # External models defaults to on; no need to click
         self.click("button[type='submit']")
-        self.wait_for_clickable("#chat-interface-root")
+        self.wait_for_chat_interface()
 
         # Verify external models preference saved
         external_pref = self.execute_script(

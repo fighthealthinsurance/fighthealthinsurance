@@ -1,13 +1,15 @@
-"""The company behind a shared plan document, read by our own model.
+"""The company behind a shared plan document, and the plan's insurer, year
+and type, read by our own model.
 
 Plan documents name their sponsor in many ways ("Plan Sponsor: ...", "This
 plan is sponsored by ...", a title, a table in the back), so fixed patterns
 miss some and misread others (plan_sponsors.identify_sponsor, kept as the
 fallback). Here one of our internal models reads the parts of the document
 that name parties and answers in JSON: the employer that sponsors the plan,
-its EIN, and the line that says so.
+its EIN, and the line that says so; and in the same answer the plan's
+insurer, its plan year and its type, each with the line that says so.
 
-Nothing it says is taken on trust. An answer is used only when:
+Nothing it says is taken on trust. A sponsor is used only when:
 
 * the line it quotes is in the document, word for word (spacing and case
   aside), and names the company in full;
@@ -15,29 +17,45 @@ Nothing it says is taken on trust. An answer is used only when:
 * an EIN is nine digits and sits in that line or just after it, before
   another party is named (otherwise it is dropped and the company kept).
 
-An answer that fails a check counts as no answer and the next model is
-asked; when none passes, the fixed patterns get their turn. Only internal
-models are asked (infer_with_fallback's default), so the document's text
-never leaves our servers. The company it finds counts at once; staff can
-check it in the admin, where the quoted line is shown, without anything
-waiting on them.
+An answer whose sponsor fails a check counts as no answer and the next
+model is asked; when none passes, the fixed patterns get their turn. The
+insurer, year and type come from the answer used, each checked on its own
+and dropped alone (checked_facts): its line must be in the document and,
+with personal details taken out, still give it; the insurer's name in
+full, the year as four digits from EARLIEST_PLAN_YEAR to next year, the
+type as one of PolicyDocument.PLAN_CATEGORY_CHOICES with a word that names
+that kind of plan.
+
+When a model finds no sponsor in a document longer than its excerpt, it
+reads once more: the passages around party words the excerpt left out
+(second_excerpt), within the same TOTAL_TIMEOUT_SECONDS.
+
+Only internal models are asked (infer_with_fallback's default), so the
+document's text never leaves our servers. The company it finds counts at
+once; staff can check it in the admin, where the quoted line is shown,
+without anything waiting on them.
 """
 
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import re
-from typing import Optional
+from typing import NamedTuple, Optional
 
+from django.utils import timezone
 from loguru import logger
 
+from fighthealthinsurance.models import PolicyDocument
 from fighthealthinsurance.plan_sponsors import (
     _OTHER_PARTY,
     EIN_WINDOW_CHARS,
     SOURCE_MODEL,
     Sponsor,
     good_name,
+    normalize_name,
+    organization_name,
 )
 
 #: How much of a document the model reads: the opening pages, the closing
@@ -48,8 +66,14 @@ HEAD_CHARS = 6_000
 TAIL_CHARS = 3_000
 WINDOW_CHARS = 700
 MAX_EXCERPT_CHARS = 14_000
+#: The second look at a long document whose excerpt named no sponsor: the
+#: passages around party words the excerpt left out, the sponsor's own
+#: words first, at most this many characters. One more model call at most.
+SECOND_EXCERPT_CHARS = 8_000
 #: The quoted line kept as evidence, at most.
 EVIDENCE_CHARS = 300
+#: The earliest plan year taken from a document; the latest is next year.
+EARLIEST_PLAN_YEAR = 2000
 #: Words near which a sponsor is named.
 _PARTY_WORDS = re.compile(
     r"sponsor|employer\s+identification|\bEIN\b|plan\s+administrator"
@@ -57,32 +81,159 @@ _PARTY_WORDS = re.compile(
     r"|provided\s+by\s+your\s+employer|offered\s+by",
     re.IGNORECASE,
 )
-#: Each model's answer, and all of them together: the reading's activity
-#: has 3 minutes (workflows/shared_plan_documents.READ_TIMEOUT) and reading
-#: the file can take one, so the company step stays well inside the rest.
+#: The party words that name the sponsor itself, read first the second time.
+_SPONSOR_WORDS = re.compile(r"sponsor|employer\s+identification|\bEIN\b", re.IGNORECASE)
+_NOT_UNDER_ERISA = (
+    r"non-?erisa|not\s+(?:subject\s+to|governed\s+by|covered\s+by)\s+erisa"
+    r"|exempt\s+from\s+erisa|not\s+an?\s+erisa"
+)
+_ERISA_DENIED = re.compile(_NOT_UNDER_ERISA, re.IGNORECASE)
+_OFF_EXCHANGE = re.compile(
+    r"off[\s-]+(?:the[\s-]+)?(?:exchange|marketplace)"
+    r"|outside\s+(?:of\s+)?(?:the\s+)?(?:health\s+insurance\s+)?(?:marketplace|exchange)"
+    r"|not\s+(?:sold|offered|purchased|bought|available)\s+(?:on|through|in)\s+"
+    r"(?:the\s+)?(?:health\s+insurance\s+)?(?:marketplace|exchange)",
+    re.IGNORECASE,
+)
+#: Words that name each kind of plan (PolicyDocument.PLAN_CATEGORY_CHOICES
+#: but "unknown"): a type is kept only when its quoted line holds one.
+_PLAN_TYPE_WORDS = {
+    "employer_erisa": re.compile(
+        r"\berisa\b|employee\s+retirement\s+income\s+security\s+act", re.IGNORECASE
+    ),
+    "employer_non_erisa": re.compile(
+        _NOT_UNDER_ERISA + r"|governmental\s+plan|church\s+plan|government\s+employer",
+        re.IGNORECASE,
+    ),
+    "aca_marketplace": re.compile(
+        r"marketplace|\bexchange\b|healthcare\.gov", re.IGNORECASE
+    ),
+    "medicare_traditional": re.compile(r"\bmedicare\b", re.IGNORECASE),
+    "medicare_advantage": re.compile(
+        r"medicare\s+advantage|\bpart\s+c\b|\bma-?pd\b", re.IGNORECASE
+    ),
+    "medicaid_chip": re.compile(
+        r"\bmedicaid\b|\bchip\b|children'?s\s+health\s+insurance\s+program"
+        r"|\bmedi-?cal\b",
+        re.IGNORECASE,
+    ),
+    "tricare": re.compile(r"\btricare\b", re.IGNORECASE),
+    "va": re.compile(r"\bveterans?\b", re.IGNORECASE),
+    "individual_off_exchange": _OFF_EXCHANGE,
+    "short_term": re.compile(r"\bshort[\s-]*term\b", re.IGNORECASE),
+}
+#: A line about another plan working alongside Medicare ("if you have
+#: Medicare, this plan pays secondary"), which names Medicare without being
+#: it. Not "Original Medicare pays primary", which is about Medicare itself.
+_ALONGSIDE_MEDICARE = re.compile(
+    r"\b(?:this|the|our|your)\s+(?:plan|coverage|policy)\s+(?:pays|is|will\s+pay)"
+    r"\s+(?:as\s+)?(?:primary|secondary)|\b(?:primary|secondary)\s+to\s+medicare"
+    r"|coordinat\w*\s+(?:of\s+)?benefits|if\s+you\s+(?:have|are\s+(?:eligible|enrolled))"
+    r"|eligible\s+for\s+medicare",
+    re.IGNORECASE,
+)
+#: Words in a quoted line that rule a type out though its own words are
+#: there: Medicare Advantage, or a plan working alongside Medicare, is not
+#: Original Medicare; an off-exchange plan is not a Marketplace one.
+_PLAN_TYPE_DENIED: dict[str, tuple[re.Pattern[str], ...]] = {
+    "employer_erisa": (_ERISA_DENIED,),
+    "aca_marketplace": (_OFF_EXCHANGE,),
+    "medicare_traditional": (
+        _PLAN_TYPE_WORDS["medicare_advantage"],
+        _ALONGSIDE_MEDICARE,
+    ),
+}
+#: Words that make a quoted line give the plan's own year (its coverage
+#: period or plan year, or a title such as "2026 Evidence of Coverage"),
+#: not a revision or print date.
+_PLAN_YEAR_WORDS = re.compile(
+    r"plan\s+year|coverage\s+(?:period|year|begins|beginning|starts)"
+    r"|(?:benefit|policy|contract)\s+(?:period|year)|calendar\s+year"
+    r"|effective|begins|beginning"
+    r"|evidence\s+of\s+coverage|certificate\s+of\s+coverage|summary\s+of\s+benefits"
+    r"|benefits?\s+(?:booklet|guide|summary)|open\s+enrollment"
+    r"|evidencia\s+de\s+cobertura|resumen\s+de\s+beneficios"
+    r"|per[ií]odo\s+de\s+cobertura|a[ñn]o\s+del\s+plan|vigen(?:te|cia)",
+    re.IGNORECASE,
+)
+#: A type's words right after "not" ("not an ERISA plan", "not Original
+#: Medicare") deny it.
+_NEGATED = re.compile(
+    r"\bnot\s+(?:an?\s+|the\s+)?(?:original\s+|traditional\s+)?$", re.IGNORECASE
+)
+_DATE = (
+    r"(?:[0-9]{1,2}[/.-][0-9]{1,2}[/.-]([0-9]{4})|([0-9]{4})-[0-9]{2}-[0-9]{2}"
+    r"|[a-z]{3,9}\.?\s+[0-9]{1,2},?\s+([0-9]{4}))"
+)
+#: A date range. One across two years ("07/01/2025 - 06/30/2026") is the
+#: plan year it starts, never the one it ends.
+_DATE_RANGE = re.compile(
+    _DATE + r"\s*(?:[-\u2013\u2014]|to|through|thru)\s*" + _DATE, re.IGNORECASE
+)
+#: Each model's answer, and all of them together, a second look included:
+#: the reading's activity has 5 minutes
+#: (workflows/shared_plan_documents.READ_TIMEOUT) and reading the file can
+#: take a little over three with OCR, so the company step stays inside the
+#: rest.
 MODEL_TIMEOUT_SECONDS = 30.0
 TOTAL_TIMEOUT_SECONDS = 70.0
 
 SYSTEM_PROMPT = (
     "You read health plan documents and find the employer that sponsors the "
-    "plan. You answer with one JSON object and nothing else."
+    "plan, and the plan's insurer, year and type. You answer with one JSON "
+    "object and nothing else."
 )
 
-ASK = """Below are excerpts from a health plan document. Find the plan sponsor: the employer, company or organization that offers this plan to its employees or members.
+_PLAN_TYPES = "; ".join(
+    f"{kind}: {label}"
+    for kind, label in PolicyDocument.PLAN_CATEGORY_CHOICES
+    if kind in _PLAN_TYPE_WORDS
+)
+
+ASK = (
+    """Below are excerpts from a health plan document. Find the plan sponsor: the employer, company or organization that offers this plan to its employees or members. Also find the plan's insurer, plan year and plan type when the excerpts state them.
 
 Rules:
 - The sponsor is not the insurance company or claims administrator (for example Anthem, Aetna, Cigna, UnitedHealthcare, Blue Cross, Kaiser), not the plan's own name (such as "... Welfare Benefit Plan"), and not a person.
 - An insurer's medical policy, a coverage booklet that names no employer, or a page of test text has no sponsor: answer null.
 - "evidence" is one sentence or line copied word for word from the excerpts that names the sponsor.
 - "ein" is the sponsor's Employer Identification Number (12-3456789) only when the excerpts give it as the sponsor's; otherwise null.
+- "insurer" is the insurance company or claims administrator that runs the plan, never a person; "insurer_evidence" is the line copied word for word that names it.
+- "plan_year" is the year the plan's coverage period or plan year begins, as a number (2026); "plan_year_evidence" is the line copied word for word that gives it.
+- "plan_type" is one of these keys: """
+    + _PLAN_TYPES
+    + """; "plan_type_evidence" is the line copied word for word that shows it.
+- When the excerpts don't state the insurer, plan year or plan type, answer null for it and its evidence.
 
 Answer with exactly this JSON:
-{"sponsor": "<company name>" or null, "ein": "<12-3456789>" or null, "evidence": "<copied line>" or null}
+{"sponsor": "<company name>" or null, "ein": "<12-3456789>" or null, "evidence": "<copied line>" or null, "insurer": "<company name>" or null, "insurer_evidence": "<copied line>" or null, "plan_year": <year> or null, "plan_year_evidence": "<copied line>" or null, "plan_type": "<key>" or null, "plan_type_evidence": "<copied line>" or null}
 
 Excerpts:
 <<<
 %s
 >>>"""
+)
+
+
+class PlanFacts(NamedTuple):
+    """The plan's insurer, plan year and type as our model read them, each
+    checked against the text; empty where none passed. Named as the
+    PolicyDocument fields they fill."""
+
+    insurer_name: str = ""
+    plan_year: Optional[int] = None
+    plan_category: str = ""
+
+
+class PlanReading(NamedTuple):
+    """What our models read in a document (aread_plan)."""
+
+    sponsor: Optional[Sponsor]
+    #: False when no model could be asked or none gave a usable answer, so
+    #: the fixed patterns should try; True when a model read it, even if it
+    #: found no sponsor.
+    answered: bool
+    facts: PlanFacts = PlanFacts()
 
 
 def excerpt(text: str) -> str:
@@ -91,6 +242,14 @@ def excerpt(text: str) -> str:
     the passages around party words in between, as far as the budget goes."""
     if len(text) <= MAX_EXCERPT_CHARS:
         return text
+    return "\n...\n".join(
+        text[start:end].strip() for start, end in _excerpt_spans(text)
+    )
+
+
+def _excerpt_spans(text: str) -> list[tuple[int, int]]:
+    """Where excerpt() reads a ``text`` longer than MAX_EXCERPT_CHARS, as
+    sorted spans that don't overlap."""
     head_end, tail_start = HEAD_CHARS, len(text) - TAIL_CHARS
     room = MAX_EXCERPT_CHARS - HEAD_CHARS - TAIL_CHARS
     windows: list[list[int]] = []
@@ -109,7 +268,44 @@ def excerpt(text: str) -> str:
         keep.append((start, end))
         room -= end - start
     keep.append((tail_start, len(text)))
-    return "\n...\n".join(text[start:end].strip() for start, end in keep)
+    return keep
+
+
+def second_excerpt(text: str) -> str:
+    """For a ``text`` longer than excerpt() reads: the passages around party
+    words that excerpt() left out, those around the sponsor's own words
+    (sponsor, EIN) first, within SECOND_EXCERPT_CHARS, in document order;
+    "" when there are none."""
+    if len(text) <= MAX_EXCERPT_CHARS:
+        return ""
+    head_end, tail_start = HEAD_CHARS, len(text) - TAIL_CHARS
+    taken = _excerpt_spans(text)
+    matches = sorted(
+        _PARTY_WORDS.finditer(text, head_end, tail_start),
+        key=lambda m: (_SPONSOR_WORDS.fullmatch(m.group()) is None, m.start()),
+    )
+    new: list[tuple[int, int]] = []
+    room = SECOND_EXCERPT_CHARS
+    for match in matches:
+        if room <= 0:
+            break
+        # The head and the tail are taken, so a span sits on either side.
+        at = bisect.bisect_right(taken, (match.start(), len(text)))
+        before, after = taken[at - 1], taken[at]
+        if before[1] > match.start():
+            continue
+        start = max(before[1], match.start() - WINDOW_CHARS)
+        end = min(after[0], match.end() + WINDOW_CHARS, start + room)
+        taken.insert(at, (start, end))
+        new.append((start, end))
+        room -= end - start
+    parts: list[list[int]] = []
+    for start, end in sorted(new):
+        if parts and start <= parts[-1][1]:
+            parts[-1][1] = end
+        else:
+            parts.append([start, end])
+    return "\n...\n".join(text[start:end].strip() for start, end in parts)
 
 
 def _squash(s: str) -> str:
@@ -117,7 +313,8 @@ def _squash(s: str) -> str:
 
 
 def _letters(s: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+    # Every letter and digit, in any script: none may go unchecked.
+    return re.sub(r"[\W_]+", " ", s.casefold()).strip()
 
 
 _PLAN_WORDS_AT_END = re.compile(
@@ -215,35 +412,161 @@ def _sponsors_ein(raw_ein: object, evidence: str, text: str) -> str:
 
 
 def _kept_evidence(evidence: str) -> str:
-    """The quoted line as stored and shown to staff. The model reads the
-    text before personal details are taken out, so the line is cleaned the
-    same way the stored text is."""
+    """The quoted line as stored and shown to staff."""
+    return _scrubbed(evidence)[:EVIDENCE_CHARS]
+
+
+def _scrubbed(line: str) -> str:
+    """A quoted line cleaned the way the stored text is: the model reads the
+    text before personal details are taken out."""
     from fighthealthinsurance.plan_document_scrub import scrub
 
-    return scrub(re.sub(r"\s+", " ", evidence).strip())[:EVIDENCE_CHARS]
+    return scrub(re.sub(r"\s+", " ", line).strip())
 
 
-async def aread_sponsor(text: str) -> tuple[Optional[Sponsor], bool]:
-    """(the sponsor our models found in ``text``, whether a model answered).
+def checked_facts(answer: str, cleaned_text: str) -> PlanFacts:
+    """The insurer, plan year and plan type in a model's ``answer``, each
+    kept only when it passes its checks against ``cleaned_text``, the
+    document as it is stored, personal details taken out
+    (plan_documents_processing.clean): a quoted line must be there, so a
+    detail the cleaning takes out never becomes a fact."""
+    data = _parse(answer)
+    if data is None:
+        return PlanFacts()
+    squashed = _squash(cleaned_text)
+    return PlanFacts(
+        insurer_name=_checked_insurer(data, squashed),
+        plan_year=_checked_year(data, squashed),
+        plan_category=_checked_plan_type(data, squashed),
+    )
 
-    The second value tells "no model could be asked or none gave a usable
-    answer" (False: let the fixed patterns try) from "a model read it and
-    found no sponsor" (True, with None)."""
+
+def _quoted_line(data: dict, key: str, squashed_text: str) -> str:
+    """The line an answer quotes under ``key``, with personal details taken
+    out, when it is word for word in the stored text; "" otherwise. The
+    model reads the text before cleaning, so its quote is cleaned first."""
+    line = data.get(key)
+    if not isinstance(line, str) or len(line.strip()) < 4:
+        return ""
+    scrubbed = _scrubbed(line)
+    if _squash(scrubbed) not in squashed_text:
+        return ""
+    return scrubbed
+
+
+def _checked_insurer(data: dict, squashed_text: str) -> str:
+    raw = data.get("insurer")
+    if not isinstance(raw, str):
+        return ""
+    name = organization_name(raw)
+    if not name:
+        return ""
+    # A name the cleaning takes out of its line was a person's detail.
+    if _words(name) not in _words(
+        _quoted_line(data, "insurer_evidence", squashed_text)
+    ):
+        return ""
+    sponsor = data.get("sponsor")
+    if isinstance(sponsor, str) and normalize_name(sponsor) == normalize_name(name):
+        # A self-funded plan's employer is not its insurer.
+        return ""
+    return name[:200]
+
+
+def _checked_year(data: dict, squashed_text: str) -> Optional[int]:
+    raw = data.get("plan_year")
+    if isinstance(raw, str) and re.fullmatch(r"[0-9]{4}", raw.strip()):
+        year = int(raw.strip())
+    elif isinstance(raw, int) and not isinstance(raw, bool):
+        year = raw
+    else:
+        return None
+    if not EARLIEST_PLAN_YEAR <= year <= timezone.now().year + 1:
+        return None
+    line = _quoted_line(data, "plan_year_evidence", squashed_text)
+    # The year whole, not part of a longer number; a birth date is cleaned out.
+    if not re.search(rf"(?<![0-9]){year}(?![0-9])", line):
+        return None
+    if not _PLAN_YEAR_WORDS.search(line):
+        return None
+    for span in _DATE_RANGE.finditer(line):
+        start, end = (
+            int(next(y for y in part if y))
+            for part in (span.groups()[:3], span.groups()[3:])
+        )
+        if start != end and year == end:
+            return None
+    return year
+
+
+def _checked_plan_type(data: dict, squashed_text: str) -> str:
+    raw = data.get("plan_type")
+    if not isinstance(raw, str):
+        return ""
+    kind = raw.strip().lower()
+    words = _PLAN_TYPE_WORDS.get(kind)
+    if words is None:
+        return ""
+    line = _quoted_line(data, "plan_type_evidence", squashed_text)
+    if not any(not _NEGATED.search(line, 0, m.start()) for m in words.finditer(line)):
+        return ""
+    if any(denied.search(line) for denied in _PLAN_TYPE_DENIED.get(kind, ())):
+        return ""
+    return kind
+
+
+async def aread_plan(text: str, cleaned_text: str) -> PlanReading:
+    """What our models read in ``text``: the sponsor, whether a model
+    answered (PlanReading.answered), and the plan's insurer, year and type,
+    those three checked against ``cleaned_text`` (checked_facts).
+
+    When a model finds no sponsor in a document longer than its excerpt, it
+    reads the passages the excerpt left out (second_excerpt), once, if
+    MODEL_TIMEOUT_SECONDS are still left of TOTAL_TIMEOUT_SECONDS. The
+    insurer, year and type come from the first reading."""
     from channels.db import database_sync_to_async
 
-    from fighthealthinsurance.ml.ml_inference import infer_with_fallback
     from fighthealthinsurance.plan_sponsors import known_insurers
 
     if not text or not text.strip():
-        return None, True
+        return PlanReading(None, True)
     insurers = await database_sync_to_async(known_insurers)()
-    found: dict[str, object] = {}
+    clock = asyncio.get_running_loop().time
+    deadline = clock() + TOTAL_TIMEOUT_SECONDS
+    first = await _aask(excerpt(text), text, insurers, deadline)
+    if first is None:
+        return PlanReading(None, False)
+    sponsor, answer = first
+    facts = checked_facts(answer, cleaned_text)
+    if sponsor is None and deadline - clock() >= MODEL_TIMEOUT_SECONDS:
+        more = second_excerpt(text)
+        second = await _aask(more, text, insurers, deadline) if more else None
+        if second is not None:
+            sponsor = second[0]
+    if sponsor is not None and normalize_name(sponsor.name) == normalize_name(
+        facts.insurer_name
+    ):
+        # A self-funded plan's employer is not its insurer, by the sponsor's
+        # name as checked, from either reading.
+        facts = facts._replace(insurer_name="")
+    return PlanReading(sponsor, True, facts)
+
+
+async def _aask(
+    part: str, text: str, insurers: frozenset[str], deadline: float
+) -> Optional[tuple[Optional[Sponsor], str]]:
+    """Our models' reading of ``part``, an excerpt of ``text``, by
+    ``deadline`` on the event loop's clock: (the sponsor in the first answer
+    that passes, or None when it says there is none; that answer). None
+    when no model gave a usable answer in time."""
+    from fighthealthinsurance.ml.ml_inference import infer_with_fallback
+
+    found: dict[str, Sponsor] = {}
 
     def usable(answer: str) -> bool:
         try:
             sponsor = checked_sponsor(answer, text, insurers)
         except _NoSponsor:
-            found["none"] = True
             return True
         if sponsor is None:
             return False
@@ -254,22 +577,22 @@ async def aread_sponsor(text: str) -> tuple[Optional[Sponsor], bool]:
         answer = await asyncio.wait_for(
             infer_with_fallback(
                 system_prompts=[SYSTEM_PROMPT],
-                prompt=ASK % excerpt(text),
+                prompt=ASK % part,
                 temperature=0.0,
                 timeout=MODEL_TIMEOUT_SECONDS,
                 label="plan_sponsor",
                 validator=usable,
                 task="entity_extraction",
             ),
-            timeout=TOTAL_TIMEOUT_SECONDS,
+            timeout=deadline - asyncio.get_running_loop().time(),
         )
     except asyncio.TimeoutError:
         logger.warning("Plan sponsor model read ran out of time")
-        return None, False
-    except Exception:
-        logger.opt(exception=True).warning("Plan sponsor model read failed")
-        return None, False
+        return None
+    except Exception as e:
+        # The class only: a model error's message can quote the document.
+        logger.warning(f"Plan sponsor model read failed: {type(e).__name__}")
+        return None
     if answer is None:
-        return None, False
-    sponsor = found.get("sponsor")
-    return (sponsor if isinstance(sponsor, Sponsor) else None), True
+        return None
+    return found.get("sponsor"), answer

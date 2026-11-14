@@ -54,7 +54,10 @@ class ChooserBackfillActor:
         return self.running
 
     async def backfill(
-        self, count: Optional[int] = None, min_votes: Optional[int] = None
+        self,
+        count: Optional[int] = None,
+        min_votes: Optional[int] = None,
+        force_target: Optional[int] = None,
     ) -> Any:
         """Run the backfill once (see chooser_tasks.launch_backfill) and
         return what happened. A second call while it runs is declined, as a
@@ -70,7 +73,11 @@ class ChooserBackfillActor:
             # declined as a second run.
             from fighthealthinsurance.chooser_tasks import launch_backfill
 
-            self.result = await launch_backfill(count=count, min_votes=min_votes)
+            # force_target comes from the launch job: this actor's Ray pod
+            # does not load the feature flags that set it.
+            self.result = await launch_backfill(
+                count=count, min_votes=min_votes, force_target=force_target
+            )
             self._logger.info(f"Chooser backfill finished: {self.result}")
         except Exception as e:
             self._logger.opt(exception=True).error(f"Chooser backfill failed: {e}")

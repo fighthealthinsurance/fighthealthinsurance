@@ -21,6 +21,10 @@ It looks like we don't have a fax number on file for your appeal. That's an erro
 <p>
 There may have been a problem sending the fax. This is fairly common, and you can re-send the fax for free.
 </p>
+{% include "emails/partials/fax_failure_reason.html" %}
+<p>
+{% if failure_reason == "our_side" and not known_non_fax %}It's still worth double checking{% else %}Please double check{% endif %} that {% if fax_number %}{{ fax_number }}{% else %}the number{% endif %} is the fax number for appeals, not the phone number. Your denial letter or your insurance company's website usually lists both.
+</p>
 <p>
 To re-send the fax, or send it to another number, use the button below.
 </p>

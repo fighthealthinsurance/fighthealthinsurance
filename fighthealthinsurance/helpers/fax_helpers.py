@@ -5,11 +5,13 @@ Provides utilities for staging and sending appeal faxes.
 """
 
 import asyncio
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Iterable, List, Optional, Tuple
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import Exists, OuterRef, Q
 from django.utils import timezone
 
@@ -52,6 +54,14 @@ FAX_RESEND_WINDOW = timedelta(days=30)
 RESEND_DELIVERED = "delivered"
 RESEND_EXPIRED = "expired"
 RESEND_IN_PROGRESS = "in_progress"
+RESEND_LIMIT_REACHED = "limit_reached"
+
+# How many times the follow-up link re-sends one fax to the same number. A
+# number that failed this often is most likely wrong, or the machine there
+# is not answering, and more tries only spend fax credits and ring the same
+# line again. A different number can still be tried, and staff can still
+# re-send from the fax queue.
+MAX_RESENDS_PER_NUMBER = 4
 
 # How long an attempt that has not finished may still be running: the send
 # step stops at 30 minutes and finalize follows, so this leaves room to
@@ -266,6 +276,32 @@ class SendFaxHelper:
         links that carry its pair no longer act on it."""
         return timezone.now() - fax.date > FAX_RESEND_WINDOW
 
+    @staticmethod
+    def resend_number_key(fax_phone: Optional[str]) -> str:
+        """The key resends_by_number counts a number under: its digits, less
+        a leading US 1, so "(555) 123-4567" and "1-555-123-4567" are one
+        number. Text with no digits counts as itself."""
+        digits = re.sub(r"\D", "", fax_phone or "")
+        if len(digits) == 11 and digits.startswith("1"):
+            digits = digits[1:]
+        return digits or (fax_phone or "").strip()
+
+    @classmethod
+    def resends_to(cls, fax: FaxesToSend, fax_phone: Optional[str]) -> int:
+        """How many times the follow-up link has re-sent this fax to
+        fax_phone."""
+        counts = fax.resends_by_number
+        if not isinstance(counts, dict):
+            return 0
+        count = counts.get(cls.resend_number_key(fax_phone), 0)
+        return count if isinstance(count, int) else 0
+
+    @classmethod
+    def resend_limit_reached(cls, fax: FaxesToSend, fax_phone: Optional[str]) -> bool:
+        """Whether the follow-up link has already re-sent this fax to
+        fax_phone MAX_RESENDS_PER_NUMBER times."""
+        return cls.resends_to(fax, fax_phone) >= MAX_RESENDS_PER_NUMBER
+
     @classmethod
     def resend(cls, fax_phone: str, uuid: str, hashed_email: str) -> bool:
         """
@@ -279,27 +315,45 @@ class SendFaxHelper:
         Returns:
             True if resend was initiated, False when resend_refusal turns it
             down (the fax was delivered, is older than FAX_RESEND_WINDOW, or
-            a send may still be running for it)
+            a send may still be running for it), or when it was already
+            re-sent to fax_phone MAX_RESENDS_PER_NUMBER times
         """
-        f = FaxesToSend.objects.filter(hashed_email=hashed_email, uuid=uuid).get()
-        refusal = cls.resend_refusal(f)
-        if refusal is not None:
-            logger.info(f"Fax uuid={uuid} not re-sent: {refusal}")
-            return False
-        # One conditional update that also marks the attempt, so a send that
-        # started since the check above, or a second submit before this one's
-        # precheck, can't overlap it. Precheck marks it again as it runs.
-        now = timezone.now()
-        started = (
-            FaxesToSend.objects.filter(pk=f.pk)
-            .filter(_no_send_running(now))
-            .update(
-                destination=fax_phone,
-                should_send=True,
-                sent=False,
-                attempting_to_send_as_of=now,
+        # The row is locked from the count check to the write, so two
+        # submits can't both count against the same last try.
+        with transaction.atomic():
+            f = (
+                FaxesToSend.objects.select_for_update()
+                .filter(hashed_email=hashed_email, uuid=uuid)
+                .get()
             )
-        )
+            refusal = cls.resend_refusal(f)
+            if refusal is None and cls.resend_limit_reached(f, fax_phone):
+                refusal = RESEND_LIMIT_REACHED
+            if refusal is not None:
+                logger.info(f"Fax uuid={uuid} not re-sent: {refusal}")
+                return False
+            counts = (
+                dict(f.resends_by_number)
+                if isinstance(f.resends_by_number, dict)
+                else {}
+            )
+            counts[cls.resend_number_key(fax_phone)] = cls.resends_to(f, fax_phone) + 1
+            # One conditional update that also marks the attempt, so a send
+            # that started since the check above, or a second submit before
+            # this one's precheck, can't overlap it. Precheck marks it again
+            # as it runs.
+            now = timezone.now()
+            started = (
+                FaxesToSend.objects.filter(pk=f.pk)
+                .filter(_no_send_running(now))
+                .update(
+                    destination=fax_phone,
+                    should_send=True,
+                    sent=False,
+                    attempting_to_send_as_of=now,
+                    resends_by_number=counts,
+                )
+            )
         if not started:
             logger.info(f"Fax uuid={uuid} not re-sent: {RESEND_IN_PROGRESS}")
             return False
@@ -310,6 +364,9 @@ class SendFaxHelper:
             _dispatch_or_ray_fax(hashed_email, uuid, force_restart=True)
         except Exception:
             # Nothing started, so nothing is under way: unmark the attempt.
+            # The count stays: the fax is left unsent with should_send, so
+            # the stranded-fax redispatch or the Ray sweep can still send it
+            # to this number, and that send must use up one of its tries.
             FaxesToSend.objects.filter(pk=f.pk, attempting_to_send_as_of=now).update(
                 attempting_to_send_as_of=None
             )

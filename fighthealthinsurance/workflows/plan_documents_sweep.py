@@ -2,7 +2,7 @@
 
 The ``plan-documents-sweep`` Temporal Schedule (see
 ``temporal_client.ensure_plan_documents_schedule``) starts one run an hour.
-A run does two things, and a failure in the first never stops the second:
+A run does three things, and a failure in one never stops the next:
 
 1. Sends the share page's reminders that are due, one activity per
    reminder, each run once and never retried. The activity claims the
@@ -14,9 +14,20 @@ A run does two things, and a failure in the first never stops the second:
    are children the sweep does not wait for (parent close policy ABANDON).
    A share whose reading is already running is left to it; one whose
    earlier reading has closed gets a new run under the same id.
+3. Asks for the daily staff summary of shared plan documents
+   (plan_documents_summary): the first run of each UTC day sends it, and
+   the rest find it sent. Run once, never retried.
+4. Asks for the daily check that each shared file is still whole in the
+   bucket (shared_file_check): the first run of each UTC day runs it.
+   Counts only; run once, never retried.
+5. Makes again the copies ticked for research whose save failed and are
+   due (shared_copy_retries), a few a run. Run once, never retried.
+6. Looks again for the companies of shared plans whose lookup did not
+   finish (plan_documents_processing.aretry_company_lookups), a few a run.
+   Run once, never retried.
 
 History holds the run's numbers, the reminders' row ids, true or false for
-each, the shares' uuids and two counts.
+each, the shares' uuids, the counts and whether the summary went.
 """
 
 from datetime import timedelta
@@ -49,6 +60,11 @@ LOOKUP_RETRY = RetryPolicy(
 SEND_RETRY = RetryPolicy(maximum_attempts=1)
 # The same pace the Ray email loop keeps between sends.
 SEND_PACING = timedelta(seconds=2)
+# Inside the plan documents worker's five-minute shutdown drain, so a deploy
+# lets them finish; each bounds its own work below this.
+FILE_CHECK_TIMEOUT = timedelta(minutes=4)
+COPY_RETRY_TIMEOUT = timedelta(minutes=4)
+COMPANY_LOOKUP_TIMEOUT = timedelta(minutes=4)
 
 
 @workflow.defn
@@ -59,7 +75,60 @@ class PlanDocumentsSweepWorkflow:
         started = await self._start_readings(
             request.received_minutes, request.max_batches
         )
-        return {"reminders_sent": sent, "readings_started": started}
+        result = {"reminders_sent": sent, "readings_started": started}
+        if workflow.patched("plan-documents-staff-summary"):
+            result["summary_sent"] = int(await self._send_summary())
+        if workflow.patched("plan-documents-file-check"):
+            result["files_checked"] = int(await self._check_files())
+        if workflow.patched("plan-documents-copy-retries"):
+            result["copies_saved"] = await self._retry_copies()
+        if workflow.patched("plan-documents-company-lookups"):
+            result["company_lookups"] = await self._retry_company_lookups()
+        return result
+
+    async def _retry_company_lookups(self) -> int:
+        try:
+            return await workflow.execute_activity(
+                sweep_activities.retry_company_lookups,
+                start_to_close_timeout=COMPANY_LOOKUP_TIMEOUT,
+                retry_policy=SEND_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("company lookups failed; next run tries")
+            return 0
+
+    async def _retry_copies(self) -> int:
+        try:
+            return await workflow.execute_activity(
+                sweep_activities.retry_shared_copies,
+                start_to_close_timeout=COPY_RETRY_TIMEOUT,
+                retry_policy=SEND_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("shared copy retries failed; next run tries")
+            return 0
+
+    async def _check_files(self) -> bool:
+        try:
+            return await workflow.execute_activity(
+                sweep_activities.check_shared_plan_document_files,
+                start_to_close_timeout=FILE_CHECK_TIMEOUT,
+                retry_policy=SEND_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("the file check failed; tomorrow's run tries")
+            return False
+
+    async def _send_summary(self) -> bool:
+        try:
+            return await workflow.execute_activity(
+                sweep_activities.send_plan_documents_staff_summary,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=SEND_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("the staff summary failed; tomorrow's run tries")
+            return False
 
     async def _send_reminders(self, limit: int) -> int:
         try:
@@ -90,12 +159,16 @@ class PlanDocumentsSweepWorkflow:
         return sent
 
     async def _start_readings(self, received_minutes: int, limit: int) -> int:
-        batches = await workflow.execute_activity(
-            sweep_activities.find_waiting_share_batches,
-            args=[received_minutes, limit],
-            start_to_close_timeout=timedelta(minutes=1),
-            retry_policy=LOOKUP_RETRY,
-        )
+        try:
+            batches = await workflow.execute_activity(
+                sweep_activities.find_waiting_share_batches,
+                args=[received_minutes, limit],
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=LOOKUP_RETRY,
+            )
+        except ActivityError:
+            workflow.logger.warning("waiting shares not looked up; next run tries")
+            return 0
         started = 0
         for share_batch in batches:
             try:

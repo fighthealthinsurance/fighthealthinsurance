@@ -54,7 +54,7 @@ from fighthealthinsurance.ml.ml_models import (
     describe_model_error,
 )
 from fighthealthinsurance.ml.ml_router import ml_router
-from fighthealthinsurance import chooser_complexity
+from fighthealthinsurance import chooser_complexity, chooser_settlement, paid_reviews
 from fighthealthinsurance.chooser_practice_areas import normalize_practice_area
 from fighthealthinsurance.chooser_review_signals import (
     MAX_POSITIONS,
@@ -2605,11 +2605,23 @@ class ChooserViewSet(viewsets.ViewSet):
                 pass
         return judged
 
+    def _settle(self, task_id: int) -> None:
+        """Stop serving the task if its votes and skips now show a clear
+        winner or that it is clearly undecided (chooser_settlement). Best
+        effort: the vote or skip that led here is already recorded."""
+        try:
+            chooser_settlement.settle_task(task_id)
+        except Exception as e:
+            logger.warning(f"Chooser task {task_id}: could not check settlement: {e}")
+
     def _get_next_task(self, request: Request, task_type: str) -> Response:
         """
         Get the next available chooser task for the given type.
 
-        Selection logic (chooser_complexity.ordered_for_judge):
+        Selection logic (chooser_complexity.ordered_for_judge), over READY
+        tasks only: one whose votes already show a clear winner, or show it
+        is clearly undecided, has been settled to EXHAUSTED
+        (chooser_settlement) and is not served again.
         1. Exclude tasks this judge has already voted on or skipped: in this
            session, as the signed-in user from any session, or, when the
            request brought no session, from the same address (_judged_by)
@@ -2811,6 +2823,9 @@ class ChooserViewSet(viewsets.ViewSet):
             response_data["review_count"] = ChooserVote.objects.filter(
                 user=voter["user"]
             ).count()
+        paid_run = paid_reviews.session_for(request)
+        if paid_run is not None:
+            response_data["paid_review"] = paid_reviews.progress(paid_run)
         self._remember_served(request, task.id)
 
         return Response(
@@ -2979,7 +2994,11 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if task.status not in ["READY", "IN_USE"]:
+        # A settled task (chooser_settlement) is no longer served, but a
+        # judge it was served to before it settled may still be reading it;
+        # their vote is taken like any other.
+        settled = task.status == "EXHAUSTED" and bool(task.settled_reason)
+        if task.status not in ["READY", "IN_USE"] and not settled:
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "Task is not available for voting"}
@@ -3120,6 +3139,9 @@ class ChooserViewSet(viewsets.ViewSet):
         user_agent = str(request.META.get("HTTP_USER_AGENT", ""))[
             : self.USER_AGENT_CHARS
         ]
+        # A worker on a paid RentAHuman run (paid_reviews.py): the vote is
+        # tagged with the run, and the answer says how far along it is.
+        paid_run = paid_reviews.session_for(request)
 
         # One vote per session, and per signed-in user, is held by the
         # database too, for two votes racing from two sessions; atomic, so a
@@ -3139,6 +3161,7 @@ class ChooserViewSet(viewsets.ViewSet):
                     expanded_candidate_ids=expanded_candidate_ids,
                     review_signals=review_signals,
                     user_agent=user_agent,
+                    paid_review=paid_run,
                     **self._network_details(request),
                     **voter,
                 )
@@ -3150,6 +3173,14 @@ class ChooserViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # A judge who skipped the case and has now voted on it reviewed it:
+        # mark the skip superseded, matched as the vote's judge is
+        # (_judged_by, the address included for a request without a
+        # session), so settling never counts them as both a reviewer and a
+        # skipper. Kept, not deleted: the staff participation counts read it.
+        ChooserSkip.objects.filter(judged, task=task).update(superseded=True)
+        self._settle(task.id)
+
         response_data = {
             "success": True,
             "message": "Vote recorded successfully",
@@ -3159,6 +3190,10 @@ class ChooserViewSet(viewsets.ViewSet):
             response_data["review_count"] = ChooserVote.objects.filter(
                 user=voter["user"]
             ).count()
+        if paid_run is not None:
+            response_data["paid_review"] = paid_reviews.progress(
+                paid_run, last_vote=vote
+            )
         return Response(
             serializers.ChooserVoteResponseSerializer(response_data).data,
             status=status.HTTP_200_OK,
@@ -3217,7 +3252,11 @@ class ChooserViewSet(viewsets.ViewSet):
         # Create the skip record, or ignore it if this judge already skipped
         # the task in any session (one skip per user is also held by the
         # database, for two skips racing from two of their sessions).
+        # Only a skip of a case this session was served counts toward
+        # settling it (ChooserSkip.served_at); any skip still hides the case
+        # from this judge.
         if not ChooserSkip.objects.filter(judged, task=task).exists():
+            served_at = self._served_at(request, task.id)
             try:
                 ChooserSkip.objects.get_or_create(
                     task=task,
@@ -3225,10 +3264,14 @@ class ChooserViewSet(viewsets.ViewSet):
                     defaults={
                         "user": voter["user"],
                         "client_key": voter["client_key"],
+                        "served_at": served_at,
                     },
                 )
             except IntegrityError:
                 pass
+            else:
+                if served_at is not None:
+                    self._settle(task.id)
 
         return Response(
             serializers.ChooserSkipResponseSerializer(

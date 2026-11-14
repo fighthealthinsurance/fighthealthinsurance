@@ -558,6 +558,9 @@ def generate_chooser_ranked_lines():
             # How hard the case was to judge (chooser_complexity), 1 to 5;
             # null for a task scored by nobody yet.
             "complexity": task.complexity,
+            # Why it stopped being served (chooser_settlement): clear_winner
+            # or undecided; blank while it is still served.
+            "settled_reason": task.settled_reason,
             # Which case pipeline wrote it (chooser_tasks), so votes on one
             # version can be told from votes on another.
             "case_version": task.case_version,

@@ -1,0 +1,87 @@
+{% extends "admin/base_site.html" %}
+{% comment %} HumanJudgeVerdictAdmin.breakdown_view: HumanJudge's verdicts on the
+Arena's synthetic appeal drafts, by model, beside the Arena's own record
+(humanjudge_reports.breakdown). Staff only; the same data is at ?format=json
+behind the same login. {% endcomment %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">Home</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; <a href="{% url 'admin:fighthealthinsurance_humanjudgeverdict_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+&rsaquo; Breakdown
+</div>
+{% endblock %}
+{% block content %}
+<div id="content-main" class="humanjudge-breakdown">
+<p>HumanJudge's reviewers pass or flag one Arena appeal draft at a time. Their verdicts are kept apart from the Arena's votes: the public rankings show their pass rate beside each model and never rank by it. <a href="?format=json">JSON</a></p>
+
+<h2>Totals</h2>
+<table id="humanjudge-totals">
+<tbody>
+<tr><th scope="row">Drafts uploaded</th><td>{{ data.totals.drafts_sent }} (from {{ data.totals.cases_uploaded }} case{{ data.totals.cases_uploaded|pluralize }}){% if data.totals.drafts_failed %}; {{ data.totals.drafts_failed }} failed{% endif %}{% if data.totals.drafts_pending %}; {{ data.totals.drafts_pending }} pending{% endif %}</td></tr>
+<tr><th scope="row">Verdicts</th><td>{{ data.totals.reviews }} on {{ data.totals.cases_reviewed }} case{{ data.totals.cases_reviewed|pluralize }}: {{ data.totals.passes }} passed, {{ data.totals.flags }} flagged{% if data.totals.pass_rate is not None %} ({{ data.totals.pass_rate|floatformat:0 }}% passed){% endif %}</td></tr>
+<tr><th scope="row">Cases with a HumanJudge pick</th><td>{{ data.totals.cases_with_pick }}</td></tr>
+</tbody>
+</table>
+
+<h2>By model</h2>
+{% if data.models %}
+<table id="humanjudge-models">
+<thead><tr>
+<th>Model</th><th>Uploaded</th><th>Verdicts</th><th>Passed</th><th>Flagged</th><th>Pass rate</th><th>Flags by category</th>
+<th title="The Arena's own voters, synthetic appeal cases, all time">Arena shown</th><th>Arena won</th><th>Arena win rate</th><th>Arena made-things-up rate</th>
+</tr></thead>
+<tbody>
+{% for r in data.models %}
+<tr>
+<td>{{ r.model }}</td><td>{{ r.uploaded }}</td><td>{{ r.reviews }}</td><td>{{ r.passes }}</td><td>{{ r.flags }}</td>
+<td>{% if r.pass_rate is None %}&mdash;{% else %}{{ r.pass_rate|floatformat:0 }}%{% endif %}</td>
+<td>{% for category, n in r.flag_categories.items %}{{ category }}: {{ n }}{% if not forloop.last %}, {% endif %}{% empty %}&mdash;{% endfor %}</td>
+<td>{{ r.arena_shown }}</td><td>{{ r.arena_won|floatformat:"-1" }}</td>
+<td>{% if r.arena_win_rate is None %}&mdash;{% else %}{{ r.arena_win_rate|floatformat:0 }}%{% endif %}</td>
+<td>{% if r.arena_flag_rate is None %}&mdash;{% else %}{{ r.arena_flag_rate|floatformat:0 }}%{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>Nothing uploaded or reviewed yet.</p>
+{% endif %}
+
+<h2>Does HumanJudge pick the same draft?</h2>
+<p>On cases where HumanJudge has a pick and the other judge does too: the Arena's voters (the draft they gave the most credit, ties left out), Jev and fhi-local.</p>
+<table id="humanjudge-agreement">
+<thead><tr><th>Compared with</th><th>Cases</th><th>Same draft</th><th>Agreement</th></tr></thead>
+<tbody>
+{% for a in data.agreement %}
+<tr><td>{{ a.judge }}</td><td>{{ a.cases }}</td><td>{{ a.agree }}</td><td>{% if a.agree_rate is None %}&mdash;{% else %}{{ a.agree_rate|floatformat:0 }}%{% endif %}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+
+<h2>Flags by category</h2>
+{% if data.flag_categories %}
+<ul id="humanjudge-flag-categories">{% for category, n in data.flag_categories.items %}<li>{{ category }}: {{ n }}</li>{% endfor %}</ul>
+{% else %}
+<p>No flags yet.</p>
+{% endif %}
+
+<h2>Latest written feedback</h2>
+{% if data.recent_feedback %}
+<table id="humanjudge-feedback">
+<thead><tr><th>Case</th><th>Model</th><th>Verdict</th><th>Category</th><th>Feedback</th><th>When</th></tr></thead>
+<tbody>
+{% for f in data.recent_feedback %}
+<tr>
+<td><a href="{% url 'admin:fighthealthinsurance_choosertask_change' f.task_id %}">{{ f.task_id }}</a></td>
+<td>{{ f.model }}</td><td>{{ f.verdict }}</td><td>{{ f.flag_category|default:"&mdash;" }}</td>
+<td>{{ f.feedback }}</td><td>{{ f.voted_at|default:"&mdash;"|slice:":16" }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>No written feedback yet.</p>
+{% endif %}
+</div>
+{% endblock %}

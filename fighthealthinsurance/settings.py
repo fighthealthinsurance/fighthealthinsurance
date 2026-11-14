@@ -402,6 +402,25 @@ class Base(Configuration):
     CHOOSER_EVIDENCE_JUDGING_TIMEOUT = float(
         os.getenv("CHOOSER_EVIDENCE_JUDGING_TIMEOUT", "60")
     )
+    # HumanJudge (humanjudge.com): outside human reviewers who give each
+    # Arena appeal draft a pass or flag (see chooser_humanjudge and
+    # docs/chooser.md). Only synthetic Arena drafts are ever sent, since
+    # their reviewers read what they are sent. On when an API key is set,
+    # unless CHOOSER_HUMANJUDGE=false. HUMANJUDGE_API_KEY is the model's
+    # gj_sk_ key (sends drafts and reads their verdicts); HUMANJUDGE_TOKEN, a
+    # gj_pat_ personal access token, is used for reads instead when set.
+    # HUMANJUDGE_MODEL_ID is needed only when the key's account has more
+    # than one model.
+    CHOOSER_HUMANJUDGE = os.getenv("CHOOSER_HUMANJUDGE", "true").lower() != "false"
+    HUMANJUDGE_API_KEY = os.getenv("HUMANJUDGE_API_KEY", "")
+    HUMANJUDGE_TOKEN = os.getenv("HUMANJUDGE_TOKEN", "")
+    HUMANJUDGE_MODEL_ID = os.getenv("HUMANJUDGE_MODEL_ID", "")
+    HUMANJUDGE_BASE_URL = os.getenv("HUMANJUDGE_BASE_URL", "https://api.humanjudge.com")
+    # Verdicts each active draft of a case needs before HumanJudge's pick
+    # for the case is recorded.
+    CHOOSER_HUMANJUDGE_MIN_VERDICTS = int(
+        os.getenv("CHOOSER_HUMANJUDGE_MIN_VERDICTS", "1")
+    )
     # The share of new appeal arena cases written as explicitly simple ones
     # (an everyday denial, two or three facts); 0 for none, 1 for all.
     CHOOSER_SIMPLE_CASE_SHARE = _env_float(
@@ -448,6 +467,16 @@ class Base(Configuration):
     CHOOSER_LAUNCH_BACKFILL_MIN_VOTES = _env_int(
         "CHOOSER_LAUNCH_BACKFILL_MIN_VOTES", 2, minimum=1, maximum=1000
     )
+    # Above 0, forces the launch backfill: it skips the votes check above and
+    # writes enough appeal tasks to bring the READY current-version pool up
+    # to this many (nothing when the pool is there already), in place of
+    # CHOOSER_LAUNCH_BACKFILL_SIZE. Read by `manage.py
+    # launch_chooser_backfill` when it is not given --force-target (which
+    # wins; scripts/start-server.sh passes one), and handed to the Ray actor.
+    # 0 (the default) is the usual gate.
+    CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET = _env_int(
+        "CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET", 0, minimum=0, maximum=10000
+    )
     # Seconds a due launch backfill waits for the appeal generation claim
     # (usually one the deploy's killed refill actor left behind, which lapses
     # within the fifteen-minute claim window) before giving up.
@@ -466,6 +495,25 @@ class Base(Configuration):
     # first votes (chooser_complexity.ordered_for_judge).
     CHOOSER_WARMUP_SATURATION_VOTES = _env_int(
         "CHOOSER_WARMUP_SATURATION_VOTES", 5, minimum=1, maximum=100000
+    )
+    # Settling a case (chooser_settlement): once its votes show a clear
+    # winner, or show it is clearly undecided, it stops being served so new
+    # judges' reviews go to cases that still need them. The minimum reviews
+    # before either is called; the reviews after which an even split at the
+    # top counts as undecided; the reviews after which no clear winner at all
+    # does; and the share of judges skipping it that does.
+    CHOOSER_SETTLE_TASKS = os.getenv("CHOOSER_SETTLE_TASKS", "true").lower() != "false"
+    CHOOSER_SETTLE_MIN_REVIEWS = _env_int(
+        "CHOOSER_SETTLE_MIN_REVIEWS", 5, minimum=1, maximum=100000
+    )
+    CHOOSER_UNDECIDED_REVIEWS = _env_int(
+        "CHOOSER_UNDECIDED_REVIEWS", 10, minimum=1, maximum=100000
+    )
+    CHOOSER_UNDECIDED_MAX_REVIEWS = _env_int(
+        "CHOOSER_UNDECIDED_MAX_REVIEWS", 20, minimum=1, maximum=100000
+    )
+    CHOOSER_UNDECIDED_SKIP_SHARE = _env_float(
+        "CHOOSER_UNDECIDED_SKIP_SHARE", 0.5, minimum=0.05, maximum=1.0
     )
     CONDITION_RANKING_MIN_PEOPLE = int(os.getenv("CONDITION_RANKING_MIN_PEOPLE", "5"))
     CONDITION_RANKING_LOOKUP_BUDGET = int(
@@ -722,6 +770,25 @@ class Base(Configuration):
     LOGIN_REDIRECT_URL = "/"
     DEFF_FETCH_URL_NAME = "fake_fetch_url"
     STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
+    # Paid Arena reviews through RentAHuman (paid_reviews.py, docs/chooser.md
+    # "Paid reviewers"). The API key posts bounties and reviews submissions;
+    # the webhook secret (whsec_..., shown once when the endpoint is
+    # registered) checks the events RentAHuman sends. Both blank turns the
+    # feature's outside calls off; the join link and progress still work.
+    RENTAHUMAN_API_KEY = os.getenv("RENTAHUMAN_API_KEY", "")
+    RENTAHUMAN_API_BASE = os.getenv("RENTAHUMAN_API_BASE", "https://rentahuman.ai/api")
+    RENTAHUMAN_WEBHOOK_SECRET = os.getenv("RENTAHUMAN_WEBHOOK_SECRET", "")
+    # Where the join link in a bounty points.
+    PAID_REVIEW_SITE_ORIGIN = os.getenv(
+        "PAID_REVIEW_SITE_ORIGIN", "https://www.fighthealthinsurance.com"
+    )
+    # The floor a paid review must clear to count toward the completion
+    # code: server-timed seconds from serving the case to the vote, and the
+    # length of the one-sentence reason.
+    PAID_REVIEW_MIN_SECONDS = int(os.getenv("PAID_REVIEW_MIN_SECONDS", "60"))
+    PAID_REVIEW_MIN_RATIONALE_CHARS = int(
+        os.getenv("PAID_REVIEW_MIN_RATIONALE_CHARS", "25")
+    )
     REST_FRAMEWORK = {
         "DEFAULT_AUTHENTICATION_CLASSES": [
             "rest_framework.authentication.SessionAuthentication",
@@ -1177,6 +1244,11 @@ class Base(Configuration):
 
         return FileSystemStorage(location=self.LOCALISH_STORAGE_LOCATION)
 
+    # A shared plan document counts as saved only once an object store (the
+    # bucket) holds it: the other backends are pod disks, empty after a
+    # restart (shared_plan_documents.save_shared_documents). On in Prod.
+    SHARED_FILES_NEED_BUCKET_COPY = False
+
     @cached_property
     def COMBINED_STORAGE(self) -> Storage:
         return CombinedStorage(
@@ -1332,12 +1404,25 @@ class _TestBase(Dev):
     CHOOSER_JUDGE_EVIDENCE = False
     # Candidate judging is mocked and enabled per test, never read from the host.
     CHOOSER_SCORE_CANDIDATES = False
+    # Nor may a draft go to HumanJudge (only staff send them, from the
+    # admin); a test that sends one mocks the transport and sets a fake key.
+    CHOOSER_HUMANJUDGE = False
+    HUMANJUDGE_API_KEY = ""
+    HUMANJUDGE_TOKEN = ""
+    HUMANJUDGE_MODEL_ID = ""
     # Every case a test builds is the standard, seeded kind unless the test
     # asks for a simple one; a random draw would make the seeded tests flaky.
     CHOOSER_SIMPLE_CASE_SHARE = 0.0
     # A backfill that finds the claim held gives up at once; a test that
     # wants it to wait patches the wait in.
     CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS = 0
+    # Never forced from the host's environment; a test that forces one says so.
+    CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET = 0
+    # Paid reviews never reach RentAHuman from a test, whatever the host's
+    # environment holds; a test that needs a key or secret sets one.
+    RENTAHUMAN_API_KEY = ""
+    RENTAHUMAN_WEBHOOK_SECRET = ""
+    RENTAHUMAN_API_BASE = "http://127.0.0.1:1/api"
     # A model forced into the arena from the host environment would be asked
     # for real by every test that builds a task.
     CHOOSER_FORCE_MODEL = ""
@@ -1346,6 +1431,12 @@ class _TestBase(Dev):
     # the ordering tests are served.
     CHOOSER_WARMUP_ROUNDS_PER_LEVEL = 1
     CHOOSER_WARMUP_SATURATION_VOTES = 5
+    # Settling is pinned the same way, for the tests that count votes.
+    CHOOSER_SETTLE_TASKS = True
+    CHOOSER_SETTLE_MIN_REVIEWS = 5
+    CHOOSER_UNDECIDED_REVIEWS = 10
+    CHOOSER_UNDECIDED_MAX_REVIEWS = 20
+    CHOOSER_UNDECIDED_SKIP_SHARE = 0.5
 
     @classmethod
     def pre_setup(cls):
@@ -1618,6 +1709,8 @@ class TestActor(_TestBase):
 
 
 class Prod(Base):
+    SHARED_FILES_NEED_BUCKET_COPY = True
+
     # Tighten up CORS
     CORS_ALLOWED_ORIGINS = [
         "https://www.fightpaperwork.com",
