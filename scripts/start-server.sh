@@ -29,7 +29,12 @@ elif [ -n "$POLLING_ACTORS" ]; then
   # The claim the backfill usually finds held is the old cluster's refill
   # actor's, killed mid-batch by this deploy; the backfill waits that out and
   # counts whatever is written meanwhile toward its hundred.
-  python manage.py launch_chooser_backfill || echo "Chooser backfill launch failed (non-blocking)"
+  # --force-target 300: a one-off top-up of the READY appeal pool to 300
+  # cases, skipping the "every case has two votes" check (docs/chooser.md).
+  # It writes only the shortfall, but every deploy that keeps the flag tops
+  # the pool up again, hours of model calls each time: drop the flag once
+  # the pool is stocked.
+  python manage.py launch_chooser_backfill --force-target 300 || echo "Chooser backfill launch failed (non-blocking)"
   # Some for polling actors
   python manage.py launch_polling_actors || (echo "Error starting ray actor?" && sleep 480)
   # Deployment-time model-backend health check (supersedes probe_models).

@@ -41,6 +41,16 @@ class Command(BaseCommand):
             ),
         )
         parser.add_argument(
+            "--force-target",
+            type=int,
+            default=None,
+            help=(
+                "Skip the votes check and write enough appeal cases to bring "
+                "the READY current-version pool up to this many "
+                "(default: CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET; 0 does not force)"
+            ),
+        )
+        parser.add_argument(
             "--wait",
             type=int,
             default=60,
@@ -63,10 +73,25 @@ class Command(BaseCommand):
         # backfill before anyone voted; the setting has the same floor.
         if min_votes is not None and min_votes < 1:
             raise CommandError("--min-votes must be at least 1")
+        # Read here, in the launch job, which loads the feature flags; the
+        # Ray actor's pod does not, so it is handed the value.
+        force_target = options["force_target"]
+        if force_target is None:
+            from django.conf import settings
+
+            force_target = getattr(settings, "CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET", 0)
+        if force_target < 0:
+            raise CommandError("--force-target must be 0 or more")
+        if force_target:
+            self.stdout.write(
+                f"Chooser backfill forced up to {force_target} ready appeal cases"
+            )
         if options["inline"]:
             from fighthealthinsurance.chooser_tasks import launch_backfill
 
-            result = async_to_sync(launch_backfill)(count=count, min_votes=min_votes)
+            result = async_to_sync(launch_backfill)(
+                count=count, min_votes=min_votes, force_target=force_target
+            )
             self.stdout.write(f"Chooser backfill: {result}")
             return
 
@@ -93,7 +118,7 @@ class Command(BaseCommand):
                 self.stdout.write(f"Ray cluster not reachable yet ({e}); retrying")
                 time.sleep(10)
 
-        actor, task = chooser_backfill_actor_ref.start(count, min_votes)
+        actor, task = chooser_backfill_actor_ref.start(count, min_votes, force_target)
         self.stdout.write(f"Chooser backfill actor launched: {actor}")
 
         # A backfill is hours of model calls; the launch job does not wait

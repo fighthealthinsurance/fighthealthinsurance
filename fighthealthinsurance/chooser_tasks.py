@@ -193,6 +193,10 @@ CHOOSER_LAUNCH_BACKFILL_SIZE = getattr(settings, "CHOOSER_LAUNCH_BACKFILL_SIZE",
 CHOOSER_LAUNCH_BACKFILL_MIN_VOTES = getattr(
     settings, "CHOOSER_LAUNCH_BACKFILL_MIN_VOTES", 2
 )
+# Above 0, a forced backfill: the pool size to write up to, gate or no gate.
+CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET = getattr(
+    settings, "CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET", 0
+)
 # Tasks in a row that came out unusable before a backfill stops: with every
 # backend failing, a hundred attempts would be a hundred rounds of failed
 # calls for nothing.
@@ -1861,6 +1865,7 @@ async def launch_backfill(
     task_type: str = "appeal",
     count: Optional[int] = None,
     min_votes: Optional[int] = None,
+    force_target: Optional[int] = None,
 ) -> dict:
     """The launch-time backfill: ``count`` (CHOOSER_LAUNCH_BACKFILL_SIZE)
     new ``task_type`` tasks, written one at a time, when the backfill is due
@@ -1880,18 +1885,33 @@ async def launch_backfill(
     rather than calling the backfill off, as the first unvoted task would if
     the gate were asked again. Returns what happened: ``{"skipped": why}``,
     or ``{"requested": n, "ready": m}`` for the ``n`` it wrote itself.
+
+    ``force_target`` (CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET), above 0, forces
+    it: the votes check is skipped, and it writes what brings the READY
+    current-version pool up to that many (see _forced_backfill), at most
+    ``count`` when that is given too.
     """
-    if count is None:
-        count = CHOOSER_LAUNCH_BACKFILL_SIZE
-    if count <= 0:
-        return {"skipped": "nothing requested"}
-    reason = await backfill_reason(task_type, min_votes)
-    if reason is None:
-        logger.info(
-            f"Chooser {task_type} backfill not due: current-version tasks with "
-            f"fewer than {min_votes or CHOOSER_LAUNCH_BACKFILL_MIN_VOTES} votes remain"
-        )
-        return {"skipped": "not due"}
+    if force_target is None:
+        force_target = CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET
+    if force_target and force_target > 0:
+        forced = await _forced_backfill(task_type, force_target, count)
+        if isinstance(forced, dict):
+            return forced
+        count, reason = forced
+    else:
+        if count is None:
+            count = CHOOSER_LAUNCH_BACKFILL_SIZE
+        if count <= 0:
+            return {"skipped": "nothing requested"}
+        maybe_reason = await backfill_reason(task_type, min_votes)
+        if maybe_reason is None:
+            logger.info(
+                f"Chooser {task_type} backfill not due: current-version tasks "
+                f"with fewer than {min_votes or CHOOSER_LAUNCH_BACKFILL_MIN_VOTES} "
+                "votes remain"
+            )
+            return {"skipped": "not due"}
+        reason = maybe_reason
     decided_at = timezone.now()
     try:
         claim = await _wait_for_backfill_claim(task_type, reason)
@@ -1938,6 +1958,28 @@ async def launch_backfill(
     return {"requested": count, "ready": ready}
 
 
+async def _forced_backfill(
+    task_type: str, target: int, count: Optional[int]
+) -> Union[dict, Tuple[int, str]]:
+    """A forced backfill's size and reason: the READY current-version tasks
+    short of ``target`` (capped at ``count`` when given), or what to return
+    when there is nothing to write."""
+    ready = await _ready_current_tasks(task_type).acount()
+    short = target - ready
+    if count is not None:
+        short = min(short, count)
+    if short <= 0:
+        logger.info(
+            f"Chooser {task_type} backfill forced to {target}, but {ready} "
+            "READY current-version task(s) are there already"
+        )
+        return {"skipped": f"{ready} ready, at or past the forced {target}"}
+    return short, (
+        f"forced up to {target} READY current-version {task_type} task(s), "
+        f"{ready} there now"
+    )
+
+
 async def _wait_for_backfill_claim(
     task_type: str, reason: str
 ) -> Optional[_GenerationClaim]:
@@ -1969,13 +2011,17 @@ async def _wait_for_backfill_claim(
 async def _tasks_written_since(task_type: str, since: datetime.datetime) -> int:
     """READY synthetic ``task_type`` tasks at the current case version
     created since ``since``: the ones a waiting backfill counts as its own."""
-    return await ChooserTask.objects.filter(
+    return await _ready_current_tasks(task_type).filter(created_at__gte=since).acount()
+
+
+def _ready_current_tasks(task_type: str) -> "QuerySet[ChooserTask]":
+    """READY synthetic ``task_type`` tasks at the current case version."""
+    return ChooserTask.objects.filter(
         task_type=task_type,
         status="READY",
         source="synthetic",
         case_version__gte=_case_version(task_type),
-        created_at__gte=since,
-    ).acount()
+    )
 
 
 async def _refill_reason(task_type: str) -> Optional[str]:

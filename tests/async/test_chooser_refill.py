@@ -1454,6 +1454,47 @@ class TestLaunchBackfill:
         assert result == {"requested": 20, "ready": 0}
         assert generate.await_count == CHOOSER_BACKFILL_STOP_AFTER_FAILURES
 
+    async def test_a_forced_backfill_writes_up_to_its_target_when_not_due(self):
+        await self._judged(await _make_task(), 0)
+
+        with _generating() as generate:
+            result = await launch_backfill(force_target=4)
+
+        assert (result, generate.await_count) == ({"requested": 3, "ready": 3}, 3)
+
+    async def test_a_forced_backfill_writes_nothing_at_its_target(self):
+        await _make_task()
+        await _make_task()
+
+        with _generating() as generate:
+            result = await launch_backfill(force_target=2)
+
+        assert ("skipped" in result, generate.await_count) == (True, 0)
+
+    async def test_a_forced_backfill_counts_only_ready_current_cases(self):
+        await _make_task(status="EXHAUSTED")
+        await _make_task(case_version=1)
+        await _make_task(source="real_denial")
+
+        with _generating() as generate:
+            result = await launch_backfill(force_target=2)
+
+        assert result == {"requested": 2, "ready": 2}
+
+    async def test_a_count_caps_a_forced_backfill(self):
+        with _generating():
+            result = await launch_backfill(count=2, force_target=10)
+
+        assert result["requested"] == 2
+
+    async def test_a_forced_backfill_follows_the_setting(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks.CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET", 3
+        ), _generating():
+            result = await launch_backfill()
+
+        assert result == {"requested": 3, "ready": 3}
+
     async def test_a_task_that_comes_out_ready_resets_the_failure_count(self):
         outcomes = [False, False, True, False, False, True]
         with patch(

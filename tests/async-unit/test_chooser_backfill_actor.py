@@ -1,11 +1,13 @@
 """ChooserBackfillActor's run guard, the ref retiring a finished actor, and
 the launch command's argument checks, without Ray."""
 
+from io import StringIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
+from django.test import override_settings
 
 from fighthealthinsurance.base_actor_ref import RUN_ALREADY_STARTED
 from fighthealthinsurance.chooser_backfill_actor import ChooserBackfillActor
@@ -58,7 +60,7 @@ async def test_the_backfill_runs_once_with_its_arguments():
         result = await actor.backfill(count=2, min_votes=3)
 
     assert result == {"requested": 2, "ready": 2}
-    backfill.assert_awaited_once_with(count=2, min_votes=3)
+    backfill.assert_awaited_once_with(count=2, min_votes=3, force_target=None)
     assert await actor.is_running() is False
 
 
@@ -186,6 +188,54 @@ def test_the_command_rejects_a_vote_bar_below_one(min_votes):
     with _backfill() as backfill, pytest.raises(CommandError):
         call_command("launch_chooser_backfill", "--inline", "--min-votes", min_votes)
     backfill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_actor_hands_on_a_forced_target():
+    """The Ray pod does not load the feature flags, so the target comes in
+    as an argument."""
+    actor = _actor()
+    with _backfill(return_value={"requested": 5, "ready": 5}) as backfill:
+        await actor.backfill(force_target=300)
+
+    backfill.assert_awaited_once_with(count=None, min_votes=None, force_target=300)
+
+
+def test_the_command_hands_its_forced_target_to_the_backfill():
+    with _backfill(return_value={"skipped": "x"}) as backfill:
+        call_command("launch_chooser_backfill", "--inline", "--force-target", "300")
+    assert backfill.await_args.kwargs["force_target"] == 300
+
+
+def test_the_command_reads_the_forced_target_from_the_setting():
+    with override_settings(CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET=250), _backfill(
+        return_value={"skipped": "x"}
+    ) as backfill:
+        call_command("launch_chooser_backfill", "--inline")
+    assert backfill.await_args.kwargs["force_target"] == 250
+
+
+def test_the_command_rejects_a_negative_forced_target():
+    with _backfill() as backfill, pytest.raises(CommandError):
+        call_command("launch_chooser_backfill", "--inline", "--force-target", "-1")
+    backfill.assert_not_awaited()
+
+
+def test_the_launch_hands_the_forced_target_to_the_actor():
+    from fighthealthinsurance.chooser_backfill_actor_ref import (
+        chooser_backfill_actor_ref,
+    )
+
+    task = object()
+    with override_settings(CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET=300), patch(
+        "ray.is_initialized", return_value=True
+    ), patch("ray.wait", return_value=([task], [])), patch(
+        "ray.get", return_value={"requested": 1, "ready": 1}
+    ), patch.object(
+        chooser_backfill_actor_ref, "start", return_value=(MagicMock(), task)
+    ) as start:
+        call_command("launch_chooser_backfill", stdout=StringIO())
+    start.assert_called_once_with(None, None, 300)
 
 
 def _launch(result):
