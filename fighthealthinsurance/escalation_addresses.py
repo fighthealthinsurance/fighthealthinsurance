@@ -292,25 +292,24 @@ _DECISION_RE = re.compile(
     r"|affirmed|reaffirmed|maintained|overturn(ed)?)\b",
     re.IGNORECASE,
 )
-_PENDING_OR_RIGHTS_RE = re.compile(
-    r"\b(right to|you can|to request|request (a|an)|to file|to submit"
-    r"|under review|being reviewed|being processed|processing|pending"
+# Wording for a decision still under way or still to come (not "we will
+# mail you the decision").
+_PENDING_WORDS = (
+    r"under review|being reviewed|being processed|processing|pending"
     r"|in progress|are reviewing|is reviewing"
-    # A decision still to come, not "we will mail you the decision".
     r"|will (be )?(review|decid|consider|issue|make|notify|respond)\w*"
-    r"|decision will)\b",
+    r"|decision will"
+)
+_PENDING_OR_RIGHTS_RE = re.compile(
+    r"\b(right to|you can|to request|request (a|an)|to file|to submit|"
+    + _PENDING_WORDS
+    + r")\b",
     re.IGNORECASE,
 )
 # Only the still-under-way part of that: a rights notice later in the
 # clause ("…, and you can request external review") says nothing about
 # whether this appeal was decided.
-_PENDING_RE = re.compile(
-    r"\b(under review|being reviewed|being processed|processing|pending"
-    r"|in progress|are reviewing|is reviewing"
-    r"|will (be )?(review|decid|consider|issue|make|notify|respond)\w*"
-    r"|decision will)\b",
-    re.IGNORECASE,
-)
+_PENDING_RE = re.compile(r"\b(" + _PENDING_WORDS + r")\b", re.IGNORECASE)
 # The same words in a clause about what could happen, not what did: the
 # rights notice on a first denial says "If our decision is upheld you may
 # request an external review", and "once you have exhausted your internal
