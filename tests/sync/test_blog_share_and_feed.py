@@ -193,3 +193,14 @@ class FrontMatterFallbackTest(TestCase):
                 }
             ],
         )
+
+
+class MetaTitleTest(TestCase):
+    def test_blog_post_meta_title_is_not_empty(self):
+        from fighthealthinsurance.agent_docs import _blog_posts as posts
+
+        slug = posts()[0]["slug"]
+        html = self.client.get(
+            reverse("blog-post", kwargs={"slug": slug})
+        ).content.decode()
+        self.assertTrue(_meta(html, "name", "title").strip())
