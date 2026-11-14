@@ -497,3 +497,11 @@ async def test_an_unreadable_mode_never_fails_a_model_call():
         side_effect=RuntimeError("database unavailable"),
     ):
         assert await apv.acurrent_letter_prompt_mode() == apv.MODE_ORIGINAL
+
+
+def test_the_shared_prompt_lets_the_research_stage_find_references():
+    # Only the letter's task limits it to <research>; the shared system
+    # prompt only forbids fabrication, or the citation stage could cite nothing.
+    assert "not explicitly provided" not in SHARED_APPEAL_INSTRUCTIONS
+    assert "never fabricate references" in SHARED_APPEAL_INSTRUCTIONS
+    assert "given in <research>" in _v6().task
