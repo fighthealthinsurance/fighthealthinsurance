@@ -472,7 +472,7 @@ class Base(Configuration):
     # to this many (nothing when the pool is there already), in place of
     # CHOOSER_LAUNCH_BACKFILL_SIZE. Read by `manage.py
     # launch_chooser_backfill` when it is not given --force-target (which
-    # wins; scripts/start-server.sh passes one), and handed to the Ray actor.
+    # wins), and handed to the Ray actor.
     # 0 (the default) is the usual gate.
     CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET = _env_int(
         "CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET", 0, minimum=0, maximum=10000
