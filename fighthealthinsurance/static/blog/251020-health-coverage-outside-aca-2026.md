@@ -25,7 +25,7 @@ This post breaks down the main alternatives to ACA marketplace plans, how they w
 
 **Risks/Limitations:** May exclude preexisting conditions, cap benefits, deny coverage, or carry high out-of-pocket costs.
 
-**2026 Outlook:** Federal agencies have signaled [non-enforcement of stricter duration limits](https://hrexecutive.com/return-of-short-term-health-insurance/), potentially allowing coverage up to three years in some states. [Iowa already permits up to 3 years](https://iid.iowa.gov/).
+**2026 Outlook:** Federal agencies have signaled [non-enforcement of stricter duration limits](https://hrexecutive.com/could-return-of-short-term-health-insurance-provide-relief-to-some-employers/), potentially allowing coverage up to three years in some states. [Iowa already permits up to 3 years](https://iid.iowa.gov/).
 
 ---
 
@@ -97,13 +97,13 @@ This post breaks down the main alternatives to ACA marketplace plans, how they w
 ## What's Changing in 2026
 
 ### 1. ACA Premium Increases
-Marketplace insurers have proposed median [premium hikes of ~18% for 2026](https://www.kff.org/private-insurance/issue-brief/aca-marketplace-premiums-in-2026/). Rising costs may push more consumers to look at alternatives.
+Marketplace insurers have proposed median [premium hikes of ~18% for 2026](https://www.kff.org/affordable-care-act/how-much-and-why-aca-marketplace-premiums-are-going-up-in-2026/). Rising costs may push more consumers to look at alternatives.
 
 ### 2. Expiration of Enhanced Subsidies
-The [enhanced premium tax credits](https://www.kff.org/private-insurance/issue-brief/aca-marketplace-premiums-in-2026/) under the American Rescue Plan and Inflation Reduction Act are scheduled to expire at the end of 2025. Without renewal, average net premiums could more than double for many.
+The [enhanced premium tax credits](https://www.kff.org/affordable-care-act/aca-marketplace-premium-payments-would-more-than-double-on-average-next-year-if-enhanced-premium-tax-credits-expire/) under the American Rescue Plan and Inflation Reduction Act are scheduled to expire at the end of 2025. Without renewal, average net premiums could more than double for many.
 
 ### 3. Insurer Exits
-[CVS/Aetna will withdraw from ACA marketplaces in 2026](https://www.ajmc.com/view/aetna-to-exit-aca-marketplace-in-2026), affecting about 1 million enrollees in 17 states. Fewer insurers could mean higher prices and fewer choices.
+[CVS/Aetna will withdraw from ACA marketplaces in 2026](https://www.ajmc.com/view/aetna-members-with-aca-plans-will-need-new-coverage-in-2026-cvs-to-exit-aca-marketplace), affecting about 1 million enrollees in 17 states. Fewer insurers could mean higher prices and fewer choices.
 
 ### 4. Expanded Access to Catastrophic Plans
 [CMS announced that consumers will gain expanded access](https://www.cms.gov/newsroom/fact-sheets/expanding-access-health-insurance-consumers-gain-access-catastrophic-health-insurance-plans-2026) to ACA-compliant catastrophic plans in 2026. These are high-deductible options aimed at younger, healthier consumers.
@@ -134,8 +134,8 @@ ACA plans remain the gold standard for protections, subsidies, and comprehensive
 If you're considering alternatives in 2026, read the fine print carefully — and understand that cheaper up front may mean costlier in the long run.
 
 ### References
-- [KFF, ACA Marketplace Premiums in 2026](https://www.kff.org/private-insurance/issue-brief/aca-marketplace-premiums-in-2026/)
-- [AJMC, Aetna to Exit ACA Marketplace in 2026](https://www.ajmc.com/view/aetna-to-exit-aca-marketplace-in-2026)
+- [KFF, ACA Marketplace Premiums in 2026](https://www.kff.org/affordable-care-act/how-much-and-why-aca-marketplace-premiums-are-going-up-in-2026/)
+- [AJMC, Aetna to Exit ACA Marketplace in 2026](https://www.ajmc.com/view/aetna-members-with-aca-plans-will-need-new-coverage-in-2026-cvs-to-exit-aca-marketplace)
 - [CMS, Catastrophic Plan Expansion 2026](https://www.cms.gov/)
-- [HRE Executive, Return of Short-Term Health Insurance](https://hrexecutive.com/return-of-short-term-health-insurance/)
+- [HRE Executive, Return of Short-Term Health Insurance](https://hrexecutive.com/could-return-of-short-term-health-insurance-provide-relief-to-some-employers/)
 - [Iowa DOI, 2026 Enrollment and Short-Term Plans](https://iid.iowa.gov/)

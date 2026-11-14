@@ -259,7 +259,7 @@ DIAGNOSIS_SPECIFIC_PROGRAMS: tuple[AssistanceProgram, ...] = (
     ),
     AssistanceProgram(
         name="National Hemophilia Foundation",
-        url="https://www.hemophilia.org/educational-programs/financial-assistance-and-insurance",
+        url="https://www.bleeding.org/community-resources/financial-assistance",
         description=(
             "Information on copay, insurance, and emergency assistance for "
             "hemophilia and related bleeding disorders."
@@ -424,7 +424,7 @@ SAFETY_NET_PROGRAMS: tuple[AssistanceProgram, ...] = (
     ),
     AssistanceProgram(
         name="State Pharmaceutical Assistance Program (SPAP) directory",
-        url="https://www.medicare.gov/pharmaceutical-assistance-program/state-programs.aspx",
+        url="https://www.medicare.gov/plan-compare/#/pharmaceutical-assistance-program/states",
         description=(
             "State-run programs (mostly for seniors and people with "
             "disabilities) that supplement Medicare Part D and reduce "
