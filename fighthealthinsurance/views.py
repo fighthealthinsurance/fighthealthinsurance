@@ -921,6 +921,51 @@ def open_enrollment_heading(enrollment: dict[str, typing.Any] | None) -> str:
     return "Signing up for marketplace coverage"
 
 
+# schema.org Dataset for Denial Watch, so dataset search can find the page.
+DENIAL_WATCH_DATASET = {
+    "@context": "https://schema.org",
+    "@type": "Dataset",
+    "name": "Denial Watch: Health Coverage in America by the Numbers",
+    "description": (
+        "Maps and trends from public records on health coverage in America: "
+        "who is insured, how often insurers deny claims and prior "
+        "authorizations, how often appeals win, and what care costs. Built by "
+        "Fight Health Insurance from federal and state public data."
+    ),
+    "url": "https://www.fighthealthinsurance.com/denial-watch",
+    "creator": {"@id": "https://www.fighthealthinsurance.com/#organization"},
+    "publisher": {"@id": "https://www.fighthealthinsurance.com/#organization"},
+    "isAccessibleForFree": True,
+    "inLanguage": "en",
+    "spatialCoverage": {"@type": "Place", "name": "United States"},
+    "temporalCoverage": "2020/2025",
+    "keywords": [
+        "health insurance claim denials",
+        "insurance appeals",
+        "prior authorization",
+        "uninsured rate",
+        "HealthCare.gov",
+        "Medicare Part D drug spending",
+    ],
+    "variableMeasured": [
+        "In-network claim denial rate",
+        "Internal claim appeals",
+        "Appeals won",
+        "Share of people without health insurance",
+        "Marketplace plan selections",
+        "Medicare Part D spending by drug",
+    ],
+    "isBasedOn": [
+        "https://www.cms.gov/marketplace/resources/data/public-use-files",
+        "https://www.cms.gov/data-research/statistics-trends-reports/marketplace-products/2026-marketplace-open-enrollment-period-public-use-files",
+        "https://www.census.gov/programs-surveys/sahie.html",
+        "https://data.cdc.gov/d/i46a-9kgh",
+        "https://data.chhs.ca.gov/dataset/independent-medical-review-imr-determinations-trend",
+        "https://data.cms.gov/summary-statistics-on-use-and-payments/medicare-medicaid-spending-by-drug/medicare-part-d-spending-by-drug",
+    ],
+}
+
+
 class DenialWatchView(StaticIshView):
     """Denial Watch: maps and trends of denials, appeals, coverage and costs.
 
@@ -940,6 +985,7 @@ class DenialWatchView(StaticIshView):
     def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
         context = super().get_context_data(**kwargs)
         context["denial_watch_data"] = self.page_data()
+        context["json_ld"] = render_json_ld(DENIAL_WATCH_DATASET)
         context["every_state"] = denial_watch_every_state()
         context["coverage_mix"] = denial_watch_coverage_mix()
         context["enrollment"] = denial_watch_enrollment(
