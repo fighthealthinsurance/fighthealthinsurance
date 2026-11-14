@@ -24,6 +24,29 @@ def form_persistence_context(request):
     }
 
 
+CANONICAL_DOMAIN = "https://www.fighthealthinsurance.com"
+
+
+def canonical_url_for(resolver_match, fallback_path: str) -> str:
+    """The canonical www URL for a resolved page, without query parameters.
+
+    Uses reverse() on the resolver_match so trailing slashes match the URL
+    patterns exactly; falls back to the given path if that is not possible.
+    """
+    path = fallback_path
+    if resolver_match and resolver_match.url_name:
+        try:
+            url_name = resolver_match.url_name
+            if resolver_match.namespace:
+                url_name = f"{resolver_match.namespace}:{url_name}"
+            path = reverse(
+                url_name, args=resolver_match.args, kwargs=resolver_match.kwargs
+            )
+        except Exception:
+            path = fallback_path
+    return f"{CANONICAL_DOMAIN}{path}"
+
+
 def canonical_url_context(request):
     """
     Add canonical URL context variable.
@@ -47,30 +70,9 @@ def canonical_url_context(request):
     if hasattr(request, "canonical_url") and request.canonical_url:
         return {"canonical_url": request.canonical_url}
 
-    canonical_domain = "https://www.fighthealthinsurance.com"
-
-    # Try to use resolver_match to get the canonical path from URL patterns
-    resolver_match = getattr(request, "resolver_match", None)
-    if resolver_match and resolver_match.url_name:
-        try:
-            # Use reverse() to get the path exactly as defined in urlpatterns
-            # This ensures consistent trailing slash handling
-            namespace = resolver_match.namespace
-            url_name = resolver_match.url_name
-            if namespace:
-                url_name = f"{namespace}:{url_name}"
-            path = reverse(
-                url_name, args=resolver_match.args, kwargs=resolver_match.kwargs
-            )
-        except Exception:
-            # Fall back to the request path if reverse fails
-            path = request.path
-    else:
-        # Fall back to the request path if no resolver_match
-        path = request.path
-
-    # Build the canonical URL without query parameters
-    canonical = f"{canonical_domain}{path}"
+    canonical = canonical_url_for(
+        getattr(request, "resolver_match", None), request.path
+    )
 
     return {
         "canonical_url": canonical,

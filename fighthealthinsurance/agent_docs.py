@@ -34,6 +34,7 @@ from django.views.decorators.cache import cache_control, cache_page
 from bs4 import BeautifulSoup, NavigableString, Tag
 from loguru import logger
 
+from fighthealthinsurance.context_processors import canonical_url_for
 from fighthealthinsurance.sitemap import StaticViewSitemap
 
 CANONICAL_ORIGIN = "https://www.fighthealthinsurance.com"
@@ -418,7 +419,12 @@ class MarkdownTwinView(View):
             markdown = html_to_markdown(page.content.decode("utf-8"), page_url)
 
         response = HttpResponse(markdown, content_type=MARKDOWN_CONTENT_TYPE)
-        response["Link"] = f'<{reverse("llms_txt")}>; rel="describedby"'
+        # Point search engines at the HTML page this twin mirrors.
+        canonical = canonical_url_for(match, source)
+        response["Link"] = (
+            f'<{canonical}>; rel="canonical", '
+            f'<{reverse("llms_txt")}>; rel="describedby"'
+        )
         response["Cache-Control"] = "public, max-age=1800"
         return response
 
