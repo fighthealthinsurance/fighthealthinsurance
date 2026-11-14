@@ -467,6 +467,16 @@ class Base(Configuration):
     CHOOSER_LAUNCH_BACKFILL_MIN_VOTES = _env_int(
         "CHOOSER_LAUNCH_BACKFILL_MIN_VOTES", 2, minimum=1, maximum=1000
     )
+    # Above 0, forces the launch backfill: it skips the votes check above and
+    # writes enough appeal tasks to bring the READY current-version pool up
+    # to this many (nothing when the pool is there already), in place of
+    # CHOOSER_LAUNCH_BACKFILL_SIZE. Read by `manage.py
+    # launch_chooser_backfill` when it is not given --force-target (which
+    # wins; scripts/start-server.sh passes one), and handed to the Ray actor.
+    # 0 (the default) is the usual gate.
+    CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET = _env_int(
+        "CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET", 0, minimum=0, maximum=10000
+    )
     # Seconds a due launch backfill waits for the appeal generation claim
     # (usually one the deploy's killed refill actor left behind, which lapses
     # within the fifteen-minute claim window) before giving up.
@@ -1406,6 +1416,8 @@ class _TestBase(Dev):
     # A backfill that finds the claim held gives up at once; a test that
     # wants it to wait patches the wait in.
     CHOOSER_LAUNCH_BACKFILL_CLAIM_WAIT_SECONDS = 0
+    # Never forced from the host's environment; a test that forces one says so.
+    CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET = 0
     # Paid reviews never reach RentAHuman from a test, whatever the host's
     # environment holds; a test that needs a key or secret sets one.
     RENTAHUMAN_API_KEY = ""
