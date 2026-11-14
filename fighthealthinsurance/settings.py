@@ -908,6 +908,14 @@ class Base(Configuration):
     # Browser features the site never uses, turned off for every response.
     PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 
+    # Search engines may index only these hosts; every other host (dev,
+    # staging, api, monitor, the other domains) answers robots.txt with
+    # "Disallow: /" and sends X-Robots-Tag: noindex.
+    SEARCH_INDEXED_HOSTS: list[str] = [
+        "www.fighthealthinsurance.com",
+        "fighthealthinsurance.com",
+    ]
+
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     # Application definition
 
@@ -978,6 +986,7 @@ class Base(Configuration):
         # /metrics is gated before any session/auth/audit work happens.
         "fighthealthinsurance.middleware.MetricsAccessMiddleware",
         "fighthealthinsurance.middleware.DomainRedirectMiddleware",
+        "fighthealthinsurance.middleware.NoIndexOffMainHostMiddleware",
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
@@ -1396,6 +1405,9 @@ class Dev(Base):
 
 class _TestBase(Dev):
     """Process environment shared by Test, TestSync and TestActor."""
+
+    # The test client's host stands in for the public site.
+    SEARCH_INDEXED_HOSTS = Dev.SEARCH_INDEXED_HOSTS + ["testserver"]
 
     # A chooser scenario with no cached evidence must not search PubMed from
     # a test: tests are hermetic to live backends (see CLAUDE.md). Nor may
