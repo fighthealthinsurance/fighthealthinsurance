@@ -2474,6 +2474,8 @@ main :where(table) {
 
 .fhi-logo-row img {
     max-width: 100%;
+    /* Keeps the ratio when max-width shrinks a logo below its height attribute. */
+    height: auto;
     /* The small inset Bootstrap's thumbnail gave each logo, which keeps the
        second row clear of the pink shadow under it. */
     padding: var(--fhi-space-1);

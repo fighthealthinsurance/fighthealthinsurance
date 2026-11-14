@@ -1,6 +1,7 @@
 """Tests for the agent-readable site: llms.txt, robots.txt, markdown twins
 (<page>.md) and the <head> directives that advertise them."""
 
+import re
 from unittest import mock
 
 from django.core.cache import cache
@@ -138,7 +139,11 @@ class TestAgentEndpoints(TestCase):
         response = self.client.get(agent_docs.twin_path_for(about))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response["Content-Type"], "text/markdown; charset=utf-8")
-        self.assertEqual(response["Link"], '</llms.txt>; rel="describedby"')
+        self.assertEqual(
+            response["Link"],
+            f'<https://www.fighthealthinsurance.com{about}>; rel="canonical", '
+            '</llms.txt>; rel="describedby"',
+        )
         body = response.content.decode("utf-8")
         self.assertTrue(body.startswith("# "))
         # The page's own h1 is the twin's heading, once, above the URL lines,
@@ -184,6 +189,34 @@ class TestAgentEndpoints(TestCase):
         )  # front matter from the .md source
         self.assertIn(f'slug: "{slug}"', body)
         self.assertIn("- Site index for agents:", body)
+
+    def _twin_canonical(self, response) -> str:
+        match = re.search(r'<([^>]+)>; rel="canonical"', response["Link"])
+        self.assertIsNotNone(match, response["Link"])
+        return match.group(1)
+
+    def test_markdown_twin_canonical_matches_the_html_page(self):
+        posts = agent_docs._blog_posts()
+        pages = [
+            "/",
+            reverse("about"),
+            reverse("faq"),
+            reverse("blog"),
+            reverse("state_help_index"),
+            reverse("blog-post", kwargs={"slug": posts[0]["slug"]}),
+        ]
+        for page in pages:
+            html = self.client.get(page).content.decode("utf-8")
+            tag = re.search(r'<link rel="canonical" href="([^"]+)">', html)
+            self.assertIsNotNone(tag, page)
+            twin = self.client.get(agent_docs.twin_path_for(page))
+            self.assertEqual(twin.status_code, 200, page)
+            self.assertEqual(self._twin_canonical(twin), tag.group(1), page)
+
+    def test_markdown_twin_head_request_has_canonical(self):
+        response = self.client.head(agent_docs.twin_path_for(reverse("about")))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('rel="canonical"', response["Link"])
 
     def test_ineligible_pages_have_no_twin(self):
         for path in [
