@@ -82,3 +82,89 @@ class DomainRedirectMiddlewareTest(TestCase):
         self.assertEqual(
             response["Location"], "https://www.fighthealthinsurance.com/submit"
         )
+
+
+_BARE = {"fighthealthinsurance.com": "www.fighthealthinsurance.com"}
+
+
+@override_settings(
+    DOMAIN_REDIRECTS={
+        **_BARE,
+        "fuckhealthinsurance.com": "www.fighthealthinsurance.com",
+    },
+    DOMAIN_REDIRECTS_SAFE_METHODS_ONLY={"FightHealthInsurance.com"},
+)
+class SafeMethodsOnlyRedirectTest(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.middleware = DomainRedirectMiddleware(_ok)
+
+    def test_get_on_safe_methods_only_host_redirects_keeping_path_and_query(self):
+        request = self.factory.get(
+            "/blog/post/?utm_source=x", HTTP_HOST="fighthealthinsurance.com"
+        )
+        response = self.middleware(request)
+        self.assertEqual(response.status_code, 301)
+        self.assertEqual(
+            response["Location"],
+            "https://www.fighthealthinsurance.com/blog/post/?utm_source=x",
+        )
+
+    def test_head_on_safe_methods_only_host_redirects(self):
+        request = self.factory.head("/", HTTP_HOST="fighthealthinsurance.com")
+        self.assertEqual(self.middleware(request).status_code, 301)
+
+    def test_post_on_safe_methods_only_host_is_served_in_place(self):
+        request = self.factory.post(
+            "/webhook", data={"a": "b"}, HTTP_HOST="fighthealthinsurance.com"
+        )
+        response = self.middleware(request)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"ok")
+
+    def test_options_on_safe_methods_only_host_is_served_in_place(self):
+        request = self.factory.options("/", HTTP_HOST="fighthealthinsurance.com")
+        self.assertEqual(self.middleware(request).status_code, 200)
+
+    def test_other_hosts_still_redirect_post_with_308(self):
+        request = self.factory.post("/submit", HTTP_HOST="fuckhealthinsurance.com")
+        self.assertEqual(self.middleware(request).status_code, 308)
+
+    def test_canonical_www_host_is_served(self):
+        request = self.factory.get("/", HTTP_HOST="www.fighthealthinsurance.com")
+        self.assertEqual(self.middleware(request).status_code, 200)
+
+    def test_pod_ip_host_is_served(self):
+        request = self.factory.get("/metrics", HTTP_HOST="10.1.2.3")
+        self.assertEqual(self.middleware(request).status_code, 200)
+
+
+class ProdBareDomainSettingsTest(TestCase):
+    def test_prod_redirects_bare_domain_to_www_for_get_and_head_only(self):
+        from fighthealthinsurance.settings import Prod
+
+        self.assertEqual(
+            Prod.DOMAIN_REDIRECTS["fighthealthinsurance.com"],
+            "www.fighthealthinsurance.com",
+        )
+        self.assertEqual(
+            Prod.DOMAIN_REDIRECTS_SAFE_METHODS_ONLY, {"fighthealthinsurance.com"}
+        )
+
+    def test_prod_leaves_fightpaperwork_and_api_hosts_alone(self):
+        from fighthealthinsurance.settings import Prod
+
+        for host in (
+            "www.fighthealthinsurance.com",
+            "api.fighthealthinsurance.com",
+            "monitor.fighthealthinsurance.com",
+            "fightpaperwork.com",
+            "www.fightpaperwork.com",
+        ):
+            self.assertNotIn(host, Prod.DOMAIN_REDIRECTS)
+
+    def test_prod_keeps_bare_domain_allowed_and_csrf_trusted(self):
+        from fighthealthinsurance.settings import Prod
+
+        self.assertIn("fighthealthinsurance.com", Prod.ALLOWED_HOSTS)
+        self.assertIn("https://fighthealthinsurance.com", Prod.CSRF_TRUSTED_ORIGINS)
