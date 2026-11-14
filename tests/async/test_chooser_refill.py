@@ -1504,6 +1504,25 @@ class TestLaunchBackfill:
 
         assert (result, generate.await_count) == ({"requested": 1, "ready": 1}, 1)
 
+    async def test_a_forced_backfill_writes_for_cases_settled_while_it_waited(self):
+        held = await _claim_generation("appeal")
+        settled = await _make_task()
+
+        async def settle_then_free(*args, **kwargs):
+            await ChooserTask.objects.filter(id=settled.id).aupdate(
+                status="EXHAUSTED"
+            )
+            await held.release()
+            return await _claim_generation("appeal")
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks._wait_for_backfill_claim",
+            new=settle_then_free,
+        ), _generating():
+            result = await launch_backfill(force_target=3)
+
+        assert result == {"requested": 3, "ready": 3}
+
     async def test_a_count_caps_a_forced_backfill(self):
         with _generating():
             result = await launch_backfill(count=2, force_target=10)

@@ -1895,6 +1895,9 @@ async def launch_backfill(
         force_target = CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET
     target = force_target or 0
     forced = target > 0
+    # The caller's cap on a forced backfill, kept apart from the shortfall,
+    # which is counted again under the claim and may have grown meanwhile.
+    cap = count
     if forced:
         shortfall = await _forced_backfill(task_type, target, count)
         if isinstance(shortfall, dict):
@@ -1938,7 +1941,7 @@ async def launch_backfill(
             # when it decided was created before then, so
             # _tasks_written_since would miss it, and cases settled while it
             # waited have left the pool.
-            shortfall = await _forced_backfill(task_type, target, count)
+            shortfall = await _forced_backfill(task_type, target, cap)
             if isinstance(shortfall, dict):
                 return shortfall
             count, reason = shortfall

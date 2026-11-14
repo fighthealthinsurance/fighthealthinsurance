@@ -471,9 +471,9 @@ class Base(Configuration):
     # writes enough appeal tasks to bring the READY current-version pool up
     # to this many (nothing when the pool is there already), in place of
     # CHOOSER_LAUNCH_BACKFILL_SIZE. Read by `manage.py
-    # launch_chooser_backfill` in the deploy's actor-launch job, which hands
-    # it to the Ray actor; set in k8s/feature-flags.yaml. 0 (the default) is
-    # the usual gate.
+    # launch_chooser_backfill` when it is not given --force-target (which
+    # wins; scripts/start-server.sh passes one), and handed to the Ray actor.
+    # 0 (the default) is the usual gate.
     CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET = _env_int(
         "CHOOSER_LAUNCH_BACKFILL_FORCE_TARGET", 0, minimum=0, maximum=10000
     )
