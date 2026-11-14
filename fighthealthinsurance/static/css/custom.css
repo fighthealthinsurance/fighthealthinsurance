@@ -2012,7 +2012,7 @@ section:not(.slider) .share-subcopy,
     width: 220px;
     max-width: 100%;
     height: auto;
-    margin: 0 auto 0.5rem;
+    margin: 0 auto var(--fhi-space-2);
     border-radius: 50%;
     box-shadow: 0 0 0 6px #fff, 0 0 0 10px var(--fhi-pink);
 }
@@ -2023,8 +2023,8 @@ section:not(.slider) .share-subcopy,
 .timbit-404-terminal {
     display: inline-block;
     max-width: 100%;
-    margin: 0 auto 1.5rem;
-    padding: 0.9rem 1.2rem;
+    margin: 0 auto var(--fhi-space-6);
+    padding: var(--fhi-space-4) var(--fhi-space-5);
     background: #1f1630;
     color: #e8f6b0;
     border-radius: 8px;
