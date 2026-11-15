@@ -804,7 +804,7 @@ class TreatmentGuideTest(TestCase):
         expected = {
             "MRI": "mri-denial",
             "Ozempic": "glp1-denial-semaglutide-ozempic",
-            "sleep apnea": "sleep-study-denial",
+            "sleep study": "sleep-study-denial",
             "Medicare": "home-health-denial",
             "medication": "biologic-denial",
         }
@@ -817,6 +817,15 @@ class TreatmentGuideTest(TestCase):
             with self.subTest(query=query):
                 self.assertFalse(replies[query].isError, text_of(replies[query]))
                 self.assertEqual(replies[query].structuredContent["slug"], slug)
+
+    async def test_sleep_apnea_still_serves_the_sleep_study_and_cpap_guides(self):
+        # "sleep apnea" led to the sleep study guide until a guide named it in
+        # its title (Zepbound for sleep apnea); the older guides still come back.
+        result = await call("find_treatment_guide", {"query": "sleep apnea"})
+        self.assertFalse(result.isError, text_of(result))
+        data = result.structuredContent
+        served = {data["slug"]} | {m["slug"] for m in data.get("other_matches", [])}
+        self.assertLessEqual({"sleep-study-denial", "cpap-denial"}, served)
 
     def test_medicaid_matches_no_medicare_or_medication_guide(self):
         for guide in mcp_server._matching_guides("Medicaid"):
