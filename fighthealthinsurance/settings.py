@@ -24,7 +24,7 @@ from configurations import Configuration
 from corsheaders.defaults import default_methods
 from dj_easy_log import load_loguru
 from minio_storage.storage import MinioStorage
-from stopit import ThreadingTimeout as Timeout
+from fighthealthinsurance.thread_timeout import ThreadingTimeout as Timeout
 from loguru import logger
 
 from fighthealthinsurance.combined_storage import CombinedStorage

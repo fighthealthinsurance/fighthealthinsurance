@@ -14,7 +14,6 @@ import requests
 from paramiko import SSHClient
 from pypdf import PdfReader, PdfWriter
 from requests import Session
-from stopit import ThreadingTimeout as Timeout
 from loguru import logger
 
 from .fax_status import (
@@ -849,6 +848,11 @@ class FaxyMcFaxFace(SshHylaFaxClient):
     # modem_mapping = {"1800": ["ttyIAX0"], "1844": ["ttyIAX0"], "1877": ["ttyIAX0"], "1888": ["ttyIAX0"]}
 
 
+#: How long one backend may take over both its attempts (each is itself held
+#: to 600s by FlexibleFaxMagic._try_send) before the next backend is tried.
+BACKEND_SEND_TIMEOUT_SECONDS = 1300.0
+
+
 class FlexibleFaxMagic(object):
     """Fax interface that routes to different backends and chops pages etc."""
 
@@ -1032,32 +1036,50 @@ class FlexibleFaxMagic(object):
                 key=lambda backend: backend.estimate_cost(destination, page_count),
             )
         for backend in backends_by_cost:
-            with Timeout(1300.0) as _timeout_ctx:
-                for attempt in range(2):
-                    try:
-                        logger.debug(
-                            f"Calling backend {backend} (attempt {attempt + 1})"
-                        )
-                        if await self._try_send(backend, destination, path, blocking):
-                            return True
-                    except Exception as e:
-                        # Not a call result: a bad number was already noted
-                        # (and outranks this) where it was refused, and
-                        # anything else (a login page, a timeout, an ssh
-                        # error) is our end breaking, not the number.
-                        note_fax_failure(
-                            f"{type(backend).__name__}: {e}",
-                            FAILURE_OUR_SIDE,
-                            classify=False,
-                        )
-                        if attempt == 0:
-                            logger.warning(
-                                f"Error {e} sending fax on {backend}, retrying once"
+            # asyncio's timeout, not a thread one: this runs on the event loop,
+            # where a thread timeout's exception lands in whichever task is
+            # running when it fires, not necessarily this one.
+            try:
+                async with asyncio.timeout(BACKEND_SEND_TIMEOUT_SECONDS):
+                    for attempt in range(2):
+                        try:
+                            logger.debug(
+                                f"Calling backend {backend} (attempt {attempt + 1})"
                             )
-                        else:
-                            logger.warning(
-                                f"Error {e} sending fax on {backend}, moving on to next backend"
+                            if await self._try_send(
+                                backend, destination, path, blocking
+                            ):
+                                return True
+                        except Exception as e:
+                            # Not a call result: a bad number was already noted
+                            # (and outranks this) where it was refused, and
+                            # anything else (a login page, a timeout, an ssh
+                            # error) is our end breaking, not the number.
+                            note_fax_failure(
+                                f"{type(backend).__name__}: {e}",
+                                FAILURE_OUR_SIDE,
+                                classify=False,
                             )
+                            if attempt == 0:
+                                logger.warning(
+                                    f"Error {e} sending fax on {backend}, retrying once"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Error {e} sending fax on {backend}, moving on to next backend"
+                                )
+            except TimeoutError:
+                # Only the block's own timeout gets here: the attempts above
+                # catch everything they raise.
+                note_fax_failure(
+                    f"{type(backend).__name__}: no answer within "
+                    f"{BACKEND_SEND_TIMEOUT_SECONDS:g}s",
+                    FAILURE_OUR_SIDE,
+                    classify=False,
+                )
+                logger.warning(
+                    f"Timed out sending fax on {backend}, moving on to next backend"
+                )
 
         logger.warning(f"Unable to send fax to {destination} using {self.backends}")
         return False

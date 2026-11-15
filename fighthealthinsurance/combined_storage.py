@@ -6,13 +6,13 @@ from django.core.files.storage import Storage
 from django.utils.crypto import get_random_string
 
 from loguru import logger
-from stopit import ThreadingTimeout as Timeout
+from fighthealthinsurance.thread_timeout import ThreadingTimeout as Timeout
 
 from fighthealthinsurance.log_tags import error_text, file_tag
 
 #: How long one backend may take to store a file: this long for any file,
 #: and this much longer for each megabyte, so a large upload on a slow volume
-#: is not cut off mid-write. stopit only interrupts between Python
+#: is not cut off mid-write. The timeout only interrupts between Python
 #: statements, so a backend blocked in one system call is not stopped by it.
 SAVE_TIMEOUT_SECONDS = 6.0
 SAVE_SECONDS_PER_MEGABYTE = 1.0
@@ -169,7 +169,7 @@ class CombinedStorage(Storage):
             had = backend.exists(name)
             if had:
                 backend.delete(name)
-        # stopit swallows the timeout, so check the context instead.
+        # The timeout is swallowed, so check the context instead.
         if not timeout_ctx:
             raise TimeoutError(f"Timed out deleting {file_tag(name)} from {backend}")
         return had
@@ -223,7 +223,7 @@ class CombinedStorage(Storage):
                 logger.warning(f"Error saving {error_text(e)} to {backend}")
                 error_list.append(e)
                 last_error = e
-            # stopit swallows the timeout, so check the context instead. A
+            # The timeout is swallowed, so check the context instead. A
             # write cut off part way leaves a partial file under the name the
             # others will use, and open() returns the first copy it finds, so
             # that partial copy is removed rather than kept -- but ONLY when

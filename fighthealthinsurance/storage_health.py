@@ -45,7 +45,7 @@ from django.utils import timezone
 from django_encrypted_filefield.fields import EncryptedFileField
 
 from loguru import logger
-from stopit import ThreadingTimeout as Timeout
+from fighthealthinsurance.thread_timeout import ThreadingTimeout as Timeout
 
 from fighthealthinsurance.combined_storage import CombinedStorage
 from fighthealthinsurance.log_tags import error_text, file_tag
@@ -100,7 +100,7 @@ def worst(levels: Iterable[str]) -> str:
 def _timed(seconds: float, fn: Callable[[], T]) -> Tuple[T, int]:
     """Run fn under a timeout; its result and how many milliseconds it took.
 
-    stopit swallows its own timeout, so the context is checked instead.
+    The timeout swallows its own exception, so the context is checked instead.
     It only interrupts between Python statements, so a backend blocked in
     one system call is not cut off by it.
     """

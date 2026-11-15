@@ -68,7 +68,6 @@ from fighthealthinsurance.appeal_fingerprints import fingerprint_text
 from fighthealthinsurance.exceptions import AppealAssemblyError
 from fighthealthinsurance.pdf_text import amerge_pdfs
 from loguru import logger
-from stopit.utils import TimeoutException
 
 from fhi_users import emails as fhi_emails
 from fhi_users.audit import TrackingInfo

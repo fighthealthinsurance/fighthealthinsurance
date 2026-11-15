@@ -390,7 +390,7 @@ def _remove_bucket_copies(name: str) -> None:
     # The rollback's cleanup deletes only where a store says it has the file,
     # and an object store says no when it can't answer, so a copy written
     # before it stopped answering is removed outright here.
-    from stopit import ThreadingTimeout as Timeout
+    from fighthealthinsurance.thread_timeout import ThreadingTimeout as Timeout
 
     from fighthealthinsurance.storage_health import bucket_backends
 

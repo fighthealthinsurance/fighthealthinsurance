@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, call, patch
 
 from django.core.files.base import ContentFile, File
 from django.core.files.storage import FileSystemStorage, Storage
-from stopit import ThreadingTimeout
+from fighthealthinsurance.thread_timeout import ThreadingTimeout
 
 from fighthealthinsurance.combined_storage import (
     NAME_TOKEN_LENGTH,
@@ -33,7 +33,7 @@ def _make_file() -> File:
 
 
 def _timed_out() -> MagicMock:
-    """A stand-in for a stopit timeout context that ran out of time."""
+    """A stand-in for a timeout context that ran out of time."""
     timed_out = MagicMock()
     timed_out.__enter__.return_value = timed_out
     timed_out.__exit__.return_value = False
