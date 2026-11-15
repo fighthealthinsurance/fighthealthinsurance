@@ -167,7 +167,7 @@ class MicrositeGuideLinkTest(TestCase):
     hero photo, hard to read and the only hero button in that colour. In
     the hero it now takes the frosted outline the other hero buttons use,
     and in the closing call to action the green outline its neighbours use.
-    Only the Medicare work requirements page has a guide link today.
+    The Medicare work requirements page is the one this test checks.
     """
 
     SLUG = "medicare-work-requirements-denial"
@@ -196,3 +196,22 @@ class MicrositeGuideLinkTest(TestCase):
         self.assertIn("fhi-button-large", closing)
         self.assertNotIn("btn-outline-primary", closing)
         self.assertNotIn("btn-lg", closing)
+
+
+class ZepboundSleepApneaMicrositeTest(TestCase):
+    """The Zepbound for sleep apnea page frames the drug as OSA treatment."""
+
+    SLUG = "zepbound-sleep-apnea-denial"
+
+    def setUp(self):
+        self.response = Client().get(reverse("microsite", kwargs={"slug": self.SLUG}))
+
+    def test_zepbound_sleep_apnea_page_renders(self):
+        self.assertEqual(self.response.status_code, 200)
+
+    def test_zepbound_sleep_apnea_page_starts_appeals_with_the_osa_condition(self):
+        self.assertContains(self.response, "default_condition=Obstructive%20Sleep%20Apnea")
+
+    def test_zepbound_sleep_apnea_page_is_listed_in_the_microsite_directory(self):
+        directory = Client().get(reverse("microsite_directory"))
+        self.assertContains(directory, reverse("microsite", kwargs={"slug": self.SLUG}))

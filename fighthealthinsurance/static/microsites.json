@@ -2441,6 +2441,86 @@
       }
     ]
   },
+  "zepbound-sleep-apnea-denial": {
+    "slug": "zepbound-sleep-apnea-denial",
+    "title": "Appealing Zepbound for Sleep Apnea Denials",
+    "default_procedure": "Zepbound (tirzepatide) for obstructive sleep apnea",
+    "default_condition": "Obstructive Sleep Apnea",
+    "tagline": "Zepbound is FDA-approved to treat obstructive sleep apnea. A weight-loss exclusion shouldn't be the end of the story.",
+    "hero_h1": "Appeal Your Zepbound for Sleep Apnea Denial",
+    "hero_subhead": "When Zepbound is prescribed to treat moderate-to-severe sleep apnea, your appeal should say so, with the sleep study to back it up.",
+    "intro": "In December 2024 the FDA approved Zepbound (tirzepatide) to treat moderate-to-severe obstructive sleep apnea (OSA) in adults with obesity. Many insurers still deny it with a blanket weight-loss drug exclusion, or ask you to fail CPAP first, even when your doctor prescribed it for sleep apnea. An appeal that names the OSA indication, quotes the exact plan language, and attaches your sleep study gives the reviewer a much harder denial to uphold.",
+    "common_denial_reasons": [
+      "Weight-loss drug exclusion applied even though Zepbound was prescribed to treat sleep apnea",
+      "No sleep study on file, or the apnea-hypopnea index (AHI) isn't documented as moderate-to-severe (15 or more events per hour)",
+      "Step therapy: the plan wants a CPAP trial or a documented CPAP failure first",
+      "BMI or obesity diagnosis not documented",
+      "Prior authorization not approved, or renewal denied for lack of a documented response",
+      "Non-formulary or quantity limits"
+    ],
+    "how_we_help": "We help you and your clinician pull together your sleep study results (AHI and oxygen levels), BMI, daytime sleepiness, CPAP history, and related conditions like high blood pressure, so your appeal makes the case that Zepbound is treatment for sleep apnea, not a cosmetic weight-loss drug.",
+    "cta": "Start your Zepbound for sleep apnea appeal.",
+    "faq": [
+      {
+        "question": "My plan excludes weight-loss drugs. Can it still deny Zepbound for sleep apnea?",
+        "answer": "It depends on the wording. Many exclusions cover drugs used for weight loss. When Zepbound is prescribed for its FDA-approved sleep apnea indication, your appeal can argue that it is being used to treat a medical condition, not for weight loss. Ask for the exact exclusion language in writing and quote it in your appeal. If the plan excludes Zepbound by name, you can still request a formulary or medical exception."
+      },
+      {
+        "question": "Do I have to fail CPAP before I can get Zepbound?",
+        "answer": "The FDA approval doesn't require it: the trials behind the approval included people who were using PAP therapy and people who weren't. Some plans still require a CPAP trial. If you've tried CPAP, document why it didn't work for you (mask intolerance, claustrophobia, low nightly use despite real effort). If Zepbound is meant to work alongside CPAP, say so. Many states also have step therapy exception laws."
+      },
+      {
+        "question": "What documentation should my appeal include?",
+        "answer": "Your sleep study report showing moderate (AHI 15 to 29) or severe (AHI 30 or more) obstructive sleep apnea, your BMI, your daytime sleepiness (for example an Epworth Sleepiness Scale score), your CPAP history, and related conditions such as high blood pressure, heart disease, or atrial fibrillation. A short letter from your doctor tying Zepbound to your sleep apnea diagnosis helps a lot."
+      },
+      {
+        "question": "Does Medicare cover Zepbound for sleep apnea?",
+        "answer": "Medicare Part D plans generally can't cover drugs used only for weight loss, but CMS has said they may cover an anti-obesity medication when it's prescribed for another FDA-approved, medically accepted use. Sleep apnea is one for Zepbound. Each plan sets its own formulary, so if yours denies it, ask for a coverage determination or a formulary exception and point to the sleep apnea indication."
+      },
+      {
+        "question": "My renewal was denied. What now?",
+        "answer": "Renewals often ask for proof that the drug is working. Send whatever your doctor has: a repeat sleep study or home sleep test, lower AHI or better oxygen levels, weight change since you started, and improvements in sleepiness or blood pressure. If you're still on a lower dose, explain where you are in the dosing schedule."
+      }
+    ],
+    "evidence_snippets": [
+      "In December 2024, the FDA approved tirzepatide (Zepbound) for moderate-to-severe obstructive sleep apnea in adults with obesity, in combination with a reduced-calorie diet and increased physical activity.",
+      "In the SURMOUNT-OSA trials (NEJM 2024), tirzepatide reduced the apnea-hypopnea index by about 25 to 29 events per hour at 52 weeks, compared with about 5 events per hour on placebo, both in adults not using PAP therapy and in adults using it.",
+      "In SURMOUNT-OSA, tirzepatide also reduced sleep apnea-specific hypoxic burden and improved patient-reported sleep impairment and systolic blood pressure compared with placebo.",
+      "The American Thoracic Society clinical practice guideline recommends that adults with obstructive sleep apnea who are overweight or obese be treated with comprehensive lifestyle intervention for weight loss.",
+      "Untreated moderate-to-severe obstructive sleep apnea is associated with hypertension, cardiovascular disease, atrial fibrillation, and motor vehicle crashes."
+    ],
+    "pubmed_search_terms": [
+      "tirzepatide obstructive sleep apnea SURMOUNT-OSA",
+      "tirzepatide apnea-hypopnea index obesity randomized trial",
+      "weight loss treatment obstructive sleep apnea guideline"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Zepbound Savings Card",
+        "url": "https://www.zepbound.lilly.com/coverage-savings",
+        "description": "Lowers out-of-pocket costs for eligible people with commercial insurance, whether or not the plan covers Zepbound. Savings limits vary by coverage and formulation; see Lilly's terms. Not for government insurance."
+      },
+      {
+        "name": "LillyDirect - Zepbound",
+        "url": "https://www.lilly.com/lillydirect/medicines/zepbound",
+        "description": "Self-pay Zepbound vials direct from Lilly. The price depends on the dose, and the lowest price is for the starting dose; check Lilly's current pricing."
+      }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Sleep Education (American Academy of Sleep Medicine)",
+        "url": "https://sleepeducation.org/",
+        "description": "Patient information from the American Academy of Sleep Medicine on sleep apnea, sleep studies, and treatment options."
+      },
+      {
+        "name": "Obesity Action Coalition",
+        "url": "https://www.obesityaction.org/",
+        "description": "National nonprofit empowering those affected by obesity through advocacy, education and support."
+      }
+    ],
+    "blog_post_url": "/blog/250903-glp1-denials-what-to-do/",
+    "manufacturer": "Eli Lilly"
+  },
   "asthma-biologic-denial-dupilumab": {
     "slug": "asthma-biologic-denial-dupilumab",
     "title": "Appealing Dupixent (Dupilumab) Asthma Denials",
