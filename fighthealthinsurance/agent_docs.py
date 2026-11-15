@@ -36,6 +36,9 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 from loguru import logger
 
 from fighthealthinsurance.context_processors import canonical_url_for
+from fighthealthinsurance.middleware.NoIndexOffMainHostMiddleware import (
+    host_is_indexed,
+)
 from fighthealthinsurance.sitemap import StaticViewSitemap
 
 CANONICAL_ORIGIN = "https://www.fighthealthinsurance.com"
@@ -624,6 +627,10 @@ def llms_txt_view(request: HttpRequest) -> HttpResponse:
 def robots_txt_view(request: HttpRequest) -> HttpResponse:
     """robots.txt. Cloudflare prepends its managed Content Signals block in
     front of whatever the origin serves; this is the origin's part."""
+    if not host_is_indexed(request):
+        return HttpResponse(
+            "User-agent: *\nDisallow: /\n", content_type="text/plain; charset=utf-8"
+        )
     sitemap = request.build_absolute_uri(
         reverse("django.contrib.sitemaps.views.sitemap")
     )
