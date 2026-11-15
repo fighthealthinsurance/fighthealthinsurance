@@ -41,3 +41,8 @@ data:
   TYPESAFE_FOLLOWUP_QUESTIONS_ENABLED: "true"
   # The on-device advanced OCR option on the upload page.
   ADVANCED_OCR_OFFERED: "false"
+  # The staff status page's Phoenix panel (letter eval traces). Shows a config
+  # problem until PHOENIX_API_KEY, a read-only Phoenix key, is in the Secret.
+  # The web pods read that key when they start, so restart web after adding
+  # it: a deploy does it, or `kubectl rollout restart deployment/web`.
+  PHOENIX_STATUS_ENABLED: "true"
