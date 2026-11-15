@@ -2302,7 +2302,7 @@
       {
         "name": "Wegovy Savings Card",
         "url": "https://www.wegovy.com/coverage-and-savings/save-on-wegovy.html",
-        "description": "Lowers out-of-pocket costs for eligible people whose commercial insurance covers Wegovy. Savings limits vary; see Novo Nordisk's terms. Not for government programs."
+        "description": "Lowers out-of-pocket costs for eligible people with commercial insurance. Whether you qualify and how much you save depend on your plan, including whether it covers Wegovy; see Novo Nordisk's terms. Not for government programs; people paying without insurance can use NovoCare's self-pay option."
       },
       {
         "name": "NovoCare - Wegovy",
@@ -2364,7 +2364,7 @@
       {
         "name": "Mounjaro Savings Card",
         "url": "https://www.mounjaro.lilly.com/savings-resources",
-        "description": "Lowers out-of-pocket costs for eligible people whose commercial insurance covers Mounjaro. Savings limits vary; see Lilly's terms."
+        "description": "Lowers out-of-pocket costs for eligible people with commercial insurance. Whether you qualify and how much you save depend on your plan, including whether it covers Mounjaro; see Lilly's terms."
       }
     ],
     "advocacy_resources": [
