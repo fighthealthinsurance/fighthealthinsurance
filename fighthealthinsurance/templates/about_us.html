@@ -50,6 +50,7 @@ About Us
         <a href="https://www.statnews.com/2024/12/12/artificial-intelligence-appealing-health-insurance-denials" target="_blank" rel="noopener noreferrer">
             <img src="{% static 'images/statlogo.png' %}" alt="stat-logo" width="544" height="118" loading="lazy"></a>
     </div>
+    <p id="for-reporters">Writing about health insurance or researching it? {% if denial_watch_enabled %}<a class="link" href="{% url 'denial-watch' %}">Denial Watch</a> pulls together denials, appeals, coverage and costs from public records, and we're{% else %}We're{% endif %} glad to help with the numbers. Email <a class="link" href="mailto:support42@fighthealthinsurance.com">support42@fighthealthinsurance.com</a>.</p>
     </div>
     <div class="spacer" style="margin-top: 5vh;"></div>
 
