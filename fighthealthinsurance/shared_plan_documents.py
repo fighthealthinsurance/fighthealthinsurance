@@ -389,15 +389,13 @@ def _object_store_configured() -> bool:
 def _remove_bucket_copies(name: str) -> None:
     # The rollback's cleanup deletes only where a store says it has the file,
     # and an object store says no when it can't answer, so a copy written
-    # before it stopped answering is removed outright here.
-    from fighthealthinsurance.thread_timeout import ThreadingTimeout as Timeout
-
+    # before it stopped answering is removed outright here. The store's HTTP
+    # client limits how long each delete can take.
     from fighthealthinsurance.storage_health import bucket_backends
 
     for backend in bucket_backends():
         try:
-            with Timeout(2.0):
-                backend.delete(name)
+            backend.delete(name)
         except Exception as e:
             logger.warning(f"Could not remove a bucket copy: {type(e).__name__}")
 

@@ -19,12 +19,13 @@ from typing import Optional
 
 from django.core.files.storage import Storage
 
+import certifi
 import minio as m
+import urllib3
 from configurations import Configuration
 from corsheaders.defaults import default_methods
 from dj_easy_log import load_loguru
 from minio_storage.storage import MinioStorage
-from fighthealthinsurance.thread_timeout import ThreadingTimeout as Timeout
 from loguru import logger
 
 from fighthealthinsurance.combined_storage import CombinedStorage
@@ -2000,44 +2001,78 @@ class Prod(Base):
     MINIO_STORAGE_USE_HTTPS = os.getenv("EX_MINIO_USE_HTTPS", "True") == "True"
     MINIO_STORAGE_MEDIA_BUCKET_NAME = os.getenv("EX_MINIO_BUCKET")
 
+    #: Limits on each request to the object store. minio-py's own defaults
+    #: (five minutes to connect, five minutes between bytes, five retries)
+    #: let one stuck call hold a request for half an hour. The read limit is
+    #: the longest the store may go without sending a byte, not a cap on the
+    #: whole transfer, so a large file is not cut off for being large.
+    MINIO_CONNECT_TIMEOUT_S = 5.0
+    MINIO_READ_TIMEOUT_S = 15.0
+    MINIO_RETRIES = 2
+
+    def minio_http_client(self) -> urllib3.PoolManager:
+        """The HTTP client for the object store: minio-py's default one with
+        the limits above in place of its own."""
+        return urllib3.PoolManager(
+            timeout=urllib3.Timeout(
+                connect=self.MINIO_CONNECT_TIMEOUT_S, read=self.MINIO_READ_TIMEOUT_S
+            ),
+            maxsize=10,
+            cert_reqs="CERT_REQUIRED",
+            ca_certs=os.environ.get("SSL_CERT_FILE") or certifi.where(),
+            retries=urllib3.Retry(
+                total=self.MINIO_RETRIES,
+                backoff_factor=0.2,
+                status_forcelist=[500, 502, 503, 504],
+            ),
+        )
+
     @cached_property
     def EXTERNAL_STORAGE_B(self):
         logger.info(
             f"Creating connection to {self.MINIO_STORAGE_ENDPOINT} region {self.MINIO_STORAGE_REGION}"
         )
         try:
-            with Timeout(20.0) as _timeout_ctx:
-                if (
-                    self.MINIO_STORAGE_ENDPOINT is not None
-                    and self.MINIO_STORAGE_ACCESS_KEY is not None
-                    and self.MINIO_STORAGE_SECRET_KEY is not None
-                    and self.MINIO_STORAGE_MEDIA_BUCKET_NAME is not None
-                ):
-                    minio_client = m.Minio(
-                        self.MINIO_STORAGE_ENDPOINT,
-                        access_key=self.MINIO_STORAGE_ACCESS_KEY,
-                        secret_key=self.MINIO_STORAGE_SECRET_KEY,
-                        region=self.MINIO_STORAGE_REGION,
-                        secure=True,
-                    )
-                    bucket = self.MINIO_STORAGE_MEDIA_BUCKET_NAME
-                    logger.info(
-                        f"Created client for minio at {self.MINIO_STORAGE_ENDPOINT} connecting to bucket {bucket}"
-                    )
-                    check = minio_client.list_objects(bucket)
-                    next(check, None)
-                    logger.info("Check passed, making MinioStorage object.")
-                    minio = MinioStorage(
-                        minio_client,
-                        bucket_name=bucket,
-                        auto_create_bucket=False,  # B2 issues
-                    )
-                    logger.info(f"Connected to minio at {self.MINIO_STORAGE_ENDPOINT}")
+            if (
+                self.MINIO_STORAGE_ENDPOINT is not None
+                and self.MINIO_STORAGE_ACCESS_KEY is not None
+                and self.MINIO_STORAGE_SECRET_KEY is not None
+                and self.MINIO_STORAGE_MEDIA_BUCKET_NAME is not None
+            ):
+                minio_client = m.Minio(
+                    self.MINIO_STORAGE_ENDPOINT,
+                    access_key=self.MINIO_STORAGE_ACCESS_KEY,
+                    secret_key=self.MINIO_STORAGE_SECRET_KEY,
+                    region=self.MINIO_STORAGE_REGION,
+                    secure=True,
+                    http_client=self.minio_http_client(),
+                )
+                bucket = self.MINIO_STORAGE_MEDIA_BUCKET_NAME
+                logger.info(
+                    f"Created client for minio at {self.MINIO_STORAGE_ENDPOINT} connecting to bucket {bucket}"
+                )
+                check = minio_client.list_objects(bucket)
+                next(check, None)
+                logger.info("Check passed, making MinioStorage object.")
+                minio = MinioStorage(
+                    minio_client,
+                    bucket_name=bucket,
+                    auto_create_bucket=False,  # B2 issues
+                )
+                logger.info(f"Connected to minio at {self.MINIO_STORAGE_ENDPOINT}")
 
-                    return minio
-                else:
-                    raise ValueError("No storage endpoint configured")
-        except (ConnectionError, TimeoutError, OSError, ValueError) as e:
+                return minio
+            else:
+                raise ValueError("No storage endpoint configured")
+        # urllib3's HTTPError covers a store that timed out or could not be
+        # reached (MaxRetryError once the retries are spent).
+        except (
+            ConnectionError,
+            TimeoutError,
+            OSError,
+            ValueError,
+            urllib3.exceptions.HTTPError,
+        ) as e:
             logger.opt(exception=True).error(
                 f"Failed to setup minio storage to {self.MINIO_STORAGE_ENDPOINT}"
             )

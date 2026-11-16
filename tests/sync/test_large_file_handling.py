@@ -18,7 +18,7 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from fighthealthinsurance import upload_limits, views
-from fighthealthinsurance.combined_storage import CombinedStorage, save_timeout_seconds
+from fighthealthinsurance.combined_storage import CombinedStorage
 from fighthealthinsurance.forms import FollowUpForm, PlanDocumentsForm
 from fighthealthinsurance.models import (
     Denial,
@@ -262,19 +262,6 @@ class ServerOcrRefusesTooMuchTest(TestCase):
             f"up to {upload_limits.MAX_OCR_FILES} at a time and "
             f"{upload_limits.megabytes(upload_limits.MAX_OCR_FILE_BYTES)}MB each",
         )
-
-
-class SaveTimeoutScalesWithSizeTest(TestCase):
-    def test_a_larger_file_gets_a_longer_write_window(self):
-        class Sized:
-            def __init__(self, n):
-                self.size = n
-
-        small = save_timeout_seconds(Sized(0))
-        big = save_timeout_seconds(Sized(60 * 1024 * 1024))
-        self.assertGreater(big, small)
-        # A sizeless stream still gets the base window.
-        self.assertEqual(save_timeout_seconds(object()), small)
 
 
 def _png_header(width: int, height: int) -> bytes:

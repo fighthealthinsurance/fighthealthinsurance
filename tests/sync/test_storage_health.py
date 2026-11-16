@@ -563,3 +563,29 @@ class WriteTestTest(_StorageTestCase):
         with mock.patch.object(storage_health, "_read", side_effect=OSError("eio")):
             storage_health.write_test(self.rows())
         self.assertEqual([os.listdir(d) for d in self.dirs], [[], [], []])
+
+    def _slow_save(self, backend):
+        real_save = backend.save
+
+        def slow_save(*args, **kwargs):
+            time.sleep(0.05)
+            return real_save(*args, **kwargs)
+
+        return mock.patch.object(backend, "save", side_effect=slow_save)
+
+    def test_a_save_slower_than_the_step_limit_fails_the_write_step(self):
+        with self._slow_save(self.backends[0]), mock.patch.object(
+            storage_health, "WRITE_STEP_TIMEOUT_S", 0.01
+        ):
+            results = storage_health.write_test(self.rows())
+        self.assertEqual(
+            (results[0]["ok"], results[0]["step"], results[1]["ok"]),
+            (False, "write", True),
+        )
+
+    def test_a_save_slower_than_the_step_limit_still_removes_its_probe(self):
+        with self._slow_save(self.backends[0]), mock.patch.object(
+            storage_health, "WRITE_STEP_TIMEOUT_S", 0.01
+        ):
+            storage_health.write_test(self.rows())
+        self.assertEqual([os.listdir(d) for d in self.dirs], [[], [], []])

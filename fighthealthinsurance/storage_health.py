@@ -45,7 +45,6 @@ from django.utils import timezone
 from django_encrypted_filefield.fields import EncryptedFileField
 
 from loguru import logger
-from fighthealthinsurance.thread_timeout import ThreadingTimeout as Timeout
 
 from fighthealthinsurance.combined_storage import CombinedStorage
 from fighthealthinsurance.log_tags import error_text, file_tag
@@ -97,20 +96,22 @@ def worst(levels: Iterable[str]) -> str:
     return max(levels, key=lambda level: _RANK[level], default=OK)
 
 
-def _timed(seconds: float, fn: Callable[[], T]) -> Tuple[T, int]:
-    """Run fn under a timeout; its result and how many milliseconds it took.
+def _timed(fn: Callable[[], T]) -> Tuple[T, int]:
+    """fn's result and how many milliseconds it took.
 
-    The timeout swallows its own exception, so the context is checked instead.
-    It only interrupts between Python statements, so a backend blocked in
-    one system call is not cut off by it.
+    Nothing cuts fn off: the backend's own limits bound it (the object
+    store's HTTP client timeouts). A step slower than the page allows is
+    failed afterwards by _within, once its result is known.
     """
     start = time.monotonic()
-    box: List[T] = []
-    with Timeout(seconds) as ctx:
-        box.append(fn())
-    if not ctx or not box:
-        raise TimeoutError(f"no answer within {seconds:g}s")
-    return box[0], int((time.monotonic() - start) * 1000)
+    value = fn()
+    return value, int((time.monotonic() - start) * 1000)
+
+
+def _within(ms: int, seconds: float) -> None:
+    """Fail a step that finished, but slower than seconds."""
+    if ms > seconds * 1000:
+        raise TimeoutError(f"took {ms / 1000:.1f}s, over the {seconds:g}s limit")
 
 
 #: Probes of one backend that may sit stuck in a call (from this page load or
@@ -134,7 +135,8 @@ def _probe(backend: Storage, seconds: float, fn: Callable[[], T]) -> Tuple[T, in
     is loaded.
 
     Only for calls that write nothing and touch no database. The write test
-    keeps _timed: a save abandoned here could land after its cleanup ran.
+    waits its calls out (_timed): a save abandoned here could land after its
+    cleanup ran.
     """
     with _probe_slots_lock:
         slots = _probe_slots.setdefault(
@@ -709,7 +711,7 @@ def _read(backend: Storage, name: str) -> bytes:
 def _remove_probe(backend: Storage, name: str) -> None:
     """Best effort: a probe a failed test left behind is removed."""
     try:
-        _timed(WRITE_STEP_TIMEOUT_S, functools.partial(backend.delete, name))
+        backend.delete(name)
     except Exception as e:
         logger.warning(f"Could not remove storage probe {name} from {backend}: {e}")
 
@@ -725,7 +727,9 @@ _STEP_MEANING = {
 def write_test(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Write a small file to each backend, read it back, and delete it.
 
-    Each step has its own timeout. The probe is not a document and holds
+    Each step that takes longer than WRITE_STEP_TIMEOUT_S fails the test,
+    judged once the step returns (the backend's own limits bound how long
+    that can be), so a slow save's probe is still known and removed. The probe is not a document and holds
     nothing personal, so its name and errors are shown as they are.
     """
     results: List[Dict[str, Any]] = []
@@ -746,26 +750,24 @@ def write_test(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         stored: Optional[str] = None
         try:
             saved, result["write_ms"] = _timed(
-                WRITE_STEP_TIMEOUT_S,
-                functools.partial(backend.save, name, ContentFile(payload)),
+                functools.partial(backend.save, name, ContentFile(payload))
             )
             stored = saved
+            _within(result["write_ms"], WRITE_STEP_TIMEOUT_S)
             result["step"] = "read"
-            data, result["read_ms"] = _timed(
-                WRITE_STEP_TIMEOUT_S, functools.partial(_read, backend, saved)
-            )
+            data, result["read_ms"] = _timed(functools.partial(_read, backend, saved))
+            _within(result["read_ms"], WRITE_STEP_TIMEOUT_S)
             if data != payload:
                 raise ValueError("read back different bytes than were written")
             result["step"] = "delete"
-            _, result["delete_ms"] = _timed(
-                WRITE_STEP_TIMEOUT_S, functools.partial(backend.delete, saved)
-            )
+            _, result["delete_ms"] = _timed(functools.partial(backend.delete, saved))
+            _within(result["delete_ms"], WRITE_STEP_TIMEOUT_S)
             result["ok"] = True
             result["step"] = None
         except Exception as e:
             logger.warning(f"Storage write test failed on {r['label']}: {e}")
             result["error"] = f"{type(e).__name__}: {e}"[:300]
-            # A save cut off part way may have left a file under the name.
+            # A failed or slow step may have left the probe behind.
             _remove_probe(backend, stored or name)
         results.append(result)
     return results
