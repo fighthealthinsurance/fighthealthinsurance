@@ -534,8 +534,8 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
-def _record_model(record: dict) -> str:
-    for key in _MODEL_KEYS:
+def _record_model(record: dict, keys: Iterable[str] = _MODEL_KEYS) -> str:
+    for key in keys:
         value = record.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
@@ -590,8 +590,11 @@ async def _match(
         if case is not None:
             break
     raw_model = _record_model(record)
+    # An exact name is taken only from a field that holds a name: a
+    # model_slug equal to one stored name may still be the other's slug.
+    exact = _record_model(record, ("model_name", "model"))
     model_name = (
-        names_by_slug.get("name:" + raw_model)
+        (names_by_slug.get("name:" + exact) if exact else None)
         or names_by_slug.get("slug:" + _slug(raw_model))
         if raw_model
         else None

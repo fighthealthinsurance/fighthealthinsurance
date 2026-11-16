@@ -351,6 +351,25 @@ def _legacy_external_key(record: dict, inference_id: str) -> Optional[str]:
     )
 
 
+def _voter(record: dict) -> str:
+    return str(record.get("evaluator_id") or record.get("voter_id") or "")
+
+
+async def _stored_under_legacy_key(record: dict, inference_id: str) -> bool:
+    """Whether this vote is already stored under its pre-alias key. That key
+    left voter_id out, so two reviewers' votes can share it: only a stored
+    row from the same reviewer counts."""
+    legacy_key = _legacy_external_key(record, inference_id)
+    if legacy_key is None:
+        return False
+    stored = (
+        await HumanJudgeVerdict.objects.filter(external_key=legacy_key)
+        .values_list("raw", flat=True)
+        .afirst()
+    )
+    return isinstance(stored, dict) and _voter(stored) == _voter(record)
+
+
 def _digest_key(*parts: str) -> str:
     return "sha256:" + hashlib.sha256("|".join(parts).encode()).hexdigest()
 
@@ -585,13 +604,7 @@ async def fetch_verdicts(client: HumanJudgeClient) -> DownloadResult:
                 skipped += 1
                 continue
             result.matched_task_ids.add(submission.task_id)
-            legacy_key = _legacy_external_key(record, inference_id)
-            if (
-                legacy_key is not None
-                and await HumanJudgeVerdict.objects.filter(
-                    external_key=legacy_key
-                ).aexists()
-            ):
+            if await _stored_under_legacy_key(record, inference_id):
                 continue
             _, created = await HumanJudgeVerdict.objects.aget_or_create(
                 external_key=_external_key(record, inference_id),

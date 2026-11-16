@@ -432,3 +432,24 @@ async def test_later_downloads_read_votes_from_shortly_before_the_newest_stored(
 )
 async def test_record_verdict_normalizes_pass_and_flag(raw, expected):
     assert chooser_humanjudge._record_verdict({"verdict": raw}) == expected
+
+
+@ON
+async def test_another_reviewers_vote_sharing_the_older_key_is_still_stored():
+    # The older key left voter_id out, so r8's and r9's votes share it.
+    task, candidates = await _task(count=1)
+    fake = FakeHumanJudge()
+    await _upload(fake, task)
+    [inference_id] = await _inference_ids(candidates)
+    fake.vote(inference_id, "pass", evaluator=None, voter_id="r8")
+    await _download(fake)
+    verdict = await HumanJudgeVerdict.objects.aget()
+    verdict.external_key = chooser_humanjudge._legacy_external_key(
+        fake.votes[0], inference_id
+    )
+    await verdict.asave(update_fields=["external_key"])
+    fake.vote(inference_id, "pass", evaluator=None, voter_id="r9")
+
+    await _download(fake)
+
+    assert await HumanJudgeVerdict.objects.acount() == 2

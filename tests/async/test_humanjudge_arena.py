@@ -273,6 +273,7 @@ class FakeArena:
 def _vote(**fields):
     return {
         "trace_id": "tr-1",
+        "model_slug": "fhi-local",
         "model_name": "fhi-local",
         "verdict": "flag",
         "flag_category": "Wrong",
@@ -423,3 +424,24 @@ async def test_id_less_votes_on_different_models_are_both_stored(backends):
     votes = [{**base, "model_name": "fhi-local"}, {**base, "model_name": "outside-model"}]
     await humanjudge_arena.download_arena_verdicts(FakeArena(votes).transport)
     assert await HumanJudgeArenaVerdict.objects.acount() == 2
+
+
+@ON
+async def test_a_model_slug_equal_to_one_stored_name_is_not_taken_as_that_name(
+    backends,
+):
+    _, case = await _exported()
+    for name in ("org/model", "org-model"):
+        await HumanJudgeArenaAnswer.objects.acreate(
+            case=case,
+            prompt_sha256=case.prompt_sha256,
+            model_name=name,
+            content=f"Letter by {name}",
+            content_sha256=humanjudge_arena.prompt_digest(f"Letter by {name}"),
+            source="generated",
+        )
+    vote = _vote(input=case.prompt)
+    del vote["model_name"]
+    vote["model_slug"] = "org-model"  # org/model's slug as much as org-model's
+    await humanjudge_arena.download_arena_verdicts(FakeArena([vote]).transport)
+    assert await _matched_answer_of_only_vote() is None
