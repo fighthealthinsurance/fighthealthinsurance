@@ -79,6 +79,25 @@ class HumanJudgeArenaAdminTest(TestCase):
         self.assertContains(response, 'id="arena-endpoint-off"')
         self.start_backfill.assert_not_called()
 
+    def test_staff_who_may_only_view_cases_cannot_start_writing_answers(self):
+        from django.contrib.auth.models import Permission
+
+        case = HumanJudgeArenaCase.objects.create(
+            task=self.task, prompt="case", prompt_sha256="c" * 64
+        )
+        viewer = get_user_model().objects.create_user(
+            username="viewer", password="pw123", is_staff=True
+        )
+        viewer.user_permissions.add(
+            Permission.objects.get(codename="view_humanjudgearenacase")
+        )
+        self.client.force_login(viewer)
+        self.client.post(
+            reverse("admin:fighthealthinsurance_humanjudgearenacase_changelist"),
+            {"action": "write_missing_answers", "_selected_action": [case.id]},
+        )
+        self.start_backfill.assert_not_called()
+
     def test_verdict_list_shows_the_download_button(self):
         self.assertContains(self.client.get(VERDICTS), 'id="humanjudge-arena-download"')
 

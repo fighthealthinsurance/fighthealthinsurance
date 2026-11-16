@@ -328,9 +328,11 @@ def _external_key(record: dict, inference_id: str) -> str:
     basis = "|".join(
         [
             inference_id,
-            str(record.get("evaluator_id") or ""),
+            # The same aliases the downloaders read, so ID-less votes that
+            # carry only voter_id or vote are not all given one key.
+            str(record.get("evaluator_id") or record.get("voter_id") or ""),
             str(record.get("timestamp") or record.get("created_at") or ""),
-            str(record.get("verdict") or ""),
+            str(record.get("verdict", record.get("vote")) or ""),
         ]
     )
     return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()

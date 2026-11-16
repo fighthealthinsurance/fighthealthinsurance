@@ -431,8 +431,8 @@ class Base(Configuration):
     # and the call told to come back.
     HUMAN_JUDGE_OAI_CALLBACK = os.getenv("HUMAN_JUDGE_OAI_CALLBACK", "")
     HUMANJUDGE_ARENA_ID = os.getenv("HUMANJUDGE_ARENA_ID", "")
-    HUMANJUDGE_ARENA_ANSWER_TIMEOUT = float(
-        os.getenv("HUMANJUDGE_ARENA_ANSWER_TIMEOUT", "50")
+    HUMANJUDGE_ARENA_ANSWER_TIMEOUT = _env_float(
+        "HUMANJUDGE_ARENA_ANSWER_TIMEOUT", 50.0, minimum=1.0, maximum=600.0
     )
     # The share of new appeal arena cases written as explicitly simple ones
     # (an everyday denial, two or three facts); 0 for none, 1 for all.

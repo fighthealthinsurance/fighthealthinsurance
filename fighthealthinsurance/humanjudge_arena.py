@@ -557,7 +557,12 @@ async def _model_names_by_slug() -> dict[str, str]:
 async def _match(
     record: dict, names_by_slug: dict[str, str]
 ) -> tuple[Optional[HumanJudgeArenaAnswer], Optional[HumanJudgeArenaCase]]:
-    """The answer and case a vote is about, as far as the record shows."""
+    """The answer and case a vote is about, as far as the record shows.
+
+    Never a guess: a verdict credited to the wrong model or case stays
+    wrong (only unmatched rows are matched again), so a vote naming a model
+    we never answered as, answer text that fits more than one answer, or
+    answer text that fits none is left unmatched."""
     case = None
     for text in _texts(record, _CASE_TEXT_KEYS):
         case = await HumanJudgeArenaCase.objects.filter(
@@ -567,8 +572,11 @@ async def _match(
             break
     raw_model = _record_model(record)
     model_name = names_by_slug.get(_slug(raw_model)) if raw_model else None
+    if raw_model and model_name is None:
+        return None, case
     answer = None
-    for text in _texts(record, _ANSWER_TEXT_KEYS):
+    answer_texts = _texts(record, _ANSWER_TEXT_KEYS)
+    for text in answer_texts:
         answers = HumanJudgeArenaAnswer.objects.filter(
             content_sha256=prompt_digest(text)
         )
@@ -576,10 +584,14 @@ async def _match(
             answers = answers.filter(model_name=model_name)
         if case is not None:
             answers = answers.filter(case=case)
-        answer = await answers.select_related("case").afirst()
-        if answer is not None:
+        found = [a async for a in answers.select_related("case")[:2]]
+        if len(found) == 1:
+            answer = found[0]
             break
-    if answer is None and case is not None and model_name:
+    # By case and model only when the vote carries no answer text: text that
+    # fits no stored answer is about some other letter (one since replaced).
+    # The pair is unique (prompt digest and model), so this is never a guess.
+    if answer is None and not answer_texts and case is not None and model_name:
         answer = await (
             HumanJudgeArenaAnswer.objects.filter(case=case, model_name=model_name)
             .select_related("case")

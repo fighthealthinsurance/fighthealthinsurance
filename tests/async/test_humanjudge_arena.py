@@ -297,7 +297,8 @@ async def test_a_vote_carrying_the_case_text_is_matched_to_the_models_answer(bac
 async def test_a_vote_carrying_the_answer_text_is_matched_by_it(backends):
     _, case = await _exported()
     response = await _ask(case.prompt, model="outside-model")
-    fake = FakeArena([_vote(model_slug="outside-model", output=_letter(response))])
+    vote = _vote(model_name="Outside Model", output=_letter(response))  # slug match
+    fake = FakeArena([vote])
     await humanjudge_arena.download_arena_verdicts(fake.transport)
     verdict = await HumanJudgeArenaVerdict.objects.select_related("answer").aget()
     assert verdict.answer.model_name == "outside-model"
@@ -319,6 +320,68 @@ async def test_downloading_a_vote_again_does_not_store_it_twice(backends):
     await humanjudge_arena.download_arena_verdicts(fake.transport)
     await humanjudge_arena.download_arena_verdicts(fake.transport)
     assert await HumanJudgeArenaVerdict.objects.acount() == 1
+
+
+async def _matched_answer_of_only_vote():
+    verdict = await HumanJudgeArenaVerdict.objects.aget()
+    return verdict.answer_id
+
+
+@ON
+async def test_a_vote_with_only_humanjudges_documented_fields_is_stored_unmatched(
+    backends,
+):
+    # trace_id, model_name, verdict, feedback, ...: no case or answer text.
+    _, case = await _exported()
+    await _ask(case.prompt)
+    result = await humanjudge_arena.download_arena_verdicts(FakeArena([_vote()]).transport)
+    assert (result.unmatched, await _matched_answer_of_only_vote()) == (1, None)
+
+
+@ON
+async def test_a_vote_naming_a_model_we_never_answered_as_is_not_credited_to_another(
+    backends,
+):
+    _, case = await _exported()
+    response = await _ask(case.prompt)
+    vote = _vote(model_name="someone-else", output=_letter(response))
+    await humanjudge_arena.download_arena_verdicts(FakeArena([vote]).transport)
+    assert await _matched_answer_of_only_vote() is None
+
+
+@ON
+async def test_answer_text_that_fits_two_answers_leaves_the_vote_unmatched(backends):
+    # Two cases, one letter: the vote's text cannot say which it judged.
+    _, first = await _exported()
+    _, second = await _exported(context={**CONTEXT, "procedure": "CT"})
+    await _ask(first.prompt, model="outside-model")
+    await _ask(second.prompt, model="outside-model")
+    vote = _vote(model_name="outside-model", output=LETTER.strip())
+    await humanjudge_arena.download_arena_verdicts(FakeArena([vote]).transport)
+    assert await _matched_answer_of_only_vote() is None
+
+
+@ON
+async def test_answer_text_that_fits_no_answer_is_not_matched_by_case_and_model(
+    backends,
+):
+    _, case = await _exported()
+    await _ask(case.prompt)
+    vote = _vote(input=case.prompt, output="An earlier letter, since replaced.")
+    await humanjudge_arena.download_arena_verdicts(FakeArena([vote]).transport)
+    assert await _matched_answer_of_only_vote() is None
+
+
+@ON
+async def test_id_less_votes_told_apart_only_by_their_aliases_are_all_stored(
+    backends,
+):
+    votes = [
+        {"model_name": "fhi-local", "vote": "pass", "voter_id": "rev-1"},
+        {"model_name": "fhi-local", "vote": "flag", "voter_id": "rev-2"},
+    ]
+    await humanjudge_arena.download_arena_verdicts(FakeArena(votes).transport)
+    assert await HumanJudgeArenaVerdict.objects.acount() == 2
 
 
 async def test_download_refuses_when_no_arena_is_configured():

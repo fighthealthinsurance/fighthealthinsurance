@@ -1661,12 +1661,22 @@ def _humanjudge_upload(model_admin, request, task_ids) -> None:
     model_admin.message_user(request, " ".join(parts), level)
 
 
+def _require_arena_writer(request) -> None:
+    """Exporting to the arena and backfilling ask our models (some paid) for
+    letters: only staff who may change Arena tasks, whichever admin list the
+    action is run from (the case list is view-only, and Django offers its
+    actions to anyone who may view it)."""
+    if not request.user.has_perm("fighthealthinsurance.change_choosertask"):
+        raise PermissionDenied
+
+
 def _humanjudge_arena_export(model_admin, request, task_ids):
     """The HumanJudge arena setup page for these Arena cases: their text to
     paste into the arena, the reviewer instructions, and how to enter each
     of our models (humanjudge_arena.export_cases). Starts writing the
     answers the cases still lack, so HumanJudge's calls find them ready.
     Returns None (after a message) when there is nothing to show."""
+    _require_arena_writer(request)
     from asgiref.sync import async_to_sync
 
     from fighthealthinsurance import humanjudge_arena
@@ -2100,6 +2110,7 @@ class HumanJudgeArenaCaseAdmin(admin.ModelAdmin):
 
     @admin.action(description="Write the answers these cases lack (background)")
     def write_missing_answers(self, request, queryset):
+        _require_arena_writer(request)
         from fighthealthinsurance import humanjudge_arena
 
         ids = list(queryset.values_list("id", flat=True))
