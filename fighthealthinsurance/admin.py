@@ -1960,9 +1960,13 @@ class HumanJudgeVerdictAdmin(admin.ModelAdmin):
 
         from fighthealthinsurance import chooser_humanjudge
 
+        import httpx
+
         try:
             result = async_to_sync(chooser_humanjudge.download_verdicts)()
-        except chooser_humanjudge.HumanJudgeError as e:
+        # A timeout or dropped connection (httpx.HTTPError), or a page that
+        # isn't JSON (ValueError), is HumanJudge being unreachable too.
+        except (chooser_humanjudge.HumanJudgeError, httpx.HTTPError, ValueError) as e:
             self.message_user(request, f"Nothing downloaded: {e}", messages.ERROR)
             return HttpResponseRedirect(changelist)
         message = (
@@ -2260,9 +2264,16 @@ class PolicyDocumentAdmin(admin.ModelAdmin):
 
     @admin.action(description="Confirm the company found")
     def confirm_company(self, request, queryset):
-        # Optional: the company already counts. This records that a person
-        # looked at it.
-        updated = queryset.filter(plan_sponsor__isnull=False).update(
+        from fighthealthinsurance.plan_sponsors import SOURCE_PERSON, SOURCE_STAFF
+
+        # Records that a person looked at it. A company found by a reading
+        # already counts; one the person typed (SOURCE_PERSON) counts only
+        # once staff confirm it, so confirming makes it theirs.
+        queryset = queryset.filter(plan_sponsor__isnull=False)
+        queryset.filter(plan_sponsor_source=SOURCE_PERSON).update(
+            plan_sponsor_source=SOURCE_STAFF
+        )
+        updated = queryset.update(
             plan_sponsor_checked_at=timezone.now(),
             plan_sponsor_checked_by=request.user,
         )

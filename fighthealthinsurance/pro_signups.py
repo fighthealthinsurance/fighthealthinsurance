@@ -426,12 +426,14 @@ def record_professional_submission(
     same_address = (pro.email or "").strip().lower() == (
         lead.email or ""
     ).strip().lower()
-    # Only once staff sent the thank-you: until then the address isn't
-    # vetted, and a reply would tell whoever typed it that it is a lead.
+    # Only once staff sent the thank-you, or the Cofactor AI introduction
+    # (which thanks them too, and after which the thank-you is refused):
+    # until then the address isn't vetted, and a reply would tell whoever
+    # typed it that it is a lead.
     if (
         email_submitter
         and same_address
-        and lead.thankyou_email_sent
+        and (lead.thankyou_email_sent or intro_was_sent(lead.email))
         and should_reply_to_returning_lead(lead)
     ):
         send_already_have_details_email(pro)
