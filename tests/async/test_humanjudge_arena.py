@@ -445,3 +445,21 @@ async def test_a_model_slug_equal_to_one_stored_name_is_not_taken_as_that_name(
     vote["model_slug"] = "org-model"  # org/model's slug as much as org-model's
     await humanjudge_arena.download_arena_verdicts(FakeArena([vote]).transport)
     assert await _matched_answer_of_only_vote() is None
+
+
+@ON
+async def test_an_exact_model_name_resolves_even_when_its_slug_is_shared(backends):
+    _, case = await _exported()
+    answers = {}
+    for name in ("org/model", "org-model"):
+        answers[name] = await HumanJudgeArenaAnswer.objects.acreate(
+            case=case,
+            prompt_sha256=case.prompt_sha256,
+            model_name=name,
+            content=f"Letter by {name}",
+            content_sha256=humanjudge_arena.prompt_digest(f"Letter by {name}"),
+            source="generated",
+        )
+    vote = _vote(model_name="org/model", model_slug="org-model", input=case.prompt)
+    await humanjudge_arena.download_arena_verdicts(FakeArena([vote]).transport)
+    assert await _matched_answer_of_only_vote() == answers["org/model"].id
