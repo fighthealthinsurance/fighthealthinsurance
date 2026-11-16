@@ -325,17 +325,34 @@ def _external_key(record: dict, inference_id: str) -> str:
     vote_id = record.get("id") or record.get("vote_id")
     if vote_id:
         return f"id:{vote_id}"[:128]
-    basis = "|".join(
-        [
-            inference_id,
-            # The same aliases the downloaders read, so ID-less votes that
-            # carry only voter_id or vote are not all given one key.
-            str(record.get("evaluator_id") or record.get("voter_id") or ""),
-            str(record.get("timestamp") or record.get("created_at") or ""),
-            str(record.get("verdict", record.get("vote")) or ""),
-        ]
+    return _digest_key(
+        inference_id,
+        # The same aliases the downloaders read, so ID-less votes that
+        # carry only voter_id or vote are not all given one key.
+        str(record.get("evaluator_id") or record.get("voter_id") or ""),
+        str(record.get("timestamp") or record.get("created_at") or ""),
+        str(record.get("verdict", record.get("vote")) or ""),
     )
-    return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()
+
+
+def _legacy_external_key(record: dict, inference_id: str) -> Optional[str]:
+    """The key an ID-less vote was stored under before the aliases were
+    read, when it differs from _external_key's; None when it is the same.
+    A refetch must find a vote stored under it rather than store it twice."""
+    if record.get("id") or record.get("vote_id"):
+        return None
+    if record.get("evaluator_id") and "verdict" in record:
+        return None
+    return _digest_key(
+        inference_id,
+        str(record.get("evaluator_id") or ""),
+        str(record.get("timestamp") or record.get("created_at") or ""),
+        str(record.get("verdict") or ""),
+    )
+
+
+def _digest_key(*parts: str) -> str:
+    return "sha256:" + hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
 def sendable_tasks():
@@ -568,6 +585,14 @@ async def fetch_verdicts(client: HumanJudgeClient) -> DownloadResult:
                 skipped += 1
                 continue
             result.matched_task_ids.add(submission.task_id)
+            legacy_key = _legacy_external_key(record, inference_id)
+            if (
+                legacy_key is not None
+                and await HumanJudgeVerdict.objects.filter(
+                    external_key=legacy_key
+                ).aexists()
+            ):
+                continue
             _, created = await HumanJudgeVerdict.objects.aget_or_create(
                 external_key=_external_key(record, inference_id),
                 defaults={

@@ -396,3 +396,30 @@ async def test_request_template_leaves_the_prompt_placeholder_for_humanjudge():
 
 async def test_reviewer_instructions_fit_humanjudges_fields():
     assert all(len(t) <= 2000 for t in humanjudge_arena.REVIEWER_INSTRUCTIONS.values())
+
+
+@ON
+async def test_a_slug_two_models_share_leaves_a_vote_giving_only_it_unmatched(
+    backends,
+):
+    _, case = await _exported()
+    for name in ("org/model", "org-model"):
+        await HumanJudgeArenaAnswer.objects.acreate(
+            case=case,
+            prompt_sha256=case.prompt_sha256,
+            model_name=name,
+            content=f"Letter by {name}",
+            content_sha256=humanjudge_arena.prompt_digest(f"Letter by {name}"),
+            source="generated",
+        )
+    vote = _vote(model_name="Org Model", input=case.prompt)
+    await humanjudge_arena.download_arena_verdicts(FakeArena([vote]).transport)
+    assert await _matched_answer_of_only_vote() is None
+
+
+@ON
+async def test_id_less_votes_on_different_models_are_both_stored(backends):
+    base = {"vote": "flag", "voter_id": "rev-1", "timestamp": "2026-11-10T12:00:00Z"}
+    votes = [{**base, "model_name": "fhi-local"}, {**base, "model_name": "outside-model"}]
+    await humanjudge_arena.download_arena_verdicts(FakeArena(votes).transport)
+    assert await HumanJudgeArenaVerdict.objects.acount() == 2

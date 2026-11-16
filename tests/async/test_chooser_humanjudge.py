@@ -314,6 +314,25 @@ async def test_refetched_verdicts_are_not_stored_twice():
 
 
 @ON
+async def test_a_vote_stored_under_the_key_before_the_aliases_is_not_stored_again():
+    # Stored before the key read voter_id: its row has the older key.
+    task, candidates = await _task(count=1)
+    fake = FakeHumanJudge()
+    await _upload(fake, task)
+    [inference_id] = await _inference_ids(candidates)
+    fake.vote(inference_id, "pass", evaluator=None, voter_id="r9")
+    await _download(fake)
+    verdict = await HumanJudgeVerdict.objects.aget()
+    record = fake.votes[0]
+    verdict.external_key = chooser_humanjudge._legacy_external_key(record, inference_id)
+    await verdict.asave(update_fields=["external_key"])
+
+    await _download(fake)
+
+    assert await HumanJudgeVerdict.objects.acount() == 1
+
+
+@ON
 async def test_pick_is_the_draft_with_the_best_pass_rate_beside_other_judges():
     task, candidates = await _task(count=3)
     task.scoring_json = {"jev": {"candidate_id": candidates[2].id}}

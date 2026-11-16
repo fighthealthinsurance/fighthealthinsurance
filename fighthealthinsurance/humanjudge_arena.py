@@ -542,20 +542,39 @@ def _record_model(record: dict) -> str:
     return ""
 
 
-async def _model_names_by_slug() -> dict[str, str]:
-    """Our answers' model names by slug: HumanJudge models are named as
-    /v1/models lists ours, and a vote may carry the name or its slug."""
+async def _model_names_by_slug() -> dict[str, Optional[str]]:
+    """Our answers' model names, by exact name and by slug: HumanJudge
+    models are named as /v1/models lists ours, and a vote may carry the name
+    or its slug. A slug two names share (``org/model``, ``org-model``) maps
+    to None, so a vote giving only that slug is left unmatched rather than
+    credited to whichever name came first; an exact name still resolves."""
     names = {
         name
         async for name in HumanJudgeArenaAnswer.objects.values_list(
             "model_name", flat=True
         ).distinct()
     }
-    return {_slug(name): name for name in names}
+    by_slug: dict[str, Optional[str]] = {}
+    for name in names:
+        key = "slug:" + _slug(name)
+        by_slug[key] = None if key in by_slug else name
+    return {**by_slug, **{"name:" + name: name for name in names}}
+
+
+def _vote_identity(record: dict) -> str:
+    """What tells an arena vote's answer apart for _external_key: its
+    trace_id, else (no trace id to go on) its model and whatever case and
+    answer text it carries, so two ID-less votes on different answers by
+    the same reviewer at the same moment are not given one key."""
+    trace_id = str(record.get("trace_id") or "")
+    if trace_id:
+        return trace_id
+    texts = _texts(record, _CASE_TEXT_KEYS) + _texts(record, _ANSWER_TEXT_KEYS)
+    return "|".join([_record_model(record)] + [prompt_digest(t) for t in texts])
 
 
 async def _match(
-    record: dict, names_by_slug: dict[str, str]
+    record: dict, names_by_slug: dict[str, Optional[str]]
 ) -> tuple[Optional[HumanJudgeArenaAnswer], Optional[HumanJudgeArenaCase]]:
     """The answer and case a vote is about, as far as the record shows.
 
@@ -571,7 +590,12 @@ async def _match(
         if case is not None:
             break
     raw_model = _record_model(record)
-    model_name = names_by_slug.get(_slug(raw_model)) if raw_model else None
+    model_name = (
+        names_by_slug.get("name:" + raw_model)
+        or names_by_slug.get("slug:" + _slug(raw_model))
+        if raw_model
+        else None
+    )
     if raw_model and model_name is None:
         return None, case
     answer = None
@@ -640,7 +664,7 @@ async def download_arena_verdicts(transport: Any = None) -> ArenaDownloadResult:
         if verdict is None:
             result.skipped += 1
             continue
-        key = _external_key(record, str(record.get("trace_id") or ""))
+        key = _external_key(record, _vote_identity(record))
         if await HumanJudgeArenaVerdict.objects.filter(external_key=key).aexists():
             continue
         answer, case = await _match(record, names_by_slug)
