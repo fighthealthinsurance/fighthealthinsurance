@@ -22,6 +22,10 @@ HumanJudge Verdict list fetches the new verdicts
 picks of the cases they touch (``download_verdicts``). Nothing runs on a timer. It is off
 unless ``HUMANJUDGE_API_KEY`` is set (and ``CHOOSER_HUMANJUDGE`` is not
 false).
+
+Everything goes under one anonymous model here, so HumanJudge can only
+compare a case's drafts. humanjudge_arena enters each of our models in a
+HumanJudge arena instead, to measure hallucination by model.
 """
 
 import datetime
@@ -223,17 +227,33 @@ class HumanJudgeClient:
         self, model_id: str, from_date: Optional[datetime.date]
     ) -> list[dict]:
         """Every vote on the model since ``from_date``, a page at a time."""
+        return await self._paged_votes(
+            f"/api/v1/models/{model_id}/evaluations", "evaluations", from_date
+        )
+
+    async def arena_votes(
+        self, arena_id: str, from_date: Optional[datetime.date]
+    ) -> list[dict]:
+        """Every vote in the arena since ``from_date`` (the SDK's
+        ``arena(id).votes()``), a page at a time."""
+        return await self._paged_votes(
+            f"/api/v1/benchmarks/{arena_id}/votes", "arena votes", from_date
+        )
+
+    async def _paged_votes(
+        self, path: str, what: str, from_date: Optional[datetime.date]
+    ) -> list[dict]:
         out: list[dict] = []
         params: dict[str, Any] = {"detail": "votes", "limit": _PAGE_SIZE}
         if from_date is not None:
             params["from_date"] = from_date.isoformat()
         for page in range(_MAX_PAGES):
             response = await self.http.get(
-                f"/api/v1/models/{model_id}/evaluations",
+                path,
                 params={**params, "offset": page * _PAGE_SIZE},
                 headers={"Authorization": f"Bearer {self._read_key}"},
             )
-            self._check(response, "evaluations")
+            self._check(response, what)
             records = _records(response.json())
             out.extend(records)
             if len(records) < _PAGE_SIZE:

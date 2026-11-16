@@ -21,6 +21,7 @@ the rest of the app keeps working.
 | none | RxNav / RxNorm | No key needed | Drug-name normalization (brand and generic names, misspellings) |
 | `LOG_ANALYTICS_WORKSPACE_ID`, `LOG_ANALYTICS_WORKSPACE_KEY` | Azure Log Analytics | Optional | Ship app logs to a Log Analytics workspace |
 | `HUMANJUDGE_API_KEY`, `HUMANJUDGE_TOKEN`, `HUMANJUDGE_MODEL_ID` | HumanJudge | Optional | Outside human review of Appeal Arena drafts, from the admin |
+| `HUMAN_JUDGE_OAI_CALLBACK`, `HUMANJUDGE_ARENA_ID` | HumanJudge | Optional | A HumanJudge arena that judges our models for hallucination, through our OpenAI-compatible endpoint |
 | `RENTAHUMAN_API_KEY`, `RENTAHUMAN_WEBHOOK_SECRET` | RentAHuman | Optional | Paid reviewers judging in the Appeal Arena itself |
 | See [docs/ml-backends.md](docs/ml-backends.md) | Model backends | At least one | Appeal generation |
 
@@ -290,6 +291,30 @@ when they start. The Ray pods do not need it.
 - To check the setup, upload one case, then download. A message that votes
   "matched no draft we uploaded" means verdicts are arriving but cannot be
   tied to drafts; report it, as the vote format is not fully documented.
+
+### A hallucination arena (`HUMAN_JUDGE_OAI_CALLBACK` / `HUMANJUDGE_ARENA_ID`)
+
+Optional, separate from the upload above: each of our appeal-drafting models
+is entered in a HumanJudge arena, which calls our OpenAI-compatible endpoint
+for its letters, and the reviewers flag made-up citations and facts. How it
+works: [docs/chooser.md](docs/chooser.md), "A HumanJudge arena for
+hallucination".
+
+1. Make up a long random key (`openssl rand -hex 32`). That is
+   `HUMAN_JUDGE_OAI_CALLBACK`; the endpoint is off (404) without it, and
+   it is the API key you give each HumanJudge model.
+2. In the developer hub, under My Arenas, create the arena. The id in its
+   URL (`/arenas/<id>`) is `HUMANJUDGE_ARENA_ID`. Reading its votes takes
+   `HUMANJUDGE_TOKEN` (step 3 above).
+3. Restart the web pods, then run **Export to a HumanJudge arena** on the
+   Chooser Task list: the page that follows lists the cases to paste, the
+   reviewer instructions, and each model to register with its endpoint
+   settings.
+
+```bash
+export HUMAN_JUDGE_OAI_CALLBACK="a-long-random-string"
+export HUMANJUDGE_ARENA_ID="your-arena-id"
+```
 
 ## RentAHuman (`RENTAHUMAN_API_KEY` / `RENTAHUMAN_WEBHOOK_SECRET`)
 

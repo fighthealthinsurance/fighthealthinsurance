@@ -755,6 +755,83 @@ Staff run it from the admin; nothing goes out or comes back on a timer:
   public benchmark), holds every Arena draft. With more than one model on
   the account, set `HUMANJUDGE_MODEL_ID` to it.
 
+## A HumanJudge arena for hallucination (`humanjudge_arena.py`)
+
+The upload above sends every draft under one anonymous HumanJudge model, so
+HumanJudge can only say which of a case's drafts is better. A HumanJudge
+**arena** compares models: every model answers the same cases and reviewers
+pass or flag each answer blind. Here each of the Arena's appeal-drafting
+models is entered in an arena as one of our own endpoint models, and the
+reviewers are asked one question: does the letter make things up? (An arena
+has no side-by-side view, so "which is best" is not on offer.) The
+leaderboard then reads as a hallucination rate by model, and the stored
+verdicts and notes say where: a cited study the case does not list, a claim
+a listed study's summary does not make, a patient detail the case does not
+give, or a statute presented as if it were in the case.
+
+- **Our endpoint.** OpenAI-compatible, at `/ziggy/humanjudge/v1/models` and
+  `/ziggy/humanjudge/v1/chat/completions` (`humanjudge_arena_views.py`).
+  It answers 404 unless `HUMAN_JUDGE_OAI_CALLBACK` is set, and 401 to a
+  call without that key (as `Authorization: Bearer` or `api-key`, the two
+  headers HumanJudge sends). `/v1/models` lists the models the Arena draws
+  drafts from (`chooser_tasks._comparable_backends("appeal")`,
+  `CHOOSER_FORCE_MODEL`'s included), by the names drafts are stored under.
+  No streaming.
+- **Export.** Select cases on the Chooser Task list and run **Export to a
+  HumanJudge arena**. Only synthetic appeal cases that have reached voters
+  go, as with the upload. Each case's text is exactly the prompt our models
+  were given (`_build_appeal_prompt`): the facts, the patient's answers and
+  the evidence on file with its summaries, so reviewers can check every
+  claim against what the writer had. It is frozen in `HumanJudgeArenaCase`.
+  A case over HumanJudge's 5,000-character limit is skipped and listed,
+  never cut down: a reviewer shown less evidence than the writer had would
+  flag citations that are fine. At most 500 cases per export (one paste).
+  The page that follows holds everything to set the arena up by hand
+  (HumanJudge has no API for cases): the cases to paste under **Paste
+  many**, separated by `---` lines; the three **Reviewer instructions**
+  fields (`REVIEWER_INSTRUCTIONS`); and, for each model, the endpoint, the
+  key to use, the response path (`choices[0].message.content`) and the
+  request template, `{"model": "<name>", "messages": [{"role": "user",
+  "content": "{{prompt}}"}]}`. Register each model as its own HumanJudge
+  model under the same name, enter it in the arena and approve it there.
+- **Answers.** A call is matched to its case by the SHA-256 of the case
+  text with whitespace collapsed, so the paste box's line handling does not
+  matter. The answer, in order: the one given before for that case and
+  model (`HumanJudgeArenaAnswer`, so asking again always gets the same
+  letter); else the model's own Arena draft for the case (`source =
+  "arena_draft"`); else a letter the model writes now with the Arena's own
+  system prompt (`source = "generated"`). A case drafts only four models,
+  so most answers in an arena of more are the third kind. Text that is not
+  one of our cases is answered live by the named model. A model name
+  outside `/v1/models` still gets any stored answer, so the Arena's
+  combined draft can be entered as `synthesized` (stored answers only).
+- **Backfill.** HumanJudge waits 60 seconds per answer, less than a letter
+  can take, so the export starts writing every model's missing answers in a
+  background thread at once (`humanjudge_arena.backfill`, four at a time);
+  click Generate in the arena once **HumanJudge Arena Answers** has filled
+  in. A web pod restarting cuts that thread short: `manage.py
+  humanjudge_arena_backfill` (`--case`, `--model`, `--concurrency`) runs
+  the same backfill to completion. A call that still takes longer than
+  `HUMANJUDGE_ARENA_ANSWER_TIMEOUT` (50 seconds) gets a 503; the letter is
+  finished and stored anyway, so clicking Generate again (which fills only
+  the gaps) picks it up. The same letter being asked for twice at once is
+  written once per worker.
+- **Verdicts.** **Download arena verdicts** on the HumanJudge Arena Verdict
+  list reads the arena's votes (`GET
+  /api/v1/benchmarks/{HUMANJUDGE_ARENA_ID}/votes?detail=votes`, with
+  `HUMANJUDGE_TOKEN`) from two days before the newest stored. HumanJudge
+  documents a vote's model (`model_name`, `model_slug`) but no case field,
+  so each vote is matched by whichever it carries: the case text, the
+  answer text, or both with the model. A vote that cannot be matched yet is
+  stored anyway (`answer` empty) and matched again on every download. Check
+  the first download against a live arena: if its votes carry only a
+  `trace_id`, they stay unmatched until we learn how HumanJudge's trace ids
+  map to cases. Verdicts are kept apart from `ChooserVote` and from the
+  upload's `HumanJudgeVerdict`: they count toward nothing else. **Export
+  selected verdicts as CSV** gives each with its case, model and whether
+  the answer was the Arena's draft or written for the arena (worth keeping
+  apart in any analysis: the Arena's drafts were seen by our voters first).
+
 ## Rankings and privacy (`condition_rankings.py`, `public_rankings.py`)
 
 The public page shows two things, both safe to publish:
@@ -831,6 +908,9 @@ environment variables of the same name.
 | `CHOOSER_HUMANJUDGE` | `True` when `HUMANJUDGE_API_KEY` is set (`False` in tests) | Allow the admin's HumanJudge upload and download (see above) |
 | `HUMANJUDGE_API_KEY` / `HUMANJUDGE_TOKEN` / `HUMANJUDGE_MODEL_ID` | unset | HumanJudge's model key, an optional personal access token for reading votes, and the model id when the account has several |
 | `CHOOSER_HUMANJUDGE_MIN_VERDICTS` | `1` | HumanJudge verdicts every draft of a case needs before its pick is recorded |
+| `HUMAN_JUDGE_OAI_CALLBACK` | unset | The key a HumanJudge arena's models call our OpenAI-compatible endpoint with; the endpoint is off (404) without it |
+| `HUMANJUDGE_ARENA_ID` | unset | The arena whose votes **Download arena verdicts** reads |
+| `HUMANJUDGE_ARENA_ANSWER_TIMEOUT` | `50` | Seconds a call to our endpoint waits for a letter before a 503 (the letter is finished and stored anyway) |
 | `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` | `60` | Seconds a case waits for those verdicts, Jev's and our own model's together |
 | `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |
 | `CHOOSER_QA_TIMEOUT` | `60` | Seconds each question generator may take |

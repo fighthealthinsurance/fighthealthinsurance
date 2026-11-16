@@ -5144,6 +5144,130 @@ class HumanJudgeVerdict(ExportModelOperationsMixin("HumanJudgeVerdict"), models.
         return f"HumanJudge {self.verdict} on Candidate {self.candidate_id}"
 
 
+class HumanJudgeArenaCase(ExportModelOperationsMixin("HumanJudgeArenaCase"), models.Model):  # type: ignore
+    """One synthetic Arena appeal case as pasted into a HumanJudge arena (see
+    humanjudge_arena). ``prompt`` is the exact text our models are given for
+    the case (chooser_tasks._build_appeal_prompt): the facts, the patient's
+    answers and the evidence on file with its summaries, so HumanJudge's
+    reviewers can check each answer against everything its writer had.
+    Frozen once made, so the arena's copy and ours never drift apart; the
+    digest is how HumanJudge's calls to our endpoint find the case again."""
+
+    id = models.AutoField(primary_key=True)
+    task = models.OneToOneField(
+        ChooserTask, on_delete=models.CASCADE, related_name="humanjudge_arena_case"
+    )
+    prompt = models.TextField()
+    # humanjudge_arena.prompt_digest: SHA-256 of the whitespace-collapsed text.
+    prompt_sha256 = models.CharField(max_length=64, unique=True)
+    exported_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "HumanJudge Arena Case"
+        verbose_name_plural = "HumanJudge Arena Cases"
+
+    def __str__(self):
+        return f"HumanJudge arena case for Task {self.task_id}"
+
+
+class HumanJudgeArenaAnswer(ExportModelOperationsMixin("HumanJudgeArenaAnswer"), models.Model):  # type: ignore
+    """The answer our OpenAI-compatible endpoint gives HumanJudge for one
+    case and one model: the Arena's own draft by that model when it wrote
+    one, else a draft written for the arena (humanjudge_arena). Stored, so
+    HumanJudge asking again gets the same answer, and so its verdicts can be
+    traced back to the model, the case and how the answer was made."""
+
+    SOURCE_CHOICES = [
+        ("arena_draft", "Arena draft"),
+        ("generated", "Written for HumanJudge"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    # Null when HumanJudge sent text that is not one of our exported cases.
+    case = models.ForeignKey(
+        HumanJudgeArenaCase,
+        on_delete=models.CASCADE,
+        related_name="answers",
+        null=True,
+        blank=True,
+    )
+    prompt_sha256 = models.CharField(max_length=64)
+    model_name = models.CharField(max_length=200)
+    content = models.TextField()
+    content_sha256 = models.CharField(max_length=64, db_index=True)
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    # The Arena draft served, for source="arena_draft".
+    candidate = models.ForeignKey(
+        ChooserCandidate,
+        on_delete=models.SET_NULL,
+        related_name="humanjudge_arena_answers",
+        null=True,
+        blank=True,
+    )
+    served_count = models.PositiveIntegerField(default=0)
+    last_served_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["prompt_sha256", "model_name"],
+                name="humanjudge_arena_answer_unique",
+            )
+        ]
+        verbose_name = "HumanJudge Arena Answer"
+        verbose_name_plural = "HumanJudge Arena Answers"
+
+    def __str__(self):
+        return f"HumanJudge arena answer by {self.model_name}"
+
+
+class HumanJudgeArenaVerdict(ExportModelOperationsMixin("HumanJudgeArenaVerdict"), models.Model):  # type: ignore
+    """One HumanJudge reviewer's pass or flag on one arena answer. The
+    arena's reviewers are told to flag made-up studies, claims a study does
+    not make and patient details not in the case, so these measure
+    hallucination by model, not which letter is best. Kept apart from both
+    ChooserVote and HumanJudgeVerdict. A vote that cannot be matched to an
+    answer yet is still stored (``answer`` null) and matched again on each
+    download."""
+
+    VERDICT_CHOICES = HumanJudgeVerdict.VERDICT_CHOICES
+
+    id = models.AutoField(primary_key=True)
+    answer = models.ForeignKey(
+        HumanJudgeArenaAnswer,
+        on_delete=models.SET_NULL,
+        related_name="verdicts",
+        null=True,
+        blank=True,
+    )
+    case = models.ForeignKey(
+        HumanJudgeArenaCase,
+        on_delete=models.SET_NULL,
+        related_name="verdicts",
+        null=True,
+        blank=True,
+    )
+    # The model as HumanJudge names it (model_name, else model_slug).
+    humanjudge_model = models.CharField(max_length=200, blank=True, default="")
+    external_key = models.CharField(max_length=128, unique=True)
+    verdict = models.CharField(max_length=10, choices=VERDICT_CHOICES)
+    flag_category = models.CharField(max_length=100, blank=True, default="")
+    feedback = models.TextField(blank=True, default="")
+    evaluator_id = models.CharField(max_length=128, blank=True, default="")
+    voted_at = models.DateTimeField(null=True, blank=True)
+    raw = models.JSONField(default=dict, blank=True)
+    fetched_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["answer", "verdict"])]
+        verbose_name = "HumanJudge Arena Verdict"
+        verbose_name_plural = "HumanJudge Arena Verdicts"
+
+    def __str__(self):
+        return f"HumanJudge arena {self.verdict} on Answer {self.answer_id}"
+
+
 class PaidReviewBounty(ExportModelOperationsMixin("PaidReviewBounty"), models.Model):  # type: ignore
     """One batch of paid Arena reviewers, posted as a RentAHuman bounty.
 
