@@ -425,7 +425,8 @@ class Base(Configuration):
     # humanjudge_arena and docs/chooser.md). HUMAN_JUDGE_OAI_CALLBACK is the
     # key the arena's models call our OpenAI-compatible endpoint with; the
     # endpoint is off (404) without it. HUMANJUDGE_ARENA_ID is the arena
-    # whose votes are downloaded (read with HUMANJUDGE_TOKEN). HumanJudge
+    # whose reviews are downloaded, from its report, which must be set to
+    # Public (a public report needs no key). HumanJudge
     # waits 60 seconds per answer, so a letter not written in
     # HUMANJUDGE_ARENA_ANSWER_TIMEOUT seconds is finished in the background
     # and the call told to come back.

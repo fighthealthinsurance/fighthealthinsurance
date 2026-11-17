@@ -61,6 +61,6 @@ and how to enter each of our models against our OpenAI-compatible endpoint
 </table>
 
 <h2>4. Verdicts</h2>
-<p>Set HUMANJUDGE_ARENA_ID to the id in the arena's URL, then use Download arena verdicts on <a href="{% url 'admin:fighthealthinsurance_humanjudgearenaverdict_changelist' %}">HumanJudge Arena Verdicts</a>.</p>
+<p>Set HUMANJUDGE_ARENA_ID to the id in the arena's URL and the arena's Report visibility to Public (the verdicts are read from the report, which is refused unless it is public), then use Download arena verdicts on <a href="{% url 'admin:fighthealthinsurance_humanjudgearenaverdict_changelist' %}">HumanJudge Arena Verdicts</a>.</p>
 </div>
 {% endblock %}

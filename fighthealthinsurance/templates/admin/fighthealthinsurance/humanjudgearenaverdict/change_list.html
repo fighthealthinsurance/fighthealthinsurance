@@ -1,6 +1,6 @@
 {% extends "admin/change_list.html" %}
 {% comment %} HumanJudgeArenaVerdictAdmin.download_view reads the HumanJudge
-arena's new votes on our models' answers (humanjudge_arena). {% endcomment %}
+arena's new reviews of our models' answers, from its report (humanjudge_arena). {% endcomment %}
 {% block object-tools-items %}
 <li>
     <form id="humanjudge-arena-download" method="post" action="{% url 'admin:fighthealthinsurance_humanjudgearenaverdict_download' %}">

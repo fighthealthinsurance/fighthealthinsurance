@@ -821,20 +821,42 @@ give, or a statute presented as if it were in the case.
   the gaps) picks it up. The same letter being asked for twice at once is
   written once per worker.
 - **Verdicts.** **Download arena verdicts** on the HumanJudge Arena Verdict
-  list reads the arena's votes (`GET
-  /api/v1/benchmarks/{HUMANJUDGE_ARENA_ID}/votes?detail=votes`, with
-  `HUMANJUDGE_TOKEN`) from two days before the newest stored. HumanJudge
-  documents a vote's model (`model_name`, `model_slug`) but no case field,
-  so each vote is matched by whichever it carries: the case text, the
-  answer text, or both with the model. A vote that cannot be matched yet is
-  stored anyway (`answer` empty) and matched again on every download. Check
-  the first download against a live arena: if its votes carry only a
-  `trace_id`, they stay unmatched until we learn how HumanJudge's trace ids
-  map to cases. Verdicts are kept apart from `ChooserVote` and from the
-  upload's `HumanJudgeVerdict`: they count toward nothing else. **Export
-  selected verdicts as CSV** gives each with its case, model and whether
-  the answer was the Arena's draft or written for the arena (worth keeping
-  apart in any analysis: the Arena's drafts were seen by our voters first).
+  list reads the arena's reviews from its report (`GET
+  /api/v1/reports/{HUMANJUDGE_ARENA_ID}`, 50 a page, newest first). Each
+  review there carries the case (`user_input`), the answer (`ai_output`),
+  the verdict (`approved` or `flagged`), the flag category, the reviewer's
+  note (`reasoning`) and a `review_id`: the shape was read from a live
+  arena's report, and the tests' reviews are built from it. A review names
+  no model, so it is matched to our stored answer by the answer's text,
+  which is ours alone for one case and model, and the model and case follow
+  from the answer. Never a guess: text that fits two answers or none leaves
+  the review unmatched, stored anyway (`answer` empty) and matched again on
+  every download. Reading stops at the first page with nothing new once we
+  hold as many reviews as the report counts, so a download cut short is
+  caught up by the next. **The arena's report must be set to Public** (the
+  arena page's Report visibility): a public report needs no key, and one
+  that is not is refused, with a message saying so. That makes the
+  synthetic cases, the letters and the reviewers' notes readable by anyone
+  with the arena's id, as its leaderboard already is. Verdicts are kept
+  apart from `ChooserVote` and from the upload's `HumanJudgeVerdict`: they
+  count toward nothing else. **Export selected verdicts as CSV** gives each
+  with its case, model and whether the answer was the Arena's draft or
+  written for the arena (worth keeping apart in any analysis: the Arena's
+  drafts were seen by our voters first).
+- **What HumanJudge's API offers, and does not** (from its published
+  schema, `api.humanjudge.com/openapi.json`, and probing which routes take
+  which key). Its vote API (`/benchmarks/{arena}/votes`) gives each vote's
+  `trace_id` and model but neither the case nor the answer, and is a
+  premium route outside arenas you own; the routes that would tie a trace
+  to its question (`/enrollments/{id}/traces`, `/models/{id}/traces`), add
+  cases (`/playground/challenges/{arena}/questions/bulk`) or start
+  generation take only a dashboard login, not a `gj_pat_` token or model
+  key. So cases are pasted by hand and verdicts come from the report. The
+  **Test endpoint** button on a model's Setup tab sends "Say hello in one
+  sentence." through the request template: our endpoint answers text that
+  is not one of our cases with whatever the model says, however short, so
+  the test passes (one of our cases is still held to the Arena's minimum
+  length for a draft).
 
 ## Rankings and privacy (`condition_rankings.py`, `public_rankings.py`)
 
@@ -913,7 +935,7 @@ environment variables of the same name.
 | `HUMANJUDGE_API_KEY` / `HUMANJUDGE_TOKEN` / `HUMANJUDGE_MODEL_ID` | unset | HumanJudge's model key, an optional personal access token for reading votes, and the model id when the account has several |
 | `CHOOSER_HUMANJUDGE_MIN_VERDICTS` | `1` | HumanJudge verdicts every draft of a case needs before its pick is recorded |
 | `HUMAN_JUDGE_OAI_CALLBACK` | unset | The key a HumanJudge arena's models call our OpenAI-compatible endpoint with; the endpoint is off (404) without it |
-| `HUMANJUDGE_ARENA_ID` | unset | The arena whose votes **Download arena verdicts** reads |
+| `HUMANJUDGE_ARENA_ID` | unset | The arena whose report **Download arena verdicts** reads (the report must be Public) |
 | `HUMANJUDGE_ARENA_ANSWER_TIMEOUT` | `50` | Seconds a call to our endpoint waits for a letter before a 503 (the letter is finished and stored anyway) |
 | `CHOOSER_EVIDENCE_JUDGING_TIMEOUT` | `60` | Seconds a case waits for those verdicts, Jev's and our own model's together |
 | `CHOOSER_MAX_QUESTIONS` | `4` | Questions the simulated patient is asked |

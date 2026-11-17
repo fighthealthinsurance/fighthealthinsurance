@@ -207,8 +207,8 @@ async def test_an_unknown_model_is_404(backends):
 
 
 @ON
-async def test_a_model_that_writes_nothing_usable_is_a_failed_answer(backends):
-    backends["outside-model"].reply = "Sorry."
+async def test_a_model_that_writes_nothing_is_a_failed_answer(backends):
+    backends["outside-model"].reply = "  "
     response = await _ask("Write an appeal.", model="outside-model")
     assert response.status_code == 502
 
@@ -254,23 +254,65 @@ async def test_backfill_leaves_stored_answers_alone(backends):
 
 
 class FakeArena:
-    """HumanJudge's arena votes endpoint."""
+    """HumanJudge's arena report API (``GET /api/v1/reports/{arena}``): the
+    reviews given, newest first, a page at a time, in the envelope a live
+    arena's report has."""
 
-    def __init__(self, votes):
-        self.votes = votes
+    def __init__(self, reviews, status=200):
+        self.reviews = reviews
+        self.status = status
+        self.requests: list[httpx.Request] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/v1/benchmarks/arena-1/votes":
-            offset = int(request.url.params.get("offset", 0))
-            return httpx.Response(200, json=self.votes[offset:])
-        return httpx.Response(404, json={})
+        if request.url.path != "/api/v1/reports/arena-1":
+            return httpx.Response(404, json={"detail": "Report not found"})
+        self.requests.append(request)
+        if self.status != 200:
+            return httpx.Response(self.status, json={"detail": "refused"})
+        offset = int(request.url.params.get("offset", 0))
+        limit = int(request.url.params.get("limit", 5))
+        return httpx.Response(
+            200,
+            json={
+                "project_id": "arena-1",
+                "visibility": "public",
+                "reviews": self.reviews[offset : offset + limit],
+                "reviews_total": len(self.reviews),
+                "has_more_reviews": offset + limit < len(self.reviews),
+            },
+        )
 
     @property
     def transport(self):
         return httpx.MockTransport(self.handler)
 
 
+def _review(case_text, answer_text, n=1, **fields):
+    """A review exactly as a live arena's report gives one (the fields of
+    the "Dry run: appeal letter arena" report): the case and the answer in
+    full, no model, no trace id."""
+    return {
+        "review_id": f"00000000-0000-4000-8000-{n:012d}",
+        "evaluator_name": "Reviewer #e8735dee",
+        "evaluator_id": "e8735dee-d283-4aa3-b7e0-bb1a71219ae5",
+        "verdict": "flagged",
+        "flag_category": "wrong",
+        "vote_value": 0.0,
+        "confidence": 1.0,
+        "reasoning": "Cites a study that is not in the case",
+        "user_input": case_text,
+        "ai_output": answer_text,
+        "created_at": "2026-11-13T01:05:10.782610",
+        "is_verified_evaluator": False,
+        "agent_name": None,
+        **fields,
+    }
+
+
 def _vote(**fields):
+    """A record in the vote API's documented shape (model and trace id, no
+    texts unless a test adds them): not what the report gives, but what the
+    matcher must stay safe against."""
     return {
         "trace_id": "tr-1",
         "model_slug": "fhi-local",
@@ -463,3 +505,87 @@ async def test_an_exact_model_name_resolves_even_when_its_slug_is_shared(backend
     vote = _vote(model_name="org/model", model_slug="org-model", input=case.prompt)
     await humanjudge_arena.download_arena_verdicts(FakeArena([vote]).transport)
     assert await _matched_answer_of_only_vote() == answers["org/model"].id
+
+
+@ON
+async def test_a_live_shaped_review_is_matched_to_the_model_by_its_answer_text(
+    backends,
+):
+    # A report review names no model: the answer's text says whose it is.
+    _, case = await _exported()
+    response = await _ask(case.prompt, model="outside-model")
+    fake = FakeArena([_review(case.prompt, _letter(response))])
+    await humanjudge_arena.download_arena_verdicts(fake.transport)
+    verdict = await HumanJudgeArenaVerdict.objects.select_related("answer").aget()
+    assert (verdict.answer.model_name, verdict.case_id) == ("outside-model", case.id)
+
+
+@ON
+async def test_a_review_is_stored_with_its_verdict_and_the_reviewers_note(backends):
+    fake = FakeArena([_review("a case", "an answer", verdict="approved")])
+    await humanjudge_arena.download_arena_verdicts(fake.transport)
+    verdict = await HumanJudgeArenaVerdict.objects.aget()
+    assert (verdict.verdict, verdict.feedback) == (
+        "pass",
+        "Cites a study that is not in the case",
+    )
+
+
+@ON
+async def test_every_page_of_the_report_is_read(backends):
+    fake = FakeArena([_review("a case", f"answer {n}", n=n) for n in range(120)])
+    await humanjudge_arena.download_arena_verdicts(fake.transport)
+    assert await HumanJudgeArenaVerdict.objects.acount() == 120
+
+
+@ON
+async def test_a_later_download_stops_at_the_first_page_with_nothing_new(backends):
+    fake = FakeArena([_review("a case", f"answer {n}", n=n) for n in range(120)])
+    await humanjudge_arena.download_arena_verdicts(fake.transport)
+    fake.requests.clear()
+    await humanjudge_arena.download_arena_verdicts(fake.transport)
+    assert len(fake.requests) == 1
+
+
+@ON
+async def test_a_download_cut_short_is_caught_up_by_the_next(backends):
+    # Only the newest page was stored: the count says older ones are missing.
+    reviews = [_review("a case", f"answer {n}", n=n) for n in range(120)]
+    await humanjudge_arena.download_arena_verdicts(FakeArena(reviews[:50]).transport)
+    await humanjudge_arena.download_arena_verdicts(FakeArena(reviews).transport)
+    assert await HumanJudgeArenaVerdict.objects.acount() == 120
+
+
+@ON
+async def test_a_report_that_is_not_public_says_to_make_it_public(backends):
+    fake = FakeArena([], status=403)
+    with pytest.raises(humanjudge_arena.HumanJudgeAuthError, match="Public"):
+        await humanjudge_arena.download_arena_verdicts(fake.transport)
+
+
+@override_settings(
+    HUMANJUDGE_ARENA_ID="arena-1",
+    HUMANJUDGE_TOKEN="",
+    HUMANJUDGE_API_KEY="",
+    HUMANJUDGE_BASE_URL="https://humanjudge.invalid",
+)
+async def test_a_public_report_is_read_without_any_key():
+    fake = FakeArena([_review("a case", "an answer")])
+    await humanjudge_arena.download_arena_verdicts(fake.transport)
+    assert "authorization" not in fake.requests[0].headers
+
+
+@ON
+async def test_humanjudges_test_endpoint_prompt_gets_its_one_line_reply(backends):
+    # The Test endpoint button sends this; a short reply is the right one.
+    backends["fhi-local"].reply = "Hello there!"
+    response = await _ask("Say hello in one sentence.")
+    assert _letter(response) == "Hello there!"
+
+
+@ON
+async def test_a_short_reply_to_one_of_our_cases_is_still_a_failed_answer(backends):
+    backends["outside-model"].reply = "Sorry."
+    _, case = await _exported()
+    response = await _ask(case.prompt, model="outside-model")
+    assert response.status_code == 502

@@ -66,6 +66,8 @@ MAX_TASKS_PER_UPLOAD = 300
 _HTTP_TIMEOUT_SECONDS = 20.0
 # HumanJudge's page cap (the SDK's PAGE_SIZE), and how many pages one download reads.
 _PAGE_SIZE = 1000
+# The most reviews HumanJudge's report API gives per page.
+REPORT_PAGE_SIZE = 50
 _MAX_PAGES = 20
 # Verdicts are re-read this far back from the newest one stored, for votes
 # HumanJudge records late; the unique key drops the ones already stored.
@@ -227,33 +229,17 @@ class HumanJudgeClient:
         self, model_id: str, from_date: Optional[datetime.date]
     ) -> list[dict]:
         """Every vote on the model since ``from_date``, a page at a time."""
-        return await self._paged_votes(
-            f"/api/v1/models/{model_id}/evaluations", "evaluations", from_date
-        )
-
-    async def arena_votes(
-        self, arena_id: str, from_date: Optional[datetime.date]
-    ) -> list[dict]:
-        """Every vote in the arena since ``from_date`` (the SDK's
-        ``arena(id).votes()``), a page at a time."""
-        return await self._paged_votes(
-            f"/api/v1/benchmarks/{arena_id}/votes", "arena votes", from_date
-        )
-
-    async def _paged_votes(
-        self, path: str, what: str, from_date: Optional[datetime.date]
-    ) -> list[dict]:
         out: list[dict] = []
         params: dict[str, Any] = {"detail": "votes", "limit": _PAGE_SIZE}
         if from_date is not None:
             params["from_date"] = from_date.isoformat()
         for page in range(_MAX_PAGES):
             response = await self.http.get(
-                path,
+                f"/api/v1/models/{model_id}/evaluations",
                 params={**params, "offset": page * _PAGE_SIZE},
                 headers={"Authorization": f"Bearer {self._read_key}"},
             )
-            self._check(response, what)
+            self._check(response, "evaluations")
             records = _records(response.json())
             out.extend(records)
             if len(records) < _PAGE_SIZE:
@@ -269,6 +255,29 @@ class HumanJudgeClient:
                 "are not read. Raise _MAX_PAGES"
             )
         return out
+
+    async def arena_report(
+        self, arena_id: str, offset: int, refresh: bool = False
+    ) -> dict:
+        """One page of an arena's report (``GET /api/v1/reports/{arena}``):
+        its reviews, newest first, ``REPORT_PAGE_SIZE`` at a time, each with
+        the case (``user_input``), the answer (``ai_output``), the verdict
+        and the reviewer's note, plus ``reviews_total`` and
+        ``has_more_reviews``. A public report needs no key; ours is sent
+        when there is one, for a report that is not public. ``refresh`` asks
+        HumanJudge to rebuild its cached report first."""
+        params: dict[str, Any] = {"limit": REPORT_PAGE_SIZE, "offset": offset}
+        if refresh:
+            params["force_refresh"] = "true"
+        headers = (
+            {"Authorization": f"Bearer {self._read_key}"} if self._read_key else {}
+        )
+        response = await self.http.get(
+            f"/api/v1/reports/{arena_id}", params=params, headers=headers
+        )
+        self._check(response, "arena report")
+        body = response.json()
+        return body if isinstance(body, dict) else {}
 
 
 def _records(body: Any) -> list[dict]:

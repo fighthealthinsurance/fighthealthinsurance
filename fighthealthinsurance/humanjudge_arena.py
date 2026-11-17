@@ -33,16 +33,23 @@ The pieces, all driven by staff from the admin:
   HUMANJUDGE_ARENA_ANSWER_TIMEOUT is told to come back (HumanJudge's
   Generate fills only the gaps when clicked again) while the letter is
   finished and stored for it. Text that is not one of our cases is answered
-  live by the named model, as any OpenAI-compatible endpoint would.
-- **Verdicts** (``download_arena_verdicts``). The arena's votes are read
-  (``GET /api/v1/benchmarks/{arena}/votes``) and matched to our answers by
-  model name and case or answer text. HumanJudge does not document a case
-  field on a vote, so a vote that cannot be matched yet is stored anyway
-  and matched again on each download.
+  live by the named model, as any OpenAI-compatible endpoint would (and
+  any reply counts: HumanJudge's Test endpoint button sends "Say hello in
+  one sentence.", which no appeal-length check should fail).
+- **Verdicts** (``download_arena_verdicts``). The arena's reviews are read
+  from its report (``GET /api/v1/reports/{arena}``), the one HumanJudge
+  API that gives each review with the case (``user_input``) and the answer
+  (``ai_output``) it was about; its vote API gives a ``trace_id`` and the
+  model but neither text, and the routes that map a trace to its question
+  take only a dashboard login. A review names no model, so it is matched
+  to our stored answer by the answer's text, which is ours alone for one
+  case and model. One that cannot be matched yet is stored anyway and
+  matched again on each download.
 
 The endpoint is off (404) unless HUMAN_JUDGE_OAI_CALLBACK, the key the
-arena's models are set up with, is configured. Reading votes needs
-HUMANJUDGE_ARENA_ID and a HUMANJUDGE_TOKEN (or HUMANJUDGE_API_KEY).
+arena's models are set up with, is configured. Reading reviews needs
+HUMANJUDGE_ARENA_ID and the arena's report set to Public (HUMANJUDGE_TOKEN
+or HUMANJUDGE_API_KEY is sent too, for a report that is not).
 """
 
 import asyncio
@@ -55,6 +62,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
+import httpx
 from django.conf import settings
 from django.db import IntegrityError
 from django.db.models import F
@@ -63,7 +71,8 @@ from loguru import logger
 
 from fighthealthinsurance import chooser_tasks
 from fighthealthinsurance.chooser_humanjudge import (
-    _REFETCH_OVERLAP,
+    REPORT_PAGE_SIZE,
+    HumanJudgeAuthError,
     HumanJudgeClient,
     HumanJudgeError,
     _external_key,
@@ -356,7 +365,11 @@ async def produce_answer(prompt: str, model_name: str) -> HumanJudgeArenaAnswer:
         logger.warning(f"HumanJudge arena: {model_name} failed to write a letter: {e}")
         raise AnswerFailed(f"{model_name} did not answer") from e
     text = reply.strip() if isinstance(reply, str) else ""
-    if len(text) <= chooser_tasks.APPEAL_MIN_CHARS:
+    # One of our cases is held to the Arena's own bar for a draft. Other
+    # text is not ours to judge: HumanJudge's Test endpoint button sends
+    # "Say hello in one sentence.", and a one-line reply is the right one.
+    minimum = chooser_tasks.APPEAL_MIN_CHARS if case is not None else 0
+    if len(text) <= minimum:
         logger.info(
             f"HumanJudge arena: {model_name} gave no usable letter ({len(text)} chars)"
         )
@@ -523,11 +536,31 @@ def start_backfill(case_ids: list[int]) -> list[int]:
     return ids
 
 
-# Where a vote may carry the case's text and the answer's, by the names
-# HumanJudge uses elsewhere (a trace's input and output) and the obvious
-# others; none is documented for arena votes.
-_CASE_TEXT_KEYS = ("input", "prompt", "question", "question_text", "case")
-_ANSWER_TEXT_KEYS = ("output", "answer", "response", "answer_text", "response_text")
+# Where a review carries the case's text and the answer's: user_input and
+# ai_output in the report API (seen in a live arena's report), then the
+# names HumanJudge uses for the same texts elsewhere (trace_input and
+# trace_output in its disagreements API, a trace's input and output) and
+# the obvious others, should a record come from another route.
+_CASE_TEXT_KEYS = (
+    "user_input",
+    "trace_input",
+    "input",
+    "prompt",
+    "question",
+    "question_text",
+    "case",
+)
+_ANSWER_TEXT_KEYS = (
+    "ai_output",
+    "trace_output",
+    "output",
+    "answer",
+    "response",
+    "answer_text",
+    "response_text",
+)
+# Report pages one download reads at most (REPORT_PAGE_SIZE reviews each).
+_MAX_REPORT_PAGES = 1000
 _MODEL_KEYS = ("model_name", "model_slug", "model")
 
 
@@ -536,13 +569,8 @@ def arena_id() -> str:
 
 
 def verdicts_enabled() -> bool:
-    return bool(
-        arena_id()
-        and (
-            getattr(settings, "HUMANJUDGE_TOKEN", "")
-            or getattr(settings, "HUMANJUDGE_API_KEY", "")
-        )
-    )
+    """A public report needs no key, so the arena's id is enough."""
+    return bool(arena_id())
 
 
 def _texts(record: dict, keys: Iterable[str]) -> list[str]:
@@ -591,10 +619,11 @@ async def _model_names_by_slug() -> dict[str, Optional[str]]:
 
 
 def _vote_identity(record: dict) -> str:
-    """What tells an arena vote's answer apart for _external_key: its
-    trace_id, else (no trace id to go on) its model and whatever case and
-    answer text it carries, so two ID-less votes on different answers by
-    the same reviewer at the same moment are not given one key."""
+    """What tells a review's answer apart for _external_key, for a record
+    with no review_id (the report API always gives one): its trace_id, else
+    its model and whatever case and answer text it carries, so two ID-less
+    records on different answers by the same reviewer at the same moment
+    are not given one key."""
     trace_id = str(record.get("trace_id") or "")
     if trace_id:
         return trace_id
@@ -667,62 +696,116 @@ class ArenaDownloadResult:
     rematched: int = 0
     # Verdicts stored without an answer yet (matched again next time).
     unmatched: int = 0
-    # Votes without a pass/flag verdict; not stored.
+    # Reviews without a pass/flag verdict; not stored.
     skipped: int = 0
 
 
+def _review_key(record: dict) -> str:
+    """The stored key of a review: its review_id, which the report API
+    always gives; else the same key any other vote record gets."""
+    review_id = record.get("review_id")
+    if review_id:
+        return f"id:{review_id}"[:128]
+    return _external_key(record, _vote_identity(record))
+
+
+async def _store_review(
+    record: dict, names_by_slug: dict[str, Optional[str]], result: ArenaDownloadResult
+) -> bool:
+    """Store one review unless it is stored already; whether it was new."""
+    verdict = _record_verdict(record)
+    if verdict is None:
+        result.skipped += 1
+        return False
+    key = _review_key(record)
+    if await HumanJudgeArenaVerdict.objects.filter(external_key=key).aexists():
+        return False
+    answer, case = await _match(record, names_by_slug)
+    try:
+        await HumanJudgeArenaVerdict.objects.acreate(
+            external_key=key,
+            answer=answer,
+            case=case,
+            humanjudge_model=_record_model(record)[:200],
+            verdict=verdict,
+            flag_category=str(record.get("flag_category") or "")[:100],
+            # The reviewer's note: "reasoning" in the report API.
+            feedback=str(record.get("reasoning") or record.get("feedback") or ""),
+            evaluator_id=str(
+                record.get("evaluator_id") or record.get("voter_id") or ""
+            )[:128],
+            voted_at=_record_time(record),
+            raw=record,
+        )
+    except IntegrityError:
+        return False  # A concurrent download stored it.
+    result.new_verdicts += 1
+    if answer is not None:
+        result.matched += 1
+    else:
+        result.unmatched += 1
+    return True
+
+
+async def _report_page(client: HumanJudgeClient, page: int) -> dict:
+    """One page of the arena's report, with what to check when HumanJudge
+    will not give it."""
+    try:
+        return await client.arena_report(
+            arena_id(), page * REPORT_PAGE_SIZE, refresh=page == 0
+        )
+    except HumanJudgeAuthError as e:
+        raise HumanJudgeAuthError(
+            f"HumanJudge would not give the arena's report ({e}): set the "
+            "report's visibility to Public on the arena page"
+        ) from e
+    except HumanJudgeError as e:
+        raise HumanJudgeError(
+            f"HumanJudge has no report for the arena ({e}): check "
+            "HUMANJUDGE_ARENA_ID"
+        ) from e
+    except httpx.HTTPError as e:
+        raise HumanJudgeError(f"Could not reach HumanJudge ({type(e).__name__})") from e
+
+
 async def download_arena_verdicts(transport: Any = None) -> ArenaDownloadResult:
-    """Read the arena's new votes and store them, matched to our answers
-    where the record allows. Raises HumanJudgeError when not configured,
-    HumanJudgeAuthError when HumanJudge refuses the key."""
+    """Read the arena's new reviews from its report and store them, each
+    matched to our answer where its texts allow. Raises HumanJudgeError
+    when not configured or the report cannot be read (HumanJudgeAuthError
+    when HumanJudge refuses it: a report that is not public).
+
+    The report lists reviews newest first, so reading stops at the first
+    page that holds nothing new once we hold as many reviews as the report
+    counts; a download cut short earlier is caught up by the count."""
     if not verdicts_enabled():
         raise HumanJudgeError(
-            "HumanJudge arena verdicts are not configured "
-            "(HUMANJUDGE_ARENA_ID and HUMANJUDGE_TOKEN)"
+            "HumanJudge arena verdicts are not configured (HUMANJUDGE_ARENA_ID)"
         )
-    newest = (
-        await HumanJudgeArenaVerdict.objects.exclude(voted_at=None)
-        .order_by("-voted_at")
-        .values_list("voted_at", flat=True)
-        .afirst()
-    )
-    since = (newest - _REFETCH_OVERLAP).date() if newest else None
-    async with HumanJudgeClient(transport=transport) as client:
-        records = await client.arena_votes(arena_id(), since)
     names_by_slug = await _model_names_by_slug()
     result = ArenaDownloadResult()
-    for record in records:
-        verdict = _record_verdict(record)
-        if verdict is None:
-            result.skipped += 1
-            continue
-        key = _external_key(record, _vote_identity(record))
-        if await HumanJudgeArenaVerdict.objects.filter(external_key=key).aexists():
-            continue
-        answer, case = await _match(record, names_by_slug)
-        try:
-            await HumanJudgeArenaVerdict.objects.acreate(
-                external_key=key,
-                answer=answer,
-                case=case,
-                humanjudge_model=_record_model(record)[:200],
-                verdict=verdict,
-                flag_category=str(record.get("flag_category") or "")[:100],
-                feedback=str(record.get("feedback") or ""),
-                evaluator_id=str(
-                    record.get("evaluator_id") or record.get("voter_id") or ""
-                )[:128],
-                voted_at=_record_time(record),
-                raw=record,
+    async with HumanJudgeClient(transport=transport) as client:
+        for page in range(_MAX_REPORT_PAGES):
+            body = await _report_page(client, page)
+            reviews = [r for r in body.get("reviews") or [] if isinstance(r, dict)]
+            new_on_page = 0
+            for record in reviews:
+                if await _store_review(record, names_by_slug, result):
+                    new_on_page += 1
+            if not reviews or not body.get("has_more_reviews"):
+                break
+            total = body.get("reviews_total")
+            caught_up = not isinstance(total, int) or (
+                await HumanJudgeArenaVerdict.objects.acount() >= total
             )
-        except IntegrityError:
-            continue  # A concurrent download stored it.
-        result.new_verdicts += 1
-        if answer is not None:
-            result.matched += 1
+            if new_on_page == 0 and caught_up:
+                break
         else:
-            result.unmatched += 1
-    # Votes stored before their answer could be found: try again, since a
+            logger.error(
+                f"HumanJudge arena: stopped reading the report after "
+                f"{_MAX_REPORT_PAGES} pages; older reviews are not read. "
+                "Raise _MAX_REPORT_PAGES"
+            )
+    # Reviews stored before their answer could be found: try again, since a
     # backfill or a newer case may have made it findable.
     async for verdict_row in HumanJudgeArenaVerdict.objects.filter(answer=None):
         answer, case = await _match(verdict_row.raw or {}, names_by_slug)

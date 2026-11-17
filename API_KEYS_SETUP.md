@@ -304,8 +304,11 @@ hallucination".
    `HUMAN_JUDGE_OAI_CALLBACK`; the endpoint is off (404) without it, and
    it is the API key you give each HumanJudge model.
 2. In the developer hub, under My Arenas, create the arena. The id in its
-   URL (`/arenas/<id>`) is `HUMANJUDGE_ARENA_ID`. Reading its votes takes
-   `HUMANJUDGE_TOKEN` (step 3 above).
+   URL (`/arenas/<id>`) is `HUMANJUDGE_ARENA_ID`. Set the arena's Report
+   visibility to **Public**: verdicts are read from the report, which
+   HumanJudge gives without a key when public and refuses otherwise. That
+   makes the synthetic cases, letters and reviewers' notes readable by
+   anyone with the arena's id.
 3. Restart the web pods, then run **Export to a HumanJudge arena** on the
    Chooser Task list: the page that follows lists the cases to paste, the
    reviewer instructions, and each model to register with its endpoint
