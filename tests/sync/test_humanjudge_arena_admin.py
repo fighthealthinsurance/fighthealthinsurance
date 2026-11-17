@@ -6,7 +6,7 @@ asked for a letter."""
 
 import csv
 import io
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -74,6 +74,26 @@ class HumanJudgeArenaAdminTest(TestCase):
         case = HumanJudgeArenaCase.objects.get(task=self.task)
         self.start_backfill.assert_called_once_with([case.id])
 
+    def test_a_lone_case_is_to_be_added_one_at_a_time_not_pasted(self):
+        # With no "---" line, Paste many would split it at every line break.
+        self.assertContains(self.export(), 'id="arena-single-case"')
+
+    def test_several_cases_are_to_be_pasted(self):
+        other = ChooserTask.objects.create(
+            task_type="appeal",
+            status="READY",
+            source="synthetic",
+            context_json={**CONTEXT, "procedure": "CT"},
+        )
+        response = self.client.post(
+            TASKS,
+            {
+                "action": "export_to_humanjudge_arena",
+                "_selected_action": [self.task.id, other.id],
+            },
+        )
+        self.assertNotContains(response, 'id="arena-single-case"')
+
     def test_export_warns_and_writes_nothing_while_the_endpoint_is_off(self):
         response = self.export()
         self.assertContains(response, 'id="arena-endpoint-off"')
@@ -128,3 +148,27 @@ class HumanJudgeArenaAdminTest(TestCase):
             (row["model_name"], row["answer_source"], row["verdict"]),
             ("fhi-local", "generated", "flag"),
         )
+
+
+class StartBackfillTest(TestCase):
+    """start_backfill never starts a second backfill over cases one in this
+    process is still writing: its letters would be paid for, then dropped."""
+
+    def setUp(self):
+        threads = patch("fighthealthinsurance.utils.run_in_registered_daemon_thread")
+        self.run_in_thread = threads.start()
+        self.addCleanup(threads.stop)
+        self.addCleanup(humanjudge_arena._backfilling.clear)
+
+    def test_cases_already_being_backfilled_are_not_started_again(self):
+        humanjudge_arena.start_backfill([1, 2])
+        self.assertEqual(humanjudge_arena.start_backfill([2, 3]), [3])
+
+    def test_cases_are_free_again_once_their_backfill_ends(self):
+        backfill = patch.object(humanjudge_arena, "backfill", AsyncMock())
+        backfill.start()
+        self.addCleanup(backfill.stop)
+        humanjudge_arena.start_backfill([1])
+        [run] = self.run_in_thread.call_args.args
+        run()
+        self.assertEqual(humanjudge_arena.start_backfill([1]), [1])

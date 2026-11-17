@@ -2114,11 +2114,19 @@ class HumanJudgeArenaCaseAdmin(admin.ModelAdmin):
         from fighthealthinsurance import humanjudge_arena
 
         ids = list(queryset.values_list("id", flat=True))
-        humanjudge_arena.start_backfill(ids)
+        started = humanjudge_arena.start_backfill(ids)
+        if not started:
+            self.message_user(
+                request,
+                "Their answers are already being written in the background.",
+                messages.INFO,
+            )
+            return
         self.message_user(
             request,
-            f"Writing every arena model's missing answers to {len(ids)} case(s) "
-            "in the background; HumanJudge Arena Answers fills in as they land.",
+            f"Writing every arena model's missing answers to {len(started)} "
+            "case(s) in the background; HumanJudge Arena Answers fills in as "
+            "they land.",
             messages.SUCCESS,
         )
 

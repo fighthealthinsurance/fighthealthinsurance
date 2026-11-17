@@ -738,8 +738,6 @@ urlpatterns += [
         views.ChooserView.as_view(),
         name="chooser",
     ),
-    # Paid Arena reviewers hired through RentAHuman (paid_reviews.py): the
-    # join link in a bounty, and the signed events RentAHuman sends.
     # The OpenAI-compatible endpoint a HumanJudge arena calls for our
     # models' appeal letters (humanjudge_arena); 404 unless
     # HUMAN_JUDGE_OAI_CALLBACK is set.
@@ -753,6 +751,8 @@ urlpatterns += [
         humanjudge_arena_views.chat_completions_view,
         name="humanjudge_arena_chat_completions",
     ),
+    # Paid Arena reviewers hired through RentAHuman (paid_reviews.py): the
+    # join link in a bounty, and the signed events RentAHuman sends.
     path(
         "chooser/paid/webhook/rentahuman/",
         csrf_exempt(paid_reviews.RentAHumanWebhookView.as_view()),

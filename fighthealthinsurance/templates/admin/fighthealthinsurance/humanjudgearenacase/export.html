@@ -22,7 +22,11 @@ and how to enter each of our models against our OpenAI-compatible endpoint
 {% endif %}
 
 <h2>1. Cases</h2>
+{% if result.cases|length == 1 %}
+<p id="arena-single-case">One case only: add it under Questions with Add, not Paste many. Paste many reads a paste with no "---" line as one case per line, so it would split this case at every line break.</p>
+{% else %}
 <p>In the arena, under Questions, click Paste many and paste each box (at most 500 cases each). Cases already in the arena are skipped there, so pasting again is harmless.</p>
+{% endif %}
 {% for batch in batches %}
 <textarea class="vLargeTextField arena-paste" rows="12" cols="100" readonly>{{ batch }}</textarea>
 {% empty %}

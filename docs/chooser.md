@@ -788,7 +788,9 @@ give, or a statute presented as if it were in the case.
   flag citations that are fine. At most 500 cases per export (one paste).
   The page that follows holds everything to set the arena up by hand
   (HumanJudge has no API for cases): the cases to paste under **Paste
-  many**, separated by `---` lines; the three **Reviewer instructions**
+  many**, separated by `---` lines (a lone case goes in with **Add**
+  instead: with no `---` line, Paste many reads one case per line); the
+  three **Reviewer instructions**
   fields (`REVIEWER_INSTRUCTIONS`); and, for each model, the endpoint, the
   key to use, the response path (`choices[0].message.content`) and the
   request template, `{"model": "<name>", "messages": [{"role": "user",
@@ -809,7 +811,9 @@ give, or a statute presented as if it were in the case.
   can take, so the export starts writing every model's missing answers in a
   background thread at once (`humanjudge_arena.backfill`, four at a time);
   click Generate in the arena once **HumanJudge Arena Answers** has filled
-  in. A web pod restarting cuts that thread short: `manage.py
+  in. Showing the export page again while a backfill is still on the same
+  cases starts none for them (per process), so their letters are not paid
+  for twice. A web pod restarting cuts that thread short: `manage.py
   humanjudge_arena_backfill` (`--case`, `--model`, `--concurrency`) runs
   the same backfill to completion. A call that still takes longer than
   `HUMANJUDGE_ARENA_ANSWER_TIMEOUT` (50 seconds) gets a 503; the letter is

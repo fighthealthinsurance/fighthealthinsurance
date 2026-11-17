@@ -51,6 +51,7 @@ import hashlib
 import hmac
 import json
 import re
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional
 
@@ -485,13 +486,41 @@ async def backfill(
     return result
 
 
-def start_backfill(case_ids: list[int]) -> None:
-    """backfill from a sync caller (the admin), in a background thread."""
+# Arena cases a background backfill in this process is writing answers for,
+# so showing the export page again does not start a second one over the
+# same cases: the second's letters would be paid for and then thrown away
+# (only one answer per case and model is kept).
+_backfilling: set[int] = set()
+_backfilling_lock = threading.Lock()
+
+
+def start_backfill(case_ids: list[int]) -> list[int]:
+    """backfill from a sync caller (the admin), in a background thread, for
+    the cases no backfill in this process is already on. Returns those."""
     from asgiref.sync import async_to_sync
 
     from fighthealthinsurance.utils import run_in_registered_daemon_thread
 
-    run_in_registered_daemon_thread(async_to_sync(backfill), list(case_ids))
+    with _backfilling_lock:
+        ids = [i for i in dict.fromkeys(case_ids) if i not in _backfilling]
+        _backfilling.update(ids)
+    if not ids:
+        return []
+
+    def run() -> None:
+        try:
+            async_to_sync(backfill)(ids)
+        finally:
+            with _backfilling_lock:
+                _backfilling.difference_update(ids)
+
+    try:
+        run_in_registered_daemon_thread(run)
+    except Exception:
+        with _backfilling_lock:
+            _backfilling.difference_update(ids)
+        raise
+    return ids
 
 
 # Where a vote may carry the case's text and the answer's, by the names
