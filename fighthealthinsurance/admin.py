@@ -2188,6 +2188,7 @@ class HumanJudgeArenaVerdictAdmin(admin.ModelAdmin):
     actions = ("export_csv",)
 
     CSV_FIELDS = (
+        "arena_id",
         "task_id",
         "case_id",
         "answer_id",
@@ -2258,6 +2259,7 @@ class HumanJudgeArenaVerdictAdmin(admin.ModelAdmin):
             answer = verdict.answer
             writer.writerow(
                 [
+                    verdict.arena_id,
                     verdict.case.task_id if verdict.case else "",
                     verdict.case_id or "",
                     verdict.answer_id or "",

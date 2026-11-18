@@ -258,13 +258,14 @@ class FakeArena:
     reviews given, newest first, a page at a time, in the envelope a live
     arena's report has."""
 
-    def __init__(self, reviews, status=200):
+    def __init__(self, reviews, status=200, arena="arena-1"):
         self.reviews = reviews
         self.status = status
+        self.arena = arena
         self.requests: list[httpx.Request] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
-        if request.url.path != "/api/v1/reports/arena-1":
+        if request.url.path != f"/api/v1/reports/{self.arena}":
             return httpx.Response(404, json={"detail": "Report not found"})
         self.requests.append(request)
         if self.status != 200:
@@ -589,3 +590,20 @@ async def test_a_short_reply_to_one_of_our_cases_is_still_a_failed_answer(backen
     _, case = await _exported()
     response = await _ask(case.prompt, model="outside-model")
     assert response.status_code == 502
+
+
+@ON
+async def test_reviews_kept_from_an_earlier_arena_do_not_hide_a_cut_short_download(
+    backends,
+):
+    # 120 reviews of an earlier arena are still stored when the arena id is
+    # changed; the new arena's first download stops after its newest page.
+    earlier = [_review("a case", f"old answer {n}", n=1000 + n) for n in range(120)]
+    with override_settings(HUMANJUDGE_ARENA_ID="arena-0"):
+        await humanjudge_arena.download_arena_verdicts(
+            FakeArena(earlier, arena="arena-0").transport
+        )
+    reviews = [_review("a case", f"answer {n}", n=n) for n in range(120)]
+    await humanjudge_arena.download_arena_verdicts(FakeArena(reviews[:50]).transport)
+    await humanjudge_arena.download_arena_verdicts(FakeArena(reviews).transport)
+    assert await HumanJudgeArenaVerdict.objects.filter(arena_id="arena-1").acount() == 120

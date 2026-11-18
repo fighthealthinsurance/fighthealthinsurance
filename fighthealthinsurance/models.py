@@ -5248,6 +5248,9 @@ class HumanJudgeArenaVerdict(ExportModelOperationsMixin("HumanJudgeArenaVerdict"
         null=True,
         blank=True,
     )
+    # The arena (HUMANJUDGE_ARENA_ID) whose report the review was read from,
+    # so reviews kept from an earlier arena never count toward this one's.
+    arena_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
     # The model as HumanJudge names it (model_name, else model_slug).
     humanjudge_model = models.CharField(max_length=200, blank=True, default="")
     external_key = models.CharField(max_length=128, unique=True)

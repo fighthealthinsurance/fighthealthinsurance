@@ -724,6 +724,7 @@ async def _store_review(
     try:
         await HumanJudgeArenaVerdict.objects.acreate(
             external_key=key,
+            arena_id=arena_id()[:64],
             answer=answer,
             case=case,
             humanjudge_model=_record_model(record)[:200],
@@ -776,7 +777,8 @@ async def download_arena_verdicts(transport: Any = None) -> ArenaDownloadResult:
 
     The report lists reviews newest first, so reading stops at the first
     page that holds nothing new once we hold as many reviews as the report
-    counts; a download cut short earlier is caught up by the count."""
+    counts for this arena; a download cut short earlier is caught up by
+    the count."""
     if not verdicts_enabled():
         raise HumanJudgeError(
             "HumanJudge arena verdicts are not configured (HUMANJUDGE_ARENA_ID)"
@@ -794,8 +796,13 @@ async def download_arena_verdicts(transport: Any = None) -> ArenaDownloadResult:
             if not reviews or not body.get("has_more_reviews"):
                 break
             total = body.get("reviews_total")
+            # This arena's reviews only: ones kept from an earlier arena
+            # would make a download cut short look complete.
             caught_up = not isinstance(total, int) or (
-                await HumanJudgeArenaVerdict.objects.acount() >= total
+                await HumanJudgeArenaVerdict.objects.filter(
+                    arena_id=arena_id()[:64]
+                ).acount()
+                >= total
             )
             if new_on_page == 0 and caught_up:
                 break

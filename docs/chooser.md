@@ -832,8 +832,9 @@ give, or a statute presented as if it were in the case.
   from the answer. Never a guess: text that fits two answers or none leaves
   the review unmatched, stored anyway (`answer` empty) and matched again on
   every download. Reading stops at the first page with nothing new once we
-  hold as many reviews as the report counts, so a download cut short is
-  caught up by the next. **The arena's report must be set to Public** (the
+  hold as many of this arena's reviews as the report counts (each verdict
+  records its `arena_id`, so ones kept from an earlier arena do not count),
+  so a download cut short is caught up by the next. **The arena's report must be set to Public** (the
   arena page's Report visibility): a public report needs no key, and one
   that is not is refused, with a message saying so. That makes the
   synthetic cases, the letters and the reviewers' notes readable by anyone
