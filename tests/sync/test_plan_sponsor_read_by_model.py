@@ -23,7 +23,11 @@ from django.utils import timezone
 
 from fighthealthinsurance.admin import PolicyDocumentAdmin
 from fighthealthinsurance.models import InsuranceCompany, PlanSponsor, PolicyDocument
-from fighthealthinsurance.plan_documents_processing import afind_company, alink_company
+from fighthealthinsurance.plan_documents_processing import (
+    afind_company,
+    alink_company,
+    lookup_finished,
+)
 from fighthealthinsurance.plan_sponsor_reader import (
     MAX_EXCERPT_CHARS,
     aread_plan,
@@ -97,6 +101,20 @@ class TheModelsAnswerIsCheckedTest(TestCase):
         ):
             sponsor, answered = read(BOOKLET)
         self.assertEqual((sponsor, answered), (None, False))
+
+    def test_a_refused_answer_still_finishes_the_lookup(self):
+        # The model would give the same answer again: looking again later
+        # finds nothing new, so it is not a lookup that did not finish.
+        with model_answers(
+            answer("Google LLC", "Google LLC is the plan sponsor and administrator.")
+        ):
+            reading = async_to_sync(aread_plan)(BOOKLET, BOOKLET)
+        self.assertTrue(lookup_finished(reading))
+
+    def test_no_answer_at_all_does_not_finish_the_lookup(self):
+        with model_answers():
+            reading = async_to_sync(aread_plan)(BOOKLET, BOOKLET)
+        self.assertFalse(lookup_finished(reading))
 
     def test_a_name_that_is_not_in_the_document_is_refused(self):
         with model_answers(
@@ -275,6 +293,17 @@ class StaffCanCheckWithoutHoldingItUpTest(TestCase):
         )
         doc.refresh_from_db()
         self.assertEqual(doc.plan_sponsor_checked_by, self.staff)
+
+    def test_confirming_a_typed_employer_makes_it_count(self):
+        doc = shared_row(BOOKLET)
+        PolicyDocument.objects.filter(pk=doc.pk).update(
+            plan_sponsor=self.company, plan_sponsor_source="person"
+        )
+        self.admin.confirm_company(
+            self.request, PolicyDocument.objects.filter(pk=doc.pk)
+        )
+        doc.refresh_from_db()
+        self.assertEqual(doc.plan_sponsor_source, "staff")
 
     def test_a_company_staff_pick_is_theirs_and_checked(self):
         doc = shared_row(BOOKLET)

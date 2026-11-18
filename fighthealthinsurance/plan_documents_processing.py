@@ -493,10 +493,11 @@ LOOKUP_RUN_SECONDS = 120
 
 
 def lookup_finished(reading: "PlanReading") -> bool:
-    """Whether a reading settled the company: a model answered, or the fixed
+    """Whether a reading settled the company: a model answered (even with a
+    sponsor the checks turned down, which it would give again), or the fixed
     patterns found one. Not when no model answered and the patterns found
     none: that is a lookup to try again, not a document naming no company."""
-    return reading.answered or reading.sponsor is not None
+    return reading.answered or reading.responded or reading.sponsor is not None
 
 
 async def alink_company(document_id: str, text: str, cleaned_text: str) -> bool:

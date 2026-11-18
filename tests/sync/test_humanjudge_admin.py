@@ -8,6 +8,7 @@ import csv
 import io
 from unittest.mock import AsyncMock, patch
 
+import httpx
 from django.contrib.auth import get_user_model
 from django.contrib.messages import get_messages
 from django.test import TestCase, override_settings
@@ -140,6 +141,12 @@ class HumanJudgeAdminTest(TestCase):
 
     def test_download_says_so_when_humanjudge_is_not_configured(self):
         response = self.client.post(DOWNLOAD, follow=True)
+        self.assertTrue(self.messages(response)[0].startswith("Nothing downloaded"))
+
+    def test_download_says_so_when_humanjudge_cannot_be_reached(self):
+        download = AsyncMock(side_effect=httpx.ConnectError("refused"))
+        with patch.object(chooser_humanjudge, "download_verdicts", download):
+            response = self.client.post(DOWNLOAD, follow=True)
         self.assertTrue(self.messages(response)[0].startswith("Nothing downloaded"))
 
     def test_csv_export_names_the_model_behind_each_verdict(self):

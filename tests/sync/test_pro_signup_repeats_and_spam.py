@@ -194,6 +194,23 @@ class RepeatBeforeThankyouTest(_SignupCase):
         self.assertEqual(self.outcomes(), [Outcome.NEW, Outcome.REPEAT])
 
 
+class RepeatAfterIntroductionTest(_SignupCase):
+    """Staff sent the Cofactor AI introduction instead of the thank-you
+    (which is refused after it): the address is vetted, so a repeat gets the
+    reply."""
+
+    THANKED = False
+
+    def setUp(self):
+        self.submit()
+        InterestedProfessional.objects.update(proconnector_sent_at=timezone.now())
+        mail.outbox.clear()
+        self.submit()
+
+    def test_sends_the_already_have_details_email(self):
+        self.assertEqual(len(_mail_to(self.EMAIL, ALREADY_HAVE_DETAILS_SUBJECT)), 1)
+
+
 class ThirdSubmissionTest(_SignupCase):
     def setUp(self):
         self.submit()
