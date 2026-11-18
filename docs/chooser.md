@@ -788,14 +788,27 @@ give, or a statute presented as if it were in the case.
   flag citations that are fine. At most 500 cases per export (one paste).
   The page that follows holds everything to set the arena up by hand
   (HumanJudge has no API for cases): the cases to paste under **Paste
-  many**, separated by `---` lines (a lone case goes in with **Add**
-  instead: with no `---` line, Paste many reads one case per line); the
-  three **Reviewer instructions**
+  many**, separated by `---` lines and ending with one (HumanJudge's box
+  reads a paste with no `---` line as one case per line, which would split
+  a lone case at every line break; with one it reads whole cases and drops
+  the empty one after the last, so even a single case goes in through
+  Paste many, never the one-at-a-time box, which is a single-line input
+  and loses a case's line breaks); the three **Reviewer instructions**
   fields (`REVIEWER_INSTRUCTIONS`); and, for each model, the endpoint, the
   key to use, the response path (`choices[0].message.content`) and the
   request template, `{"model": "<name>", "messages": [{"role": "user",
-  "content": "{{prompt}}"}]}`. Register each model as its own HumanJudge
-  model under the same name, enter it in the arena and approve it there.
+  "content": "{{prompt}}"}]}`. This is the setup HumanJudge's arena docs
+  call "Answers you already have": each source registered as its own model,
+  all pointing at one endpoint, the source named in the request template,
+  the answer looked up by the case's text, which HumanJudge sends exactly
+  as it is in the arena. For each model: create it (its name is only what
+  the public leaderboard shows; verdicts are matched by answer text), fill
+  in the four **Endpoint Configuration** fields on its Setup tab (the form
+  starts with a template naming `gpt-4o`, which our endpoint refuses as an
+  unknown model, so replace it), click **Save endpoint** (Test endpoint
+  does not save, and a model without a saved endpoint is skipped), click
+  **Test endpoint**, then **Enter a Challenge** for the arena and approve
+  it with the ✓ on the arena's page.
 - **Answers.** A call is matched to its case by the SHA-256 of the case
   text with whitespace collapsed, so the paste box's line handling does not
   matter. The answer, in order: the one given before for that case and

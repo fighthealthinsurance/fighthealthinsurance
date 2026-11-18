@@ -97,6 +97,7 @@ MAX_CASES_PER_EXPORT = PASTE_BATCH
 # A line HumanJudge's paste box reads as the break between two cases.
 _CASE_BREAK = re.compile(r"^\s*---\s*$", re.MULTILINE)
 PASTE_SEPARATOR = "\n---\n"
+PASTE_END = "\n---"
 # How HumanJudge is told to read our endpoint's reply (its JMESPath field).
 RESPONSE_PATH = "choices[0].message.content"
 # Letters the backfill writes at once.
@@ -241,10 +242,18 @@ class ExportResult:
     duplicates: list[int] = field(default_factory=list)
 
     def paste_batches(self) -> list[str]:
+        """The text for HumanJudge's Paste many box, PASTE_BATCH cases at a
+        time. Each batch ends with a "---" line of its own. The box reads a
+        paste with no "---" line as one case per line, which would split a
+        lone case at every line break; with one, it reads whole cases and
+        drops the empty one after the last line (its parser, read from
+        HumanJudge's page script). Never the one-at-a-time box: that is a
+        single-line input, which loses a case's line breaks."""
         return [
             PASTE_SEPARATOR.join(
                 case.prompt for case in self.cases[i : i + PASTE_BATCH]
             )
+            + PASTE_END
             for i in range(0, len(self.cases), PASTE_BATCH)
         ]
 

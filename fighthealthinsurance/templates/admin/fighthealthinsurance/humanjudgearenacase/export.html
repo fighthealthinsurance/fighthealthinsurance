@@ -22,11 +22,7 @@ and how to enter each of our models against our OpenAI-compatible endpoint
 {% endif %}
 
 <h2>1. Cases</h2>
-{% if result.cases|length == 1 %}
-<p id="arena-single-case">One case only: add it under Questions with Add, not Paste many. Paste many reads a paste with no "---" line as one case per line, so it would split this case at every line break.</p>
-{% else %}
-<p>In the arena, under Questions, click Paste many and paste each box (at most 500 cases each). Cases already in the arena are skipped there, so pasting again is harmless.</p>
-{% endif %}
+<p id="arena-paste-how">In the arena, under Questions, click Paste many and paste each box whole (at most 500 cases each), down to its last "---" line; the box then says how many cases it found, which should match the count above. Always Paste many, even for one case: the one-at-a-time box is a single line and loses a case's line breaks. Cases already in the arena are skipped there, so pasting again is harmless.</p>
 {% for batch in batches %}
 <textarea class="vLargeTextField arena-paste" rows="12" cols="100" readonly>{{ batch }}</textarea>
 {% empty %}
@@ -41,14 +37,21 @@ and how to enter each of our models against our OpenAI-compatible endpoint
 {% endfor %}
 
 <h2>3. Models</h2>
-<p>Register each model below as its own HumanJudge model, enter it in the arena, and approve it there. On each one's Setup tab:</p>
+<p>This is the setup HumanJudge's arena docs call "Answers you already have": every model below is registered as its own HumanJudge model, all pointing at our one endpoint, with the model named in its request template. For each model, in Developer Hub:</p>
+<ol id="arena-model-steps">
+<li>Create a model. Its name is what the arena's public leaderboard shows; verdicts are matched by the answer's text, not by this name.</li>
+<li>On its Setup tab, under Endpoint Configuration, fill in all four fields:
 <ul>
-<li>Endpoint: <code id="arena-endpoint-url">{{ endpoint_url }}</code></li>
-<li>API key: the value of HUMAN_JUDGE_OAI_CALLBACK</li>
-<li>Response path: <code>{{ response_path }}</code></li>
-<li>Request template: as listed beside the model. Name the HumanJudge model the same, so its votes match.</li>
-</ul>
-<p>The same list is at <code>{{ models_url }}</code> (with the key).</p>
+<li>Endpoint URL: <code id="arena-endpoint-url">{{ endpoint_url }}</code></li>
+<li>API Key: the value of HUMAN_JUDGE_OAI_CALLBACK</li>
+<li>Request template: the one listed beside the model below. Replace what the form starts with: it names <code>gpt-4o</code>, which our endpoint refuses as an unknown model.</li>
+<li>Response path: <code>{{ response_path }}</code> (what the form starts with)</li>
+</ul></li>
+<li>Click Save endpoint. Test endpoint does not save, and a model without a saved endpoint is skipped when the arena generates.</li>
+<li>Click Test endpoint. It sends "Say hello in one sentence." and should show <code>Response: "…"</code> with the model's one-line reply (one real call to the model). "Invalid API key" means the key is wrong; "No arena model named…" means the request template's model is not one below.</li>
+<li>On the model's page, open Enter a Challenge and enter the arena; back on the arena's page, approve it with the ✓ next to its name.</li>
+</ol>
+<p>The same list of models is at <code>{{ models_url }}</code> (with the key).</p>
 <table id="arena-models">
 <thead><tr><th scope="col">Model</th><th scope="col">Request template</th></tr></thead>
 <tbody>

@@ -134,11 +134,53 @@ async def test_export_freezes_the_exact_prompt_our_models_are_given():
     assert case.prompt == chooser_tasks._build_appeal_prompt(task.context_json)
 
 
+def _humanjudge_paste_cases(text):
+    """HumanJudge's own Paste many parser (O8 in its page script), line for
+    line: with no "---" line, one case per line; with one, whole cases
+    between "---" lines; empty cases dropped either way."""
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if not any(line.strip() == "---" for line in lines):
+        return [line.strip() for line in lines if line.strip()]
+    cases, current = [], []
+    for line in lines:
+        if line.strip() == "---":
+            cases.append("\n".join(current).strip())
+            current = []
+        else:
+            current.append(line)
+    cases.append("\n".join(current).strip())
+    return [case for case in cases if case]
+
+
 @ON
-async def test_export_paste_text_separates_cases_with_a_dashes_line():
+async def test_humanjudges_paste_box_reads_a_lone_case_whole():
+    # With no "---" line it would split the case at every line break.
+    task = await _task()
+    result = await humanjudge_arena.export_cases([task.id])
+    assert _humanjudge_paste_cases(result.paste_batches()[0]) == [
+        result.cases[0].prompt.strip()
+    ]
+
+
+@ON
+async def test_humanjudges_paste_box_reads_back_every_case_of_several():
     first, second = await _task(), await _task(context={**CONTEXT, "procedure": "CT"})
     result = await humanjudge_arena.export_cases([first.id, second.id])
-    assert result.paste_batches()[0].count("\n---\n") == 1
+    assert _humanjudge_paste_cases(result.paste_batches()[0]) == [
+        case.prompt.strip() for case in result.cases
+    ]
+
+
+@ON
+async def test_a_case_as_humanjudges_paste_box_keeps_it_still_finds_its_answer(
+    backends,
+):
+    # What the box stores (trimmed, lines rejoined) is what HumanJudge sends.
+    task = await _task()
+    result = await humanjudge_arena.export_cases([task.id])
+    [stored] = _humanjudge_paste_cases(result.paste_batches()[0])
+    response = await _ask(stored)
+    assert _letter(response).startswith("Arena draft by fhi-local")
 
 
 @ON

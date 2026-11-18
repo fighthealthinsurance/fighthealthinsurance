@@ -74,25 +74,9 @@ class HumanJudgeArenaAdminTest(TestCase):
         case = HumanJudgeArenaCase.objects.get(task=self.task)
         self.start_backfill.assert_called_once_with([case.id])
 
-    def test_a_lone_case_is_to_be_added_one_at_a_time_not_pasted(self):
-        # With no "---" line, Paste many would split it at every line break.
-        self.assertContains(self.export(), 'id="arena-single-case"')
-
-    def test_several_cases_are_to_be_pasted(self):
-        other = ChooserTask.objects.create(
-            task_type="appeal",
-            status="READY",
-            source="synthetic",
-            context_json={**CONTEXT, "procedure": "CT"},
-        )
-        response = self.client.post(
-            TASKS,
-            {
-                "action": "export_to_humanjudge_arena",
-                "_selected_action": [self.task.id, other.id],
-            },
-        )
-        self.assertNotContains(response, 'id="arena-single-case"')
+    def test_export_page_says_to_save_the_endpoint_before_testing_it(self):
+        # In HumanJudge's form, Test endpoint does not save.
+        self.assertContains(self.export(), "Click Save endpoint")
 
     def test_export_warns_and_writes_nothing_while_the_endpoint_is_off(self):
         response = self.export()
