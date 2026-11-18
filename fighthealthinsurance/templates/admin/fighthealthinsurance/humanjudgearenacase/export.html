@@ -1,0 +1,69 @@
+{% extends "admin/base_site.html" %}
+{% comment %} The HumanJudge arena setup page (admin._humanjudge_arena_export):
+the exported cases' text to paste into the arena, the reviewer instructions,
+and how to enter each of our models against our OpenAI-compatible endpoint
+(humanjudge_arena, humanjudge_arena_views). Staff only. {% endcomment %}
+{% block breadcrumbs %}
+<div class="breadcrumbs">
+<a href="{% url 'admin:index' %}">Home</a>
+&rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
+&rsaquo; <a href="{% url 'admin:fighthealthinsurance_humanjudgearenacase_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+&rsaquo; Export
+</div>
+{% endblock %}
+{% block content %}
+<div id="content-main" class="humanjudge-arena-export">
+<p id="arena-export-summary">{{ result.cases|length }} case{{ result.cases|length|pluralize }} ready to paste ({{ result.new }} newly exported).{% if result.not_sendable %} {{ result.not_sendable }} skipped: only synthetic appeal cases that have reached voters may go.{% endif %}{% if result.too_long %} {{ result.too_long|length }} skipped because their text is over HumanJudge's {{ case_char_limit }}-character limit (never cut down, so reviewers see all the evidence the writers had): task{{ result.too_long|length|pluralize }} {{ result.too_long|join:", " }}.{% endif %}{% if result.duplicates %} {{ result.duplicates|length }} skipped as the same text as another exported case: {{ result.duplicates|join:", " }}.{% endif %}</p>
+
+{% if not endpoint_enabled %}
+<p class="errornote" id="arena-endpoint-off">HUMAN_JUDGE_OAI_CALLBACK is not set, so our endpoint answers 404 and HumanJudge's Generate will fail. Set it, then export again.</p>
+{% elif backfilling %}
+<p id="arena-backfill">Writing every model's missing answers to these cases in the background, so HumanJudge's calls find them ready (it waits 60 seconds per answer). HumanJudge Arena Answers fills in as they land; click Generate in the arena once it has.</p>
+{% endif %}
+
+<h2>1. Cases</h2>
+<p id="arena-paste-how">In the arena, under Questions, click Paste many and paste each box whole (at most 500 cases each), down to its last "---" line; the box then says how many cases it found, which should match the count above. Always Paste many, even for one case: the one-at-a-time box is a single line and loses a case's line breaks. Cases already in the arena are skipped there, so pasting again is harmless.</p>
+{% for batch in batches %}
+<textarea class="vLargeTextField arena-paste" rows="12" cols="100" readonly>{{ batch }}</textarea>
+{% empty %}
+<p>No case to paste.</p>
+{% endfor %}
+
+<h2>2. Reviewer instructions</h2>
+<p>Under Reviewer instructions, click Add and fill in each field.</p>
+{% for label, text in instructions %}
+<h3>{{ label }}</h3>
+<textarea class="vLargeTextField arena-instructions" rows="8" cols="100" readonly>{{ text }}</textarea>
+{% endfor %}
+
+<h2>3. Models</h2>
+<p>This is the setup HumanJudge's arena docs call "Answers you already have": every model below is registered as its own HumanJudge model, all pointing at our one endpoint, with the model named in its request template. For each model, in Developer Hub:</p>
+<ol id="arena-model-steps">
+<li>Create a model. Its name is what the arena's public leaderboard shows; verdicts are matched by the answer's text, not by this name.</li>
+<li>On its Setup tab, under Endpoint Configuration, fill in all four fields:
+<ul>
+<li>Endpoint URL: <code id="arena-endpoint-url">{{ endpoint_url }}</code></li>
+<li>API Key: the value of HUMAN_JUDGE_OAI_CALLBACK</li>
+<li>Request template: the one listed beside the model below. Replace what the form starts with: it names <code>gpt-4o</code>, which our endpoint refuses as an unknown model.</li>
+<li>Response path: <code>{{ response_path }}</code> (what the form starts with)</li>
+</ul></li>
+<li>Click Save endpoint. Test endpoint does not save, and a model without a saved endpoint is skipped when the arena generates.</li>
+<li>Click Test endpoint. It sends "Say hello in one sentence." and should show <code>Response: "…"</code> with the model's one-line reply (one real call to the model). "Invalid API key" means the key is wrong; "No arena model named…" means the request template's model is not one below.</li>
+<li>On the model's page, open Enter a Challenge and enter the arena; back on the arena's page, approve it with the ✓ next to its name.</li>
+</ol>
+<p>The same list of models is at <code>{{ models_url }}</code> (with the key).</p>
+<table id="arena-models">
+<thead><tr><th scope="col">Model</th><th scope="col">Request template</th></tr></thead>
+<tbody>
+{% for model in models %}
+<tr><td>{{ model.name }}</td><td><code>{{ model.template }}</code></td></tr>
+{% empty %}
+<tr><td colspan="2">No appeal-drafting backend is configured.</td></tr>
+{% endfor %}
+</tbody>
+</table>
+
+<h2>4. Verdicts</h2>
+<p>Set HUMANJUDGE_ARENA_ID to the id in the arena's URL and the arena's Report visibility to Public (the verdicts are read from the report, which is refused unless it is public), then use Download arena verdicts on <a href="{% url 'admin:fighthealthinsurance_humanjudgearenaverdict_changelist' %}">HumanJudge Arena Verdicts</a>.</p>
+</div>
+{% endblock %}

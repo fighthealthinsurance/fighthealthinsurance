@@ -49,6 +49,9 @@ from fighthealthinsurance.models import (
     DenialTypesRelation,
     Diagnosis,
     FaxesToSend,
+    HumanJudgeArenaAnswer,
+    HumanJudgeArenaCase,
+    HumanJudgeArenaVerdict,
     HumanJudgeSubmission,
     HumanJudgeVerdict,
     KnownNonFaxNumber,
@@ -1658,6 +1661,64 @@ def _humanjudge_upload(model_admin, request, task_ids) -> None:
     model_admin.message_user(request, " ".join(parts), level)
 
 
+def _require_arena_writer(request) -> None:
+    """Exporting to the arena and backfilling ask our models (some paid) for
+    letters: only staff who may change Arena tasks, whichever admin list the
+    action is run from (the case list is view-only, and Django offers its
+    actions to anyone who may view it)."""
+    if not request.user.has_perm("fighthealthinsurance.change_choosertask"):
+        raise PermissionDenied
+
+
+def _humanjudge_arena_export(model_admin, request, task_ids):
+    """The HumanJudge arena setup page for these Arena cases: their text to
+    paste into the arena, the reviewer instructions, and how to enter each
+    of our models (humanjudge_arena.export_cases). Starts writing the
+    answers the cases still lack, so HumanJudge's calls find them ready.
+    Returns None (after a message) when there is nothing to show."""
+    _require_arena_writer(request)
+    from asgiref.sync import async_to_sync
+
+    from fighthealthinsurance import humanjudge_arena
+    from fighthealthinsurance.chooser_humanjudge import HumanJudgeError
+
+    try:
+        result = async_to_sync(humanjudge_arena.export_cases)(list(task_ids))
+    except HumanJudgeError as e:
+        model_admin.message_user(request, f"Nothing exported: {e}", messages.ERROR)
+        return None
+    models = list(humanjudge_arena.arena_models())
+    backfilling = bool(result.cases and models and humanjudge_arena.endpoint_enabled())
+    if backfilling:
+        humanjudge_arena.start_backfill([case.id for case in result.cases])
+    return TemplateResponse(
+        request,
+        "admin/fighthealthinsurance/humanjudgearenacase/export.html",
+        {
+            **model_admin.admin_site.each_context(request),
+            "title": "HumanJudge arena export",
+            "opts": HumanJudgeArenaCase._meta,
+            "result": result,
+            "batches": result.paste_batches(),
+            "instructions": list(humanjudge_arena.REVIEWER_INSTRUCTIONS.items()),
+            "endpoint_url": request.build_absolute_uri(
+                reverse("humanjudge_arena_chat_completions")
+            ),
+            "models_url": request.build_absolute_uri(
+                reverse("humanjudge_arena_models")
+            ),
+            "response_path": humanjudge_arena.RESPONSE_PATH,
+            "models": [
+                {"name": name, "template": humanjudge_arena.request_template(name)}
+                for name in models
+            ],
+            "endpoint_enabled": humanjudge_arena.endpoint_enabled(),
+            "backfilling": backfilling,
+            "case_char_limit": humanjudge_arena.CASE_CHAR_LIMIT,
+        },
+    )
+
+
 def _humanjudge_count(raw: Optional[str], default: int) -> Optional[int]:
     """The "how many cases" field: a whole number from 1 to the upload cap,
     or None for anything else."""
@@ -1698,7 +1759,7 @@ class ChooserTaskAdmin(admin.ModelAdmin):
     )
     ordering = ("-created_at",)
     readonly_fields = ("id", "created_at", "updated_at")
-    actions = ("upload_to_humanjudge",)
+    actions = ("upload_to_humanjudge", "export_to_humanjudge_arena")
     # The HumanJudge buttons: "Upload ... cases" on the list, "Upload to
     # HumanJudge" on a case (chooser_humanjudge).
     change_list_template = "admin/fighthealthinsurance/choosertask/change_list.html"
@@ -1707,6 +1768,16 @@ class ChooserTaskAdmin(admin.ModelAdmin):
     @admin.action(description="Upload to HumanJudge (synthetic appeal cases only)")
     def upload_to_humanjudge(self, request, queryset):
         _humanjudge_upload(self, request, queryset.values_list("id", flat=True))
+
+    @admin.action(
+        description="Export to a HumanJudge arena (synthetic appeal cases only)"
+    )
+    def export_to_humanjudge_arena(self, request, queryset):
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        return _humanjudge_arena_export(
+            self, request, queryset.values_list("id", flat=True)
+        )
 
     def get_urls(self):
         return [
@@ -1992,6 +2063,209 @@ class HumanJudgeVerdictAdmin(admin.ModelAdmin):
                     verdict.candidate_id,
                     verdict.candidate.model_name,
                     verdict.candidate.synthesized_by or "",
+                    verdict.verdict,
+                    verdict.flag_category,
+                    verdict.feedback,
+                    verdict.evaluator_id,
+                    verdict.voted_at.isoformat() if verdict.voted_at else "",
+                ]
+            )
+        return response
+
+
+@admin.register(HumanJudgeArenaCase)
+class HumanJudgeArenaCaseAdmin(admin.ModelAdmin):
+    """Arena cases exported to a HumanJudge arena (humanjudge_arena). Made by
+    "Export to a HumanJudge arena" on the Chooser Task list."""
+
+    list_display = ("id", "task", "prompt_chars", "answer_count", "exported_at")
+    search_fields = ("task__id", "prompt_sha256")
+    ordering = ("-exported_at",)
+    readonly_fields = ("id", "task", "prompt", "prompt_sha256", "exported_at")
+    actions = ("show_export", "write_missing_answers")
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).annotate(answers_n=Count("answers"))
+
+    @admin.display(description="Characters")
+    def prompt_chars(self, obj):
+        return len(obj.prompt)
+
+    @admin.display(description="Answers", ordering="answers_n")
+    def answer_count(self, obj):
+        return obj.answers_n
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        # Frozen: the arena holds the same text.
+        return False
+
+    @admin.action(description="Show the arena setup again (paste text, models)")
+    def show_export(self, request, queryset):
+        return _humanjudge_arena_export(
+            self, request, queryset.values_list("task_id", flat=True)
+        )
+
+    @admin.action(description="Write the answers these cases lack (background)")
+    def write_missing_answers(self, request, queryset):
+        _require_arena_writer(request)
+        from fighthealthinsurance import humanjudge_arena
+
+        ids = list(queryset.values_list("id", flat=True))
+        started = humanjudge_arena.start_backfill(ids)
+        if not started:
+            self.message_user(
+                request,
+                "Their answers are already being written in the background.",
+                messages.INFO,
+            )
+            return
+        self.message_user(
+            request,
+            f"Writing every arena model's missing answers to {len(started)} "
+            "case(s) in the background; HumanJudge Arena Answers fills in as "
+            "they land.",
+            messages.SUCCESS,
+        )
+
+
+@admin.register(HumanJudgeArenaAnswer)
+class HumanJudgeArenaAnswerAdmin(admin.ModelAdmin):
+    """The answers our endpoint gives a HumanJudge arena, one per case and model."""
+
+    list_display = (
+        "id",
+        "case",
+        "model_name",
+        "source",
+        "served_count",
+        "last_served_at",
+        "created_at",
+    )
+    search_fields = ("model_name", "case__task__id", "content")
+    list_filter = ("source", "model_name", "created_at")
+    ordering = ("-created_at",)
+    readonly_fields = [f.name for f in HumanJudgeArenaAnswer._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        # What HumanJudge's reviewers judged; never edited after.
+        return False
+
+
+@admin.register(HumanJudgeArenaVerdict)
+class HumanJudgeArenaVerdictAdmin(admin.ModelAdmin):
+    """A HumanJudge arena's pass/flag verdicts on our answers, which its
+    reviewers give for made-up citations and facts (humanjudge_arena). The
+    list's "Download arena verdicts" button fetches new ones."""
+
+    change_list_template = (
+        "admin/fighthealthinsurance/humanjudgearenaverdict/change_list.html"
+    )
+    list_display = (
+        "id",
+        "answer",
+        "humanjudge_model",
+        "verdict",
+        "flag_category",
+        "evaluator_id",
+        "voted_at",
+    )
+    search_fields = ("humanjudge_model", "feedback", "evaluator_id")
+    list_filter = (
+        "verdict",
+        "flag_category",
+        "answer__source",
+        "answer__model_name",
+        "voted_at",
+    )
+    ordering = ("-fetched_at",)
+    readonly_fields = [f.name for f in HumanJudgeArenaVerdict._meta.fields]
+    actions = ("export_csv",)
+
+    CSV_FIELDS = (
+        "arena_id",
+        "task_id",
+        "case_id",
+        "answer_id",
+        "model_name",
+        "answer_source",
+        "humanjudge_model",
+        "verdict",
+        "flag_category",
+        "feedback",
+        "evaluator_id",
+        "voted_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def get_urls(self):
+        return [
+            path(
+                "download/",
+                self.admin_site.admin_view(self.download_view),
+                name="fighthealthinsurance_humanjudgearenaverdict_download",
+            ),
+        ] + super().get_urls()
+
+    def download_view(self, request):
+        """POST only: fetch the arena's new verdicts, then back to the list."""
+        changelist = reverse(
+            "admin:fighthealthinsurance_humanjudgearenaverdict_changelist"
+        )
+        if request.method != "POST":
+            return HttpResponseNotAllowed(["POST"])
+        if not self.has_change_permission(request):
+            raise PermissionDenied
+        from asgiref.sync import async_to_sync
+
+        from fighthealthinsurance import humanjudge_arena
+        from fighthealthinsurance.chooser_humanjudge import HumanJudgeError
+
+        try:
+            result = async_to_sync(humanjudge_arena.download_arena_verdicts)()
+        except HumanJudgeError as e:
+            self.message_user(request, f"Nothing downloaded: {e}", messages.ERROR)
+            return HttpResponseRedirect(changelist)
+        message = (
+            f"Downloaded {result.new_verdicts} new arena verdict(s); "
+            f"{result.matched} matched to our answers."
+        )
+        if result.rematched:
+            message += f" {result.rematched} earlier verdict(s) matched now."
+        if result.unmatched:
+            message += (
+                f" {result.unmatched} could not be matched to an answer yet and "
+                "were stored to match on a later download."
+            )
+        self.message_user(request, message, messages.SUCCESS)
+        return HttpResponseRedirect(changelist)
+
+    @admin.action(description="Export selected verdicts as CSV")
+    def export_csv(self, request, queryset):
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = (
+            'attachment; filename="humanjudge_arena_verdicts.csv"'
+        )
+        writer = csv.writer(response)
+        writer.writerow(self.CSV_FIELDS)
+        for verdict in queryset.select_related("answer", "case").order_by("id"):
+            answer = verdict.answer
+            writer.writerow(
+                [
+                    verdict.arena_id,
+                    verdict.case.task_id if verdict.case else "",
+                    verdict.case_id or "",
+                    verdict.answer_id or "",
+                    answer.model_name if answer else "",
+                    answer.source if answer else "",
+                    verdict.humanjudge_model,
                     verdict.verdict,
                     verdict.flag_category,
                     verdict.feedback,

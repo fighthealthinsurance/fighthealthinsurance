@@ -38,6 +38,7 @@ from fighthealthinsurance import (
     assistant_terms_views,
     evaluator_accounts,
     fax_views,
+    humanjudge_arena_views,
     intake_resume_views,
     paid_reviews,
     public_rankings,
@@ -736,6 +737,19 @@ urlpatterns += [
         "chooser/",
         views.ChooserView.as_view(),
         name="chooser",
+    ),
+    # The OpenAI-compatible endpoint a HumanJudge arena calls for our
+    # models' appeal letters (humanjudge_arena); 404 unless
+    # HUMAN_JUDGE_OAI_CALLBACK is set.
+    path(
+        "ziggy/humanjudge/v1/models",
+        humanjudge_arena_views.models_view,
+        name="humanjudge_arena_models",
+    ),
+    path(
+        "ziggy/humanjudge/v1/chat/completions",
+        humanjudge_arena_views.chat_completions_view,
+        name="humanjudge_arena_chat_completions",
     ),
     # Paid Arena reviewers hired through RentAHuman (paid_reviews.py): the
     # join link in a bounty, and the signed events RentAHuman sends.
