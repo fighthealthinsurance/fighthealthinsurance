@@ -143,8 +143,9 @@ class Base(Configuration):
     COOKIE_CONSENT_LOG_ENABLED = False
 
     # Authorized pen testers send this value in the X-Evil request header;
-    # every other response carries "X-Warning: This is not an authorized pen
-    # test." (PenTestWarningMiddleware). Unset means everyone gets the warning.
+    # every other response carries an X-Warning header saying this is not an
+    # authorized pen test and pointing at /evil/robot-id
+    # (PenTestWarningMiddleware). Unset means everyone gets the warning.
     EVIL_SECRET = (os.getenv("EVIL_SECRET") or "").strip()
 
     # Audit logging - disabled by default, enable via environment variable

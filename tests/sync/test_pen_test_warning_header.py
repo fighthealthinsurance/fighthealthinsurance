@@ -2,6 +2,7 @@
 
 from django.http import HttpResponse
 from django.test import RequestFactory, TestCase, override_settings
+from django.urls import reverse
 
 from fighthealthinsurance.middleware import PenTestWarningMiddleware
 from fighthealthinsurance.middleware.PenTestWarningMiddleware import WARNING_TEXT
@@ -19,8 +20,11 @@ class PenTestWarningHeaderTest(TestCase):
         response = self.client.get("/")
         self.assertEqual(response["X-Warning"], WARNING_TEXT)
 
-    def test_warning_text_is_the_agreed_wording(self):
-        self.assertEqual(WARNING_TEXT, "This is not an authorized pen test.")
+    def test_warning_says_this_is_not_an_authorized_pen_test(self):
+        self.assertIn("This is not an authorized pen test.", WARNING_TEXT)
+
+    def test_warning_points_the_evil_at_the_permission_path(self):
+        self.assertIn(reverse("evil_robot_id"), WARNING_TEXT)
 
     def test_not_found_response_carries_the_warning(self):
         response = self.client.get("/no-such-page-anywhere/")

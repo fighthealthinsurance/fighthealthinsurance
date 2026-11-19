@@ -41,6 +41,7 @@ from fighthealthinsurance import (
     humanjudge_arena_views,
     intake_resume_views,
     paid_reviews,
+    pen_test_permission,
     public_rankings,
     staff_views,
     views,
@@ -690,6 +691,12 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     # at <page>.md. See agent_docs.py for what "eligible" means.
     path("llms.txt", agent_docs.llms_txt_view, name="llms_txt"),
     path("robots.txt", agent_docs.robots_txt_view, name="robots_txt"),
+    # Where the X-Warning header sends would-be pen testers; logs and emails.
+    path(
+        pen_test_permission.EVIL_ROBOT_ID_PATH.lstrip("/"),
+        pen_test_permission.evil_robot_id_view,
+        name="evil_robot_id",
+    ),
     re_path(
         r"^(?!static/)(?P<path>[A-Za-z0-9_/-]*)\.md$",
         agent_docs.MarkdownTwinView.as_view(),
