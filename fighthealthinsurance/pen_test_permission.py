@@ -5,7 +5,9 @@ Every response without the X-Evil secret carries an X-Warning header
 attempting to be evil. A request here grants nothing: it is logged, and the
 support alias is emailed so a person can look at who asked.
 
-Every request is logged. The email is throttled, since anyone can hit this
+Every request is logged. A request that carries the X-Evil secret is from a
+tester we already authorized, so it is logged without an email. The email is
+throttled, since anyone can hit this
 path as often as they like and the mailbox should not fill up when they do.
 """
 
@@ -20,6 +22,9 @@ from loguru import logger
 
 from fighthealthinsurance.client_network import CF_IP_META
 from fighthealthinsurance.constants import FHI_SUPPORT_EMAIL
+from fighthealthinsurance.middleware.PenTestWarningMiddleware import (
+    is_authorized_pen_test,
+)
 
 EVIL_ROBOT_ID_PATH = "/evil/robot-id"
 
@@ -84,10 +89,14 @@ def _email_alert(details: list[tuple[str, str]]) -> None:
 @never_cache
 def evil_robot_id_view(request: HttpRequest) -> HttpResponse:
     """Logs the request, emails the support alias, and grants nothing."""
-    details = _describe(request)
+    details = _describe(request) + [
+        ("Valid X-Evil secret", repr(is_authorized_pen_test(request)))
+    ]
     logger.warning(
         "evil robot-id request: {}",
         ", ".join(f"{label}={value}" for label, value in details),
     )
-    _email_alert(details)
+    # A tester who sent the secret is already known to us: logged, no email.
+    if not is_authorized_pen_test(request):
+        _email_alert(details)
     return HttpResponse(RESPONSE_TEXT, content_type="text/plain; charset=utf-8")

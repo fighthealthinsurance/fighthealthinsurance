@@ -9,6 +9,8 @@ from django.urls import reverse
 from fighthealthinsurance import pen_test_permission
 from fighthealthinsurance.constants import FHI_SUPPORT_EMAIL
 
+SECRET = "not-a-real-secret"
+
 LOCMEM_CACHE = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
@@ -65,6 +67,30 @@ class EvilRobotIdTest(TestCase):
     def test_email_carries_the_user_agent(self):
         self.client.get(self.url, HTTP_USER_AGENT="EvilBot/1.0")
         self.assertIn("EvilBot/1.0", mail.outbox[0].body)
+
+    @override_settings(EVIL_SECRET=SECRET)
+    def test_valid_evil_header_sends_no_email(self):
+        self.client.get(self.url, headers={"X-Evil": SECRET})
+        self.assertEqual(mail.outbox, [])
+
+    @override_settings(EVIL_SECRET=SECRET)
+    def test_valid_evil_header_is_still_logged(self):
+        logged = self._logged(headers={"X-Evil": SECRET}, HTTP_USER_AGENT="Tester/1")
+        self.assertIn("Tester/1", logged)
+
+    @override_settings(EVIL_SECRET=SECRET)
+    def test_log_never_carries_the_secret(self):
+        self.assertNotIn(SECRET, self._logged(headers={"X-Evil": SECRET}))
+
+    @override_settings(EVIL_SECRET=SECRET)
+    def test_wrong_evil_header_still_sends_the_email(self):
+        self.client.get(self.url, headers={"X-Evil": SECRET + "x"})
+        self.assertEqual(len(mail.outbox), 1)
+
+    @override_settings(EVIL_SECRET="")
+    def test_no_configured_secret_still_sends_the_email(self):
+        self.client.get(self.url, headers={"X-Evil": "anything"})
+        self.assertEqual(len(mail.outbox), 1)
 
     def test_failed_email_still_answers_the_request(self):
         with patch.object(
