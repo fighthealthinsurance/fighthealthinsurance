@@ -6008,6 +6008,10 @@ class AppealsBackendHelper:
         # Set when this run's epoch is superseded mid-stream: the streaming
         # loop stops pulling from the model and skips synthesis.
         superseded = False
+        # Why, for the end-of-run diagnostic: the first thing that told this
+        # run its lease was gone. A superseded run stops pulling drafts on
+        # purpose, which the diagnostic must not report as a dead backend.
+        superseded_reason: Optional[str] = None
         # Set when an interactive run could not acquire a lease at all (the
         # steal raised, twice). Such a run keeps STREAMING -- a database
         # hiccup must not cost a human their letters -- but it may not
@@ -6126,8 +6130,9 @@ class AppealsBackendHelper:
             lease_clock = generation_lease.RenewalClock()
 
             def _lease_lost(reason: str) -> None:
-                nonlocal superseded
+                nonlocal superseded, superseded_reason
                 superseded = True
+                superseded_reason = superseded_reason or reason
                 logger.info(
                     f"[gen_id={generation_id}] interactive lease no longer "
                     f"held for denial {denial_id}: {reason}"
@@ -6497,6 +6502,11 @@ class AppealsBackendHelper:
         early_reserve_texts: set[str] = set()
         reserve_served = 0
         reserve_notice_sent = False
+        # Which rule opened the early flush and how far into the flow, for the
+        # end-of-run diagnostic: "the reserve went out at 0.4s on a reconnect"
+        # and "at 47s because nothing had arrived" are different incidents.
+        reserve_first_rule: Optional[str] = None
+        reserve_first_served_s: Optional[float] = None
 
         async def serve_reserve_if_stalled() -> AsyncIterator[str]:
             """Flush the speculative reserve once the run is over its deadline.
@@ -6531,6 +6541,7 @@ class AppealsBackendHelper:
             hiccup here must not kill a stream that is otherwise fine.
             """
             nonlocal new, reserve_served, reserve_notice_sent
+            nonlocal reserve_first_rule, reserve_first_served_s
             delivered = new + old
             if delivered >= cls.ENOUGH_APPEALS:
                 return
@@ -6614,6 +6625,9 @@ class AppealsBackendHelper:
                     early_reserve_texts.add(normalized)
                     new += 1
                     reserve_served += 1
+                    if reserve_first_rule is None:
+                        reserve_first_rule = rule
+                        reserve_first_served_s = time.monotonic() - flow_started
                     logger.info(
                         f"[gen_id={generation_id}] picked speculative reserve "
                         f"appeal {row.id} for denial {denial_id} after "
@@ -7383,7 +7397,7 @@ class AppealsBackendHelper:
 
         async def save_appeal(item: GeneratedAppeal) -> dict[str, Any]:
             # Save all of the proposed appeals, so we can use RL later.
-            nonlocal first_model, superseded
+            nonlocal first_model, superseded, superseded_reason
             appeal_text = item.text
             model_name = item.model_name
             if (
@@ -7517,6 +7531,9 @@ class AppealsBackendHelper:
                 # loop reads the flag below and stops pulling from the model.
                 save_failed = True
                 superseded = True
+                superseded_reason = superseded_reason or (
+                    "a draft's save found a newer lease epoch"
+                )
                 logger.info(f"Draft not persisted, generation lease superseded: {e}")
             except Exception as e:
                 # Still stream the draft -- the user gets their appeal even
@@ -7548,6 +7565,9 @@ class AppealsBackendHelper:
                         timeout=generation_lease.EXTEND_INTERVAL_SECONDS,
                     ):
                         superseded = True
+                        superseded_reason = superseded_reason or (
+                            "the renewal after a draft's save found the lease gone"
+                        )
                         logger.info(
                             f"[gen_id={generation_id}] lease no longer held after "
                             f"saving a draft for denial {denial_id}"
@@ -7887,6 +7907,9 @@ class AppealsBackendHelper:
             appeals_json
         )
 
+        # Set when the loop below stops on a superseded lease, as opposed to
+        # the lease being lost after the models had already been drained.
+        stream_cut_short = False
         # NB: `new` is NOT reset here -- the early speculative fallback may
         # already have delivered rows, and they count toward both the done
         # frame's totals and the ENOUGH_APPEALS gate.
@@ -7909,9 +7932,11 @@ class AppealsBackendHelper:
                 # flight finishes on its own (see the gen_task note above);
                 # nothing it yields after this is consumed. (Review.)
                 logger.info(
-                    f"[gen_id={generation_id}] generation lease superseded; "
-                    f"stopping the stream for denial {denial_id}"
+                    f"[gen_id={generation_id}] generation lease superseded "
+                    f"({superseded_reason}); stopping the stream for denial "
+                    f"{denial_id} after {new - reserve_served} live draft(s)"
                 )
+                stream_cut_short = True
                 break
             # Also a checkpoint: draining this iterator blocks on the next model
             # future, so a run that streams one draft and then stalls for
@@ -8301,24 +8326,74 @@ class AppealsBackendHelper:
                 f"for denial {denial_id} ({reserve_at_start} row(s) still held "
                 f"back, live_generated={live_new}, existing={old})"
             )
-        reserve_note = (
-            f" served_from_reserve={from_reserve} "
-            f"(early={reserve_served}, end_of_flow={reconciled_from_reserve}) "
-            f"(user was NOT left empty-handed)"
-            if from_reserve
-            else ""
+        # The one line an incident review reads, so it has to say on its own
+        # what the user got and why the live count is what it is.
+        user_received = new + old
+        if from_reserve:
+            reserve_note = (
+                f" served_from_reserve={from_reserve} "
+                f"(early={reserve_served}, end_of_flow={reconciled_from_reserve}"
+            )
+            if reserve_first_rule is not None:
+                # Why the early flush opened, and how far into the user's wait.
+                reserve_note += (
+                    f", early_rule={reserve_first_rule}, "
+                    f"first_early_at={reserve_first_served_s or 0.0:.1f}s"
+                )
+            reserve_note += f", available_at_start={reserve_at_start})"
+        else:
+            reserve_note = (
+                f" served_from_reserve=0 (available_at_start={reserve_at_start})"
+            )
+        reserve_note += (
+            f" user_received={user_received} flow_s="
+            f"{time.monotonic() - flow_started:.1f} reconnect={is_reconnect}"
         )
         if gen_error:
             reserve_note += f" gen_error={gen_error}"
-        if live_new + old == 0:
+        # A winning stage with no attempt rows means make_appeals had a real
+        # draft in hand that this flow never pulled: the per-model outcome is
+        # only recorded once its generator is drained. Say that, rather than
+        # "none", which reads as "no model was asked".
+        models_tried_note = models_tried
+        if models_tried == "none" and winning_stage not in (None, "none"):
+            models_tried_note = (
+                f"unrecorded: the {winning_stage} stage had a draft ready that "
+                f"was never pulled from the stream"
+            )
+        if live_new == 0 and stream_cut_short:
+            # Not a backend failure: a newer run (second tab, reconnect, REST
+            # fallback) took the denial's lease and this one stopped pulling
+            # drafts on purpose. Its own wording and level, so the zero-appeal
+            # ERROR below keeps meaning "the models gave us nothing".
+            logger.warning(
+                f"APPEAL_GEN_DIAG [gen_id={generation_id}] Live generation "
+                f"stopped before delivering a draft for denial {denial_id}: "
+                f"lease superseded ({superseded_reason}), "
+                f"existing={old}, gen_attempts={denial.gen_attempts}, "
+                f"runt_count={runts}, dupe_count={dupes}, "
+                f"make_appeals_s={make_appeals_seconds:.1f}, "
+                f"first_model={first_model}, winning_stage={winning_stage}, "
+                f"shed_tier={shed_tier}, models_tried=[{models_tried_note}]"
+                f"{reserve_note}"
+            )
+        elif live_new + old == 0:
+            # "Zero LIVE appeals": user_received says whether the reserve
+            # covered it, so the headline no longer contradicts the tail.
+            headline = (
+                f"Zero live appeals generated for denial {denial_id} "
+                f"(reserve covered it: user received {user_received})"
+                if user_received
+                else f"Zero appeals generated for denial {denial_id} "
+                f"(user left EMPTY-HANDED)"
+            )
             logger.error(
-                f"APPEAL_GEN_DIAG [gen_id={generation_id}] Zero appeals "
-                f"generated for denial {denial_id}, "
+                f"APPEAL_GEN_DIAG [gen_id={generation_id}] {headline}, "
                 f"gen_attempts={denial.gen_attempts}, runt_count={runts}, "
                 f"dupe_count={dupes}, "
                 f"make_appeals_s={make_appeals_seconds:.1f}, "
                 f"first_model={first_model}, winning_stage={winning_stage}, "
-                f"shed_tier={shed_tier}, models_tried=[{models_tried}], "
+                f"shed_tier={shed_tier}, models_tried=[{models_tried_note}], "
                 f"{summarize_denial_context_tokens(denial)}{reserve_note}"
             )
         elif live_new == 0 and old > 0:
@@ -8330,7 +8405,7 @@ class AppealsBackendHelper:
                 f"dupe_count={dupes}, "
                 f"make_appeals_s={make_appeals_seconds:.1f}, "
                 f"first_model={first_model}, winning_stage={winning_stage}, "
-                f"models_tried=[{models_tried}]{reserve_note}"
+                f"models_tried=[{models_tried_note}]{reserve_note}"
             )
 
         # (The form_completed intake event is recorded and delivered at the

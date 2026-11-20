@@ -1261,6 +1261,93 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_zero_live_diag_says_the_reserve_covered_it_and_why_it_opened(
+        self, mock_appeal_generator
+    ):
+        """Models silent, reserve served on a reconnect: the diagnostic's
+        headline says the user was covered, and names the rule that opened
+        the early flush."""
+        email, denial = self._create_test_denial(61, gen_attempts=1)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft the user should get without waiting.",
+            speculative=True,
+            built_for_state="",
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                with self._capture_logs() as sink:
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 61,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                            "reconnect": True,
+                        }
+                    )
+                diag = [
+                    line
+                    for line in sink.getvalue().splitlines()
+                    if "APPEAL_GEN_DIAG" in line
+                ]
+                self.assertEqual(len(diag), 1, diag)
+                self.assertIn("Zero live appeals generated", diag[0])
+                self.assertIn("reserve covered it: user received 1", diag[0])
+                self.assertIn("early_rule=reconnect", diag[0])
+                self.assertIn("reconnect=True", diag[0])
+            finally:
+                await Denial.objects.filter(denial_id=61).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_superseded_run_is_not_reported_as_zero_appeals_generated(
+        self, mock_appeal_generator
+    ):
+        """A run that loses its lease before pulling a draft stopped on
+        purpose: it logs the supersede, not the backend-failure error."""
+        email, denial = self._create_test_denial(62, gen_attempts=1)
+        mock_appeal_generator.make_appeals.return_value = iter(
+            self._live_drafts(["A live appeal letter the newer run will deliver."])
+        )
+
+        async def lose_lease_at_once(denial, epoch, clock, *, on_lost=None):
+            on_lost("a newer run took the lease")
+
+        async def test():
+            try:
+                with self._capture_logs() as sink, patch(
+                    "fighthealthinsurance.common_view_logic."
+                    "generation_lease.keep_renewed",
+                    lose_lease_at_once,
+                ):
+                    _, appeal_contents, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 62,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                self.assertEqual(appeal_contents, [])
+                diag = [
+                    line
+                    for line in sink.getvalue().splitlines()
+                    if "APPEAL_GEN_DIAG" in line
+                ]
+                self.assertEqual(len(diag), 1, diag)
+                self.assertIn("lease superseded (a newer run took the lease)", diag[0])
+                self.assertNotIn("Zero", diag[0])
+            finally:
+                await Denial.objects.filter(denial_id=62).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_the_stall_fallback_skips_a_reserve_written_for_another_state(
         self, mock_appeal_generator
     ):
