@@ -2235,7 +2235,7 @@
       {
         "name": "Ozempic Savings Card",
         "url": "https://www.ozempic.com/savings-and-resources/save-on-ozempic.html",
-        "description": "Pay as little as $25/month for up to 48 months with commercial insurance. Not for government programs."
+        "description": "Lowers out-of-pocket costs for eligible people with commercial insurance. Savings limits and how long the offer lasts vary; see Novo Nordisk's terms. Not for government programs."
       },
       {
         "name": "NovoCare - Ozempic",
@@ -2302,12 +2302,12 @@
       {
         "name": "Wegovy Savings Card",
         "url": "https://www.wegovy.com/coverage-and-savings/save-on-wegovy.html",
-        "description": "Pay as little as $0/month with commercial insurance coverage (up to $225 off per fill). Not for government programs."
+        "description": "Lowers out-of-pocket costs for eligible people with commercial insurance. Whether you qualify and how much you save depend on your plan, including whether it covers Wegovy; see Novo Nordisk's terms. Not for government programs; people paying without insurance can use NovoCare's self-pay option."
       },
       {
         "name": "NovoCare - Wegovy",
         "url": "https://www.novocare.com/obesity/products/wegovy/savings-offer.html",
-        "description": "Savings offers and support for Wegovy patients, including $349/month self-pay option."
+        "description": "Savings offers and support for Wegovy patients, including a self-pay option. Self-pay prices change; check NovoCare's current pricing."
       },
       {
         "name": "NovoCare Pharmacy",
@@ -2364,7 +2364,7 @@
       {
         "name": "Mounjaro Savings Card",
         "url": "https://www.mounjaro.lilly.com/savings-resources",
-        "description": "Pay as little as $25/month with commercial insurance coverage. Up to $150 off per fill."
+        "description": "Lowers out-of-pocket costs for eligible people with commercial insurance. Whether you qualify and how much you save depend on your plan, including whether it covers Mounjaro; see Lilly's terms."
       }
     ],
     "advocacy_resources": [
