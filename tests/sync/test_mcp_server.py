@@ -1157,6 +1157,28 @@ class MountingTest(TestCase):
         self.assertEqual(response.status_code, 405)
         self.assertEqual(response.headers["allow"], "POST")
 
+    async def test_refused_mcp_request_carries_the_pen_test_warning(self):
+        async with running_app() as http:
+            response = await http.get("/mcp")
+        self.assertIn("not an authorized pen test", response.headers["x-warning"])
+
+    async def test_served_mcp_request_carries_the_pen_test_warning(self):
+        async with running_app() as http:
+            response = await http.post("/mcp", json={})
+        self.assertIn("not an authorized pen test", response.headers["x-warning"])
+
+    @override_settings(EVIL_SECRET="not-a-real-secret")
+    async def test_mcp_request_with_the_evil_secret_gets_no_warning(self):
+        async with running_app() as http:
+            response = await http.get("/mcp", headers={"X-Evil": "not-a-real-secret"})
+        self.assertNotIn("x-warning", response.headers)
+
+    @override_settings(EVIL_SECRET="not-a-real-secret")
+    async def test_mcp_request_with_a_wrong_evil_secret_gets_the_warning(self):
+        async with running_app() as http:
+            response = await http.get("/mcp", headers={"X-Evil": "wrong"})
+        self.assertIn("x-warning", response.headers)
+
     async def test_mcp_with_a_trailing_slash_is_served_in_place(self):
         async with running_app() as http:
             response = await http.post(
