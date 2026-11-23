@@ -59,7 +59,7 @@ pyyaml
 ray==2.59.0 # Must update build_ray
 ray[client]==2.59.0 # Must update build_ray
 requests
-sentry-sdk[django]
+sentry-sdk[django]<3  # 3.0 drops init() options asgi.py passes (include_local_variables, before_send_transaction)
 setuptools>=58,<80
 sqlalchemy_mate==2.0.0.0 # uszipcode issue see https://github.com/MacHu-GWU/uszipcode-project/issues/79
 stopit
