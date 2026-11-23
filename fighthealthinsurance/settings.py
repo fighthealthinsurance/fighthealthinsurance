@@ -142,6 +142,12 @@ class Base(Configuration):
     COOKIE_CONSENT_ENABLED = False
     COOKIE_CONSENT_LOG_ENABLED = False
 
+    # Authorized pen testers send this value in the X-Evil request header;
+    # every other response carries an X-Warning header saying this is not an
+    # authorized pen test and pointing at /evil/robot-id
+    # (PenTestWarningMiddleware). Unset means everyone gets the warning.
+    EVIL_SECRET = (os.getenv("EVIL_SECRET") or "").strip()
+
     # Audit logging - disabled by default, enable via environment variable
     ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() == "true"
 
@@ -998,6 +1004,7 @@ class Base(Configuration):
         # Early so short-circuit responses (redirects, /metrics 404s) carry
         # these headers too.
         "fighthealthinsurance.middleware.PermissionsPolicyMiddleware",
+        "fighthealthinsurance.middleware.PenTestWarningMiddleware",
         "fighthealthinsurance.middleware.NoIndexOffMainHostMiddleware",
         # /metrics is gated before any session/auth/audit work happens.
         "fighthealthinsurance.middleware.MetricsAccessMiddleware",
