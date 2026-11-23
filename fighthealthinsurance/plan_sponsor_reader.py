@@ -170,6 +170,23 @@ _DATE = (
 _DATE_RANGE = re.compile(
     _DATE + r"\s*(?:[-\u2013\u2014]|to|through|thru)\s*" + _DATE, re.IGNORECASE
 )
+#: What a date range on a plan-year line is the period of: the last of these
+#: before it. An open-enrollment window ("Plan Year 2026. Open enrollment
+#: 11/01/2025 - 01/15/2026") ends in the year it enrolls for, so it says
+#: nothing against that year.
+_RANGE_LABEL = re.compile(
+    r"(enrol\w*|inscripci\w*)|plan\s+year|coverage|period|effective|a[ñn]o\s+del\s+plan"
+    r"|vigen(?:te|cia)",
+    re.IGNORECASE,
+)
+
+
+def _is_enrollment_window(line: str, span: re.Match) -> bool:
+    """Whether the date range ``span`` in ``line`` is an enrollment window."""
+    labels = list(_RANGE_LABEL.finditer(line, 0, span.start()))
+    return bool(labels) and labels[-1].group(1) is not None
+
+
 #: Each model's answer, and all of them together, a second look included:
 #: the reading's activity has 5 minutes
 #: (workflows/shared_plan_documents.READ_TIMEOUT) and reading the file can
@@ -234,6 +251,9 @@ class PlanReading(NamedTuple):
     #: found no sponsor.
     answered: bool
     facts: PlanFacts = PlanFacts()
+    #: True when a model gave an answer with a sponsor field, even one the
+    #: checks turned down: the lookup finished, whatever it found.
+    responded: bool = False
 
 
 def excerpt(text: str) -> str:
@@ -494,7 +514,7 @@ def _checked_year(data: dict, squashed_text: str) -> Optional[int]:
             int(next(y for y in part if y))
             for part in (span.groups()[:3], span.groups()[3:])
         )
-        if start != end and year == end:
+        if start != end and year == end and not _is_enrollment_window(line, span):
             return None
     return year
 
@@ -533,14 +553,15 @@ async def aread_plan(text: str, cleaned_text: str) -> PlanReading:
     insurers = await database_sync_to_async(known_insurers)()
     clock = asyncio.get_running_loop().time
     deadline = clock() + TOTAL_TIMEOUT_SECONDS
-    first = await _aask(excerpt(text), text, insurers, deadline)
+    seen: dict[str, bool] = {}
+    first = await _aask(excerpt(text), text, insurers, deadline, seen)
     if first is None:
-        return PlanReading(None, False)
+        return PlanReading(None, False, responded=bool(seen))
     sponsor, answer = first
     facts = checked_facts(answer, cleaned_text)
     if sponsor is None and deadline - clock() >= MODEL_TIMEOUT_SECONDS:
         more = second_excerpt(text)
-        second = await _aask(more, text, insurers, deadline) if more else None
+        second = await _aask(more, text, insurers, deadline, seen) if more else None
         if second is not None:
             sponsor = second[0]
     if sponsor is not None and normalize_name(sponsor.name) == normalize_name(
@@ -549,21 +570,30 @@ async def aread_plan(text: str, cleaned_text: str) -> PlanReading:
         # A self-funded plan's employer is not its insurer, by the sponsor's
         # name as checked, from either reading.
         facts = facts._replace(insurer_name="")
-    return PlanReading(sponsor, True, facts)
+    return PlanReading(sponsor, True, facts, responded=True)
 
 
 async def _aask(
-    part: str, text: str, insurers: frozenset[str], deadline: float
+    part: str,
+    text: str,
+    insurers: frozenset[str],
+    deadline: float,
+    seen: Optional[dict[str, bool]] = None,
 ) -> Optional[tuple[Optional[Sponsor], str]]:
     """Our models' reading of ``part``, an excerpt of ``text``, by
     ``deadline`` on the event loop's clock: (the sponsor in the first answer
     that passes, or None when it says there is none; that answer). None
-    when no model gave a usable answer in time."""
+    when no model gave a usable answer in time. ``seen["responded"]`` is
+    set when a model gave an answer with a sponsor field, even one the
+    checks turned down."""
     from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 
     found: dict[str, Sponsor] = {}
 
     def usable(answer: str) -> bool:
+        data = _parse(answer)
+        if seen is not None and data is not None and "sponsor" in data:
+            seen["responded"] = True
         try:
             sponsor = checked_sponsor(answer, text, insurers)
         except _NoSponsor:

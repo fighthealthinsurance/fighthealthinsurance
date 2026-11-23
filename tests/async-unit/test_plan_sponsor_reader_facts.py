@@ -170,6 +170,17 @@ class TestThePlanYear:
         found = facts(PAGE_ONE + line, plan_year=2026, plan_year_evidence=line)
         assert found.plan_year == 2026
 
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "Plan Year 2026. Open enrollment 11/01/2025 - 01/15/2026",
+            "2026 Plan Year Open Enrollment: November 1, 2025 - January 15, 2026",
+        ],
+    )
+    def test_an_enrollment_window_ending_in_the_plan_year_keeps_it(self, line):
+        found = facts(PAGE_ONE + line, plan_year=2026, plan_year_evidence=line)
+        assert found.plan_year == 2026
+
     def test_a_birth_year_is_dropped(self):
         found = facts(
             plan_year=2001,
