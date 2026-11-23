@@ -142,6 +142,12 @@ class Base(Configuration):
     COOKIE_CONSENT_ENABLED = False
     COOKIE_CONSENT_LOG_ENABLED = False
 
+    # Authorized pen testers send this value in the X-Evil request header;
+    # every other response carries an X-Warning header saying this is not an
+    # authorized pen test and pointing at /evil/robot-id
+    # (PenTestWarningMiddleware). Unset means everyone gets the warning.
+    EVIL_SECRET = (os.getenv("EVIL_SECRET") or "").strip()
+
     # Audit logging - disabled by default, enable via environment variable
     ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() == "true"
 
@@ -420,6 +426,20 @@ class Base(Configuration):
     # for the case is recorded.
     CHOOSER_HUMANJUDGE_MIN_VERDICTS = int(
         os.getenv("CHOOSER_HUMANJUDGE_MIN_VERDICTS", "1")
+    )
+    # A HumanJudge arena judging our models for hallucination (see
+    # humanjudge_arena and docs/chooser.md). HUMAN_JUDGE_OAI_CALLBACK is the
+    # key the arena's models call our OpenAI-compatible endpoint with; the
+    # endpoint is off (404) without it. HUMANJUDGE_ARENA_ID is the arena
+    # whose reviews are downloaded, from its report, which must be set to
+    # Public (a public report needs no key). HumanJudge
+    # waits 60 seconds per answer, so a letter not written in
+    # HUMANJUDGE_ARENA_ANSWER_TIMEOUT seconds is finished in the background
+    # and the call told to come back.
+    HUMAN_JUDGE_OAI_CALLBACK = os.getenv("HUMAN_JUDGE_OAI_CALLBACK", "")
+    HUMANJUDGE_ARENA_ID = os.getenv("HUMANJUDGE_ARENA_ID", "")
+    HUMANJUDGE_ARENA_ANSWER_TIMEOUT = _env_float(
+        "HUMANJUDGE_ARENA_ANSWER_TIMEOUT", 50.0, minimum=1.0, maximum=600.0
     )
     # The share of new appeal arena cases written as explicitly simple ones
     # (an everyday denial, two or three facts); 0 for none, 1 for all.
@@ -984,6 +1004,7 @@ class Base(Configuration):
         # Early so short-circuit responses (redirects, /metrics 404s) carry
         # these headers too.
         "fighthealthinsurance.middleware.PermissionsPolicyMiddleware",
+        "fighthealthinsurance.middleware.PenTestWarningMiddleware",
         "fighthealthinsurance.middleware.NoIndexOffMainHostMiddleware",
         # /metrics is gated before any session/auth/audit work happens.
         "fighthealthinsurance.middleware.MetricsAccessMiddleware",
@@ -1431,6 +1452,8 @@ class _TestBase(Dev):
     HUMANJUDGE_API_KEY = ""
     HUMANJUDGE_TOKEN = ""
     HUMANJUDGE_MODEL_ID = ""
+    HUMAN_JUDGE_OAI_CALLBACK = ""
+    HUMANJUDGE_ARENA_ID = ""
     # Every case a test builds is the standard, seeded kind unless the test
     # asks for a simple one; a random draw would make the seeded tests flaky.
     CHOOSER_SIMPLE_CASE_SHARE = 0.0

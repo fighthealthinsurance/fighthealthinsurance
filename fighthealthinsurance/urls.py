@@ -38,8 +38,10 @@ from fighthealthinsurance import (
     assistant_terms_views,
     evaluator_accounts,
     fax_views,
+    humanjudge_arena_views,
     intake_resume_views,
     paid_reviews,
+    pen_test_permission,
     public_rankings,
     staff_views,
     views,
@@ -689,6 +691,12 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     # at <page>.md. See agent_docs.py for what "eligible" means.
     path("llms.txt", agent_docs.llms_txt_view, name="llms_txt"),
     path("robots.txt", agent_docs.robots_txt_view, name="robots_txt"),
+    # Where the X-Warning header sends would-be pen testers; logs and emails.
+    path(
+        pen_test_permission.EVIL_ROBOT_ID_PATH.lstrip("/"),
+        pen_test_permission.evil_robot_id_view,
+        name="evil_robot_id",
+    ),
     re_path(
         r"^(?!static/)(?P<path>[A-Za-z0-9_/-]*)\.md$",
         agent_docs.MarkdownTwinView.as_view(),
@@ -736,6 +744,19 @@ urlpatterns += [
         "chooser/",
         views.ChooserView.as_view(),
         name="chooser",
+    ),
+    # The OpenAI-compatible endpoint a HumanJudge arena calls for our
+    # models' appeal letters (humanjudge_arena); 404 unless
+    # HUMAN_JUDGE_OAI_CALLBACK is set.
+    path(
+        "ziggy/humanjudge/v1/models",
+        humanjudge_arena_views.models_view,
+        name="humanjudge_arena_models",
+    ),
+    path(
+        "ziggy/humanjudge/v1/chat/completions",
+        humanjudge_arena_views.chat_completions_view,
+        name="humanjudge_arena_chat_completions",
     ),
     # Paid Arena reviewers hired through RentAHuman (paid_reviews.py): the
     # join link in a bounty, and the signed events RentAHuman sends.

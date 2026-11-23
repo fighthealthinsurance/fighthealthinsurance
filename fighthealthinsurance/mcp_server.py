@@ -124,6 +124,9 @@ from fighthealthinsurance.financial_assistance_directory import (
     search as search_financial_assistance,
 )
 from fighthealthinsurance.ml import spend
+from fighthealthinsurance.middleware.PenTestWarningMiddleware import (
+    asgi_send_with_pen_test_warning,
+)
 from fighthealthinsurance.models import InsuranceCompany, InsurancePlan
 from fighthealthinsurance.pa_requirements import resolve_insurance_company_by_name
 from fighthealthinsurance.regulatory_citations import (
@@ -3367,6 +3370,9 @@ def mcp_asgi_routes(django_http_app: ASGIApp) -> dict[str, ASGIApp]:
         if scope.get("path") not in (MCP_PATH, MCP_PATH + "/"):
             await django_http_app(scope, receive, send)
             return
+        # Django's middleware never sees /mcp, so the X-Warning it puts on
+        # every other response is added here.
+        send = asgi_send_with_pen_test_warning(scope, send)
         if scope.get("method") != "POST":
             _count_call(OTHER_REQUEST, "refused")
             await _method_not_allowed(send)

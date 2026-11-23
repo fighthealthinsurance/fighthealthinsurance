@@ -22,6 +22,10 @@ HumanJudge Verdict list fetches the new verdicts
 picks of the cases they touch (``download_verdicts``). Nothing runs on a timer. It is off
 unless ``HUMANJUDGE_API_KEY`` is set (and ``CHOOSER_HUMANJUDGE`` is not
 false).
+
+Everything goes under one anonymous model here, so HumanJudge can only
+compare a case's drafts. humanjudge_arena enters each of our models in a
+HumanJudge arena instead, to measure hallucination by model.
 """
 
 import datetime
@@ -62,6 +66,8 @@ MAX_TASKS_PER_UPLOAD = 300
 _HTTP_TIMEOUT_SECONDS = 20.0
 # HumanJudge's page cap (the SDK's PAGE_SIZE), and how many pages one download reads.
 _PAGE_SIZE = 1000
+# The most reviews HumanJudge's report API gives per page.
+REPORT_PAGE_SIZE = 50
 _MAX_PAGES = 20
 # Verdicts are re-read this far back from the newest one stored, for votes
 # HumanJudge records late; the unique key drops the ones already stored.
@@ -250,6 +256,29 @@ class HumanJudgeClient:
             )
         return out
 
+    async def arena_report(
+        self, arena_id: str, offset: int, refresh: bool = False
+    ) -> dict:
+        """One page of an arena's report (``GET /api/v1/reports/{arena}``):
+        its reviews, newest first, ``REPORT_PAGE_SIZE`` at a time, each with
+        the case (``user_input``), the answer (``ai_output``), the verdict
+        and the reviewer's note, plus ``reviews_total`` and
+        ``has_more_reviews``. A public report needs no key; ours is sent
+        when there is one, for a report that is not public. ``refresh`` asks
+        HumanJudge to rebuild its cached report first."""
+        params: dict[str, Any] = {"limit": REPORT_PAGE_SIZE, "offset": offset}
+        if refresh:
+            params["force_refresh"] = "true"
+        headers = (
+            {"Authorization": f"Bearer {self._read_key}"} if self._read_key else {}
+        )
+        response = await self.http.get(
+            f"/api/v1/reports/{arena_id}", params=params, headers=headers
+        )
+        self._check(response, "arena report")
+        body = response.json()
+        return body if isinstance(body, dict) else {}
+
 
 def _records(body: Any) -> list[dict]:
     """A page's rows: the SDK reads a bare list; accept the usual envelopes too."""
@@ -305,15 +334,53 @@ def _external_key(record: dict, inference_id: str) -> str:
     vote_id = record.get("id") or record.get("vote_id")
     if vote_id:
         return f"id:{vote_id}"[:128]
-    basis = "|".join(
-        [
-            inference_id,
-            str(record.get("evaluator_id") or ""),
-            str(record.get("timestamp") or record.get("created_at") or ""),
-            str(record.get("verdict") or ""),
-        ]
+    return _digest_key(
+        inference_id,
+        # The same aliases the downloaders read, so ID-less votes that
+        # carry only voter_id or vote are not all given one key.
+        str(record.get("evaluator_id") or record.get("voter_id") or ""),
+        str(record.get("timestamp") or record.get("created_at") or ""),
+        str(record.get("verdict", record.get("vote")) or ""),
     )
-    return "sha256:" + hashlib.sha256(basis.encode()).hexdigest()
+
+
+def _legacy_external_key(record: dict, inference_id: str) -> Optional[str]:
+    """The key an ID-less vote was stored under before the aliases were
+    read, when it differs from _external_key's; None when it is the same.
+    A refetch must find a vote stored under it rather than store it twice."""
+    if record.get("id") or record.get("vote_id"):
+        return None
+    if record.get("evaluator_id") and "verdict" in record:
+        return None
+    return _digest_key(
+        inference_id,
+        str(record.get("evaluator_id") or ""),
+        str(record.get("timestamp") or record.get("created_at") or ""),
+        str(record.get("verdict") or ""),
+    )
+
+
+def _voter(record: dict) -> str:
+    return str(record.get("evaluator_id") or record.get("voter_id") or "")
+
+
+async def _stored_under_legacy_key(record: dict, inference_id: str) -> bool:
+    """Whether this vote is already stored under its pre-alias key. That key
+    left voter_id out, so two reviewers' votes can share it: only a stored
+    row from the same reviewer counts."""
+    legacy_key = _legacy_external_key(record, inference_id)
+    if legacy_key is None:
+        return False
+    stored = (
+        await HumanJudgeVerdict.objects.filter(external_key=legacy_key)
+        .values_list("raw", flat=True)
+        .afirst()
+    )
+    return isinstance(stored, dict) and _voter(stored) == _voter(record)
+
+
+def _digest_key(*parts: str) -> str:
+    return "sha256:" + hashlib.sha256("|".join(parts).encode()).hexdigest()
 
 
 def sendable_tasks():
@@ -546,6 +613,8 @@ async def fetch_verdicts(client: HumanJudgeClient) -> DownloadResult:
                 skipped += 1
                 continue
             result.matched_task_ids.add(submission.task_id)
+            if await _stored_under_legacy_key(record, inference_id):
+                continue
             _, created = await HumanJudgeVerdict.objects.aget_or_create(
                 external_key=_external_key(record, inference_id),
                 defaults={

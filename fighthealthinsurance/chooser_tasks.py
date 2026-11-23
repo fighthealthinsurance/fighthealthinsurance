@@ -161,6 +161,16 @@ _EVIDENCE_KEYS = ("pmid", "title", "url", "summary", "source", "relevance")
 WEB_EVIDENCE_SOURCE = "web"
 EVIDENCE_PROBABLY_OFF_TOPIC = "probably_off_topic"
 _EVIDENCE_SUMMARY_CHARS = 600
+# What every appeal draft is asked with, beside _build_appeal_prompt's case.
+# Shared with humanjudge_arena, which writes the drafts a case lacks the same way.
+APPEAL_SYSTEM_PROMPT = (
+    "You are an expert at writing health insurance appeal letters. "
+    "Write a professional, compelling appeal letter based on the given context. "
+    "Stay inside the facts and evidence you are given: a letter that makes "
+    "things up loses the appeal and this comparison."
+)
+# The shortest reply that counts as an appeal draft.
+APPEAL_MIN_CHARS = 100
 # The case-building pipeline that writes a new task of each type (stored as
 # ChooserTask.case_version). Appeal cases at 2 also carry article summaries
 # and a simulated question-and-answer session with the patient. Voters get
@@ -2453,12 +2463,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
     # external backends (Anthropic/Azure/DeepInfra/...) participate — the chooser
     # is how they get compared and how they show up in usage reporting.
     prompt = _build_appeal_prompt(task.context_json)
-    system_prompt = (
-        "You are an expert at writing health insurance appeal letters. "
-        "Write a professional, compelling appeal letter based on the given context. "
-        "Stay inside the facts and evidence you are given: a letter that makes "
-        "things up loses the appeal and this comparison."
-    )
+    system_prompt = APPEAL_SYSTEM_PROMPT
 
     async def ask(model, resample: bool) -> Optional[str]:
         # A second draft from the same model is asked to differ from its first.
@@ -2475,7 +2480,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
         )
 
     await _fill_candidates(
-        task, "appeal", "appeal_letter", 100, ask, {"source": "synthetic"}
+        task, "appeal", "appeal_letter", APPEAL_MIN_CHARS, ask, {"source": "synthetic"}
     )
 
 

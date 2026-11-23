@@ -142,6 +142,7 @@ ML backends (at least one; either kind works on its own):
 
 Appeal Arena:
 - `HUMANJUDGE_API_KEY` - lets staff upload synthetic Arena appeal drafts (never real ones) to HumanJudge's human reviewers from the admin; their verdicts live in `HumanJudgeVerdict`, apart from `ChooserVote` (see docs/chooser.md)
+- `HUMAN_JUDGE_OAI_CALLBACK`, `HUMANJUDGE_ARENA_ID` - a HumanJudge arena judges our appeal models for hallucination: it calls our OpenAI-compatible endpoint (`/ziggy/humanjudge/v1/`, `humanjudge_arena.py`; 404 without the key) for each model's letter on synthetic Arena cases, answered from stored drafts or written on a miss; its verdicts live in `HumanJudgeArenaVerdict` (see docs/chooser.md)
 - `RENTAHUMAN_API_KEY`, `RENTAHUMAN_WEBHOOK_SECRET` - paid reviewers hired through RentAHuman bounties judge in the Arena itself; their votes are `ChooserVote` rows tagged with `paid_review` (see docs/chooser.md, "Paid reviewers")
 
 Development:
